@@ -21,6 +21,7 @@ mod link_preview_tags;
 mod linux_media;
 #[cfg(target_os = "macos")]
 mod macos_notifications;
+mod managed_agent_delete;
 mod managed_agents;
 mod media_proxy;
 #[cfg(feature = "mesh-llm")]
@@ -318,6 +319,14 @@ pub fn run() {
                 .keyring_locked
                 .load(std::sync::atomic::Ordering::Acquire);
             let recovery_mode = identity_lost || keyring_locked;
+
+            // Wiki publication recovery is journal-owned and must outlive any
+            // renderer mount. Start it after native identity resolution so a
+            // restart resumes due rows even when the Wiki screen is never
+            // opened; the worker fences every attempt to the captured scope.
+            if !recovery_mode {
+                start_wiki_publication_worker(app_handle.clone());
+            }
 
             // Backfill the pinned persona snapshot for any pre-existing agent
             // that predates the record-authoritative-spawn cutover (persona_id

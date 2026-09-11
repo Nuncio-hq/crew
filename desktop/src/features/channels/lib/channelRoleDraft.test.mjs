@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { npubEncode } from "nostr-tools/nip19";
 import {
   createRoleDraft,
   serializeRoleDraft,
@@ -34,6 +35,43 @@ test("role form retains unassigned definitions, shared holders and unresolved ra
   const saved = serializeRoleDraft(draft);
   assert.equal(saved.definitions[0].definition, " Inspect exactly. ");
   assert.equal(saved.contact, one);
+});
+
+test("opening and saving preserves a resolved npub source spelling", () => {
+  const raw = `  ${npubEncode(one)}  `;
+  const source = canvas();
+  source.storedAssignments = { [raw]: "Review" };
+  const draft = createRoleDraft(source, [one]);
+
+  assert.equal(draft.assignments[one], draft.roles[0].id);
+  const saved = serializeRoleDraft(draft);
+  assert.deepEqual(saved.assignments, {});
+  assert.deepEqual(saved.preserved_assignments, { [raw]: "Review" });
+});
+
+test("editing a resolved assignment emits the canonical key", () => {
+  const raw = `  ${npubEncode(one)}  `;
+  const source = canvas();
+  source.storedAssignments = { [raw]: "Review" };
+  const draft = createRoleDraft(source, [one]);
+  draft.assignments[one] = draft.roles[1].id;
+
+  const saved = serializeRoleDraft(draft);
+  assert.deepEqual(saved.assignments, { [one]: "Research" });
+  assert.deepEqual(saved.preserved_assignments, {});
+});
+
+test("renaming a resolved role keeps the source assignment spelling", () => {
+  const raw = `  ${npubEncode(one)}  `;
+  const source = canvas();
+  source.storedAssignments = { [raw]: "Review" };
+  const draft = createRoleDraft(source, [one]);
+  draft.roles[0].label = "Inspection";
+
+  const saved = serializeRoleDraft(draft);
+  assert.deepEqual(saved.assignments, {});
+  assert.deepEqual(saved.preserved_assignments, { [raw]: "Review" });
+  assert.deepEqual(saved.renames, { Review: "Inspection" });
 });
 
 test("role form moves an agent once and records rename without losing definition meaning", () => {

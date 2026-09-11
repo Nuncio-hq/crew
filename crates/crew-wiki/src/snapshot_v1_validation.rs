@@ -4,7 +4,7 @@ use crate::WikiError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(super) const MAX_EVENT_BYTES: usize = 192 * 1024;
+pub(crate) const MAX_EVENT_BYTES: usize = 192 * 1024;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -18,25 +18,25 @@ pub(super) struct SignedEvent {
     pub sig: String,
 }
 
-pub(super) fn invalid() -> WikiError {
+pub(crate) fn invalid() -> WikiError {
     WikiError::Publish("invalid signed Wiki snapshot".into())
 }
 
-pub(super) fn hex(value: &str, length: usize) -> bool {
+pub(crate) fn hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-pub(super) fn metadata(value: &str) -> bool {
+pub(crate) fn metadata(value: &str) -> bool {
     !value.contains('\0')
         && value
             .chars()
             .any(|c| c != ' ' && !('\u{0009}'..='\u{000d}').contains(&c))
 }
 
-pub(super) fn valid_revision(value: &str) -> bool {
+pub(crate) fn valid_revision(value: &str) -> bool {
     if let Some(hash) = value.strip_prefix("git:") {
         hex(hash, 40) || hex(hash, 64)
     } else {
@@ -46,7 +46,7 @@ pub(super) fn valid_revision(value: &str) -> bool {
     }
 }
 
-pub(super) fn valid_uuid(value: &str) -> bool {
+pub(crate) fn valid_uuid(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
         && [8, 13, 18, 23].iter().all(|&i| bytes[i] == b'-')
@@ -57,7 +57,7 @@ pub(super) fn valid_uuid(value: &str) -> bool {
         })
 }
 
-pub(super) fn valid_repo(value: &str) -> bool {
+pub(crate) fn valid_repo(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && !value.starts_with('.')
@@ -67,7 +67,7 @@ pub(super) fn valid_repo(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-pub(super) fn valid_slug(value: &str) -> bool {
+pub(crate) fn valid_slug(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 80
         && !value.starts_with('-')
@@ -77,7 +77,7 @@ pub(super) fn valid_slug(value: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-pub(super) fn valid_sources(sources: &[SourceReference]) -> bool {
+pub(crate) fn valid_sources(sources: &[SourceReference]) -> bool {
     let mut previous: Option<&SourceReference> = None;
     for source in sources {
         let (path, hash, bytes, start, end) = source;
@@ -107,11 +107,11 @@ pub(super) fn valid_sources(sources: &[SourceReference]) -> bool {
     true
 }
 
-pub(super) fn canonical<T: Serialize + ?Sized>(value: &T) -> Result<String, WikiError> {
+pub(crate) fn canonical<T: Serialize + ?Sized>(value: &T) -> Result<String, WikiError> {
     serde_json::to_string(value).map_err(|_| invalid())
 }
 
-pub(super) fn digest<T: Serialize + ?Sized>(value: &T) -> Result<String, WikiError> {
+pub(crate) fn digest<T: Serialize + ?Sized>(value: &T) -> Result<String, WikiError> {
     Ok(source_hash(canonical(value)?.as_bytes()))
 }
 

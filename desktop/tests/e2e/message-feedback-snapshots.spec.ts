@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const SHOTS = "test-results/message-feedback";
 
@@ -32,7 +33,7 @@ test("pending continuation keeps Sending next to its timestamp", async ({
 }) => {
   await installMockBridge(page);
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await waitForMockLiveSubscription(page, "general");
 

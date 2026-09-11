@@ -7,6 +7,7 @@
  */
 import { expect, test } from "@playwright/test";
 import { installMockBridge } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 type CommandLogEntry = { command: string; payload: unknown };
 
@@ -127,8 +128,8 @@ async function seedAndSendSnapshot(
     ],
   });
 
-  // Navigate to #general.
-  await page.getByTestId("channel-general").click();
+  // Navigate to #general through the workspace channel browser.
+  await openWorkspaceChannel(page, "general");
 }
 
 // ── Timeline renders AgentSnapshotCard, not generic FileCard ──────────────────

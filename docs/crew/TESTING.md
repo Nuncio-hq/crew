@@ -376,6 +376,13 @@ They require:
 - no signing credentials or publication permissions in PR CI;
 - heavyweight upstream compatibility to remain manual-only.
 
+The required Project Relay job also runs `just wiki-contract`, which exercises
+the native snapshot builder/verifier and the relay's pure conditional
+publication, Wiki validation, and repository-state contracts. The PostgreSQL
+lane discovers the `conditional_publication_postgres_tests` family, including
+the deletion-versus-decision tests. These are separate from the older
+Project-link fixture tests excluded from that lane.
+
 ## Project local workspace verification
 
 The normal desktop suite keeps the real-relay test skipped:
@@ -399,6 +406,191 @@ The live test uses a generated ephemeral keypair and unique `d` tag. It
 publishes a kind `30617`, links one path, reconnects for a cold read, relinks a
 Unicode path, and resolves the latest path into Project-channel agent context.
 Never point this test at a shared or production relay.
+
+## Desktop channel-membership projection (#337)
+
+The Desktop membership badge consumes the ACP `channel_membership` observer
+signal through the production live observer ingress. Its projection is bounded
+per normalized agent and generation, orders frames by sequence, and keeps a
+generation's start timestamp immutable. The reader requires the native runtime
+row for the same agent and canonical community relay, the exact `startNonce`, a
+connected transport, and a runtime that is not retired. Missing, invalid, stale,
+closed-watch, or transport-error input remains `unknown`; only an explicit
+current count of zero displays “No channels.” Both zero and unknown preserve
+the existing Add/Restart controls. Retired-generation replay fences are
+bounded and recyclable, so a valid fresh native nonce still recovers after
+long-running restart churn.
+
+Run the focused production-ingress suite with:
+
+```text
+cd desktop
+node --import ./test-loader.mjs --experimental-strip-types \
+  --test src/features/agents/lib/channelMembershipState.test.mjs
+```
+
+The suite covers unknown → zero → nonzero recovery, same-count generation
+notifications, sequence and start-timestamp fences, stale and evicted
+generations, community reset, normalized agent keys, and disconnected or
+retired runtime status. It calls `_testProcessLiveObserverEvents`, which is
+bound to `processLiveObserverEvents` in `observerRelayStore.ts`; direct calls
+to `applyCrewLiveFrameSideEffects` are not evidence of the live path.
+
+The corresponding ACP subscription tests exercise the startup FIFO barrier,
+membership-watch rejection/replay, parked channel retries, and stale CLOSED
+after removal through the actual background command and WebSocket handlers:
+
+```text
+cargo test -p buzz-acp --lib channel_membership_signal
+cargo test -p buzz-acp --lib relay::subscription_recovery_tests
+```
+
+The mock membership case lives in `agent-availability.spec.ts`, registered in
+the `integration` Playwright project but explicitly using `installMockBridge`.
+It verifies badge transitions, frame-before-runtime ordering, native transport
+and community fences, and keyboard access to the existing recovery controls:
+
+```text
+cd desktop
+pnpm build:e2e
+BUZZ_E2E_PORT=4337 pnpm exec playwright test --project=integration \
+  tests/e2e/agent-availability.spec.ts --grep 'membership stays unknown'
+```
+
+The native status constructor exposes the active generation's `startNonce` in
+`ManagedAgentRuntimeStatus`. Its focused Tauri test is
+`managed_agents::runtime_commands::tests::status_construction_exposes_the_active_runtime_start_nonce`;
+run it only with the sidecar prerequisite and an available Rust build slot:
+
+```text
+just _ensure-sidecar-stubs
+cargo test --manifest-path desktop/src-tauri/Cargo.toml \
+  managed_agents::runtime_commands::tests::status_construction_exposes_the_active_runtime_start_nonce
+```
+
+These fixture and mock-bridge checks do not establish installed Hermes staging,
+relay health, or receipt acceptance. Those remain separate #338/#348 gates.
+
+## Wiki Protocol B live acceptance
+
+The independent Wiki protocol harness is also skipped by the normal desktop
+suite. Run it only with an explicitly disposable relay origin, owner key, and
+repository identifier. The relay must advertise and enable
+`crew-conditional-publication-v1`:
+
+```text
+cd desktop
+CREW_PROTOCOL_B_ORIGIN=ws://127.0.0.1:3000 \
+CREW_PROTOCOL_B_OWNER_SECRET_KEY=<disposable-32-byte-lowercase-hex> \
+CREW_PROTOCOL_B_REPO_D=crew-protocol-b-<unique-suffix> \
+node --import ./test-loader.mjs --experimental-strip-types \
+  --test src/features/wiki/wiki-protocol-b-live-relay.test.mjs
+```
+
+`CREW_PROTOCOL_B_OWNER` is optional; when supplied, it must match the public
+key derived from the disposable secret. For the cross-client acceptance,
+first generate through native A, then set
+`CREW_PROTOCOL_B_EXPECTED_NATIVE_HEAD_ID` to its verified live `_toc` event ID.
+B must cold-read that exact graph before making any Wiki write. Omitting this
+variable selects a self-contained protocol fixture: B creates its own repository
+anchor and signed graph, which does not establish native-A interoperability.
+
+After the initial read, B publishes two immutable dependency sets and races
+two `_toc` heads with the same expected revision. It requires exactly one CAS
+winner, one conflict, an exact replay of the winner, and rejection of the
+losing head replay. Reads verify the signed IDs and canonical digests, then
+reread the head to fence the graph to one revision. The harness bounds each
+signed event to 192 KiB, each query response to 1 MiB, the descriptor to 64 KiB,
+and the full graph to 64 MiB and 256 pages; page queries use batches of four.
+This is an independent protocol client, not a second native app. Native
+restart/recovery proof remains a separate acceptance requirement. Never point
+the harness at a shared or production relay; it intentionally leaves its
+disposable repository data in place.
+
+## Wiki journal v3 recovery
+
+Cancellation acceptance must cover an uncertain head send followed by Cancel,
+process restart and read-only Reconcile. None may implicitly submit again.
+Explicit Resume publication must either confirm a late matching head without
+sending, or reuse the exact saved signed graph and original CAS precondition
+after a durable resume transition. A failed transition must send nothing; a
+changed live head must resolve as superseded. Verify that typed immutable
+retirement remains Regenerate-only: Cancel and Resume must preserve its typed
+proof and unresolved claim. Reconciled cancellation stays terminal.
+
+Schema v3 and permanent-dependency Regenerate are accepted designs whose runtime
+evidence remains pending in #362. Release acceptance must exercise both
+forward migrations from an existing v1 journal, preserving all owners,
+communities, payloads, revisions and claims. Reopening v3 must be idempotent;
+an older reader must refuse it visibly. Injected migration, quota and commit
+failures must preserve the exact predecessor. Test every trim/removal path with
+a pinned direct predecessor, including A→B→C and unrelated scoped operations.
+
+Exercise permanent dependency refusal before and after a TOC attempt, and both
+orders of an already-admitted old send versus the new CAS. An old send winning
+first must leave a working recovery action. Generic refusal from an older
+relay, a missing query result and transport failure must never become deletion
+proof. A new UUID must produce new immutable addresses even for unchanged source.
+
+Head and precondition retirement (accepted design; implementation and runtime
+evidence pending in #362) extends the same matrix. The native guarded-read
+fences are covered separately from the proof decision: identity generation,
+durable revision and worker lease are each moved against a real captured
+scope, a real journal row and a real transport, before the first request and
+while each of the two reads is held, so a pre-send refusal and a post-response
+refusal are independently observable. Native A restart and independent signed
+protocol B acceptance remain pending and separately allocated. On real PostgreSQL: an
+accepted-then-deleted head must classify as retired while its exact live replay
+still ACKs as a duplicate first; an accepted-then-deleted non-absent
+`expected-revision` with no live head must classify as a retired precondition;
+an unknown expected revision, one retired only at another coordinate, and a
+restored live head must all keep the generic classification; a never-accepted
+head under `expected-revision: absent` must stay admissible, proving absence is
+not retirement. Refused writes must insert nothing. Natively: each malformed,
+foreign, generic, non-400, failed-query and still-live condition must stay
+Unknown with a retryable claim; a validated proof must settle `Superseded` and
+reconciled in one guarded CAS, send nothing afterwards, survive journal reopen,
+release the resource claim for a fresh Generate, and preserve the signed graph,
+progress and head-attempt metadata. A conflict reconciliation must carry any
+existing typed dependency retirement into the new proof, visible through both
+the durable record and the public job projection. Reconcile and automatic
+restart must still send nothing.
+
+After migration, binary rollback alone is unsupported. The forward-recovery
+procedure is to quit every app instance using this journal, preserve its full
+directory, verify a v3-capable build and reopen the same journal. Set the paths
+below from the exact affected app's native app-data directory and verified app
+bundle; never substitute another staging profile or an old database snapshot.
+
+```sh
+: "${CREW_APP_DATA:?Set the verified affected app-data directory}"
+: "${CREW_VERIFIED_V3_APP:?Set the verified v3-capable app bundle}"
+umask 077
+CREW_RECOVERY_DB="$CREW_APP_DATA/owner-operations/recovery.db"
+CREW_RECOVERY_COPY="$(mktemp -d "${TMPDIR:-/tmp}/crew-recovery-v3.XXXXXX")"
+ditto "$CREW_APP_DATA/owner-operations" "$CREW_RECOVERY_COPY/owner-operations"
+sqlite3 -readonly "$CREW_RECOVERY_DB" 'PRAGMA user_version; PRAGMA integrity_check;'
+open "$CREW_VERIFIED_V3_APP"
+```
+
+Run those commands only after app shutdown, with `CREW_APP_DATA` and
+`CREW_VERIFIED_V3_APP` already set to verified absolute paths. Preserve any
+SQLite sidecar in the directory copy. Expect schema `3` and integrity `ok`;
+otherwise retain the files and investigate with a compatible forward fix.
+Reconcile or retry the durable job through the app and confirm its exact signed
+IDs against a fresh protocol-client read. Do not delete the journal, reset its
+schema version or restore a v1 copy over new operations. No downgrade converter
+is provided. The stopped-app copy, compatible reopen and recovery action must
+be demonstrated in the isolated acceptance environment before release.
+
+To validate a graph produced by the native A worker, set
+`CREW_PROTOCOL_B_EXPECTED_NATIVE_HEAD_ID` to the expected 64-character head ID.
+In this mode the harness publishes no initial Wiki fixture: it reconnects,
+reads that existing repository anchor and complete graph, then races two new
+heads against the exact native revision. Self-contained mode publishes its
+disposable kind `30617` repository anchor before the Wiki graph. Every read
+enforces the 192 KiB event, 256-page, four-event/1 MiB query, and stable-head
+limits.
 
 ## ACP transport recovery (#338)
 
@@ -499,6 +691,19 @@ identity; v4-specific cases cover tag-order/path preservation and pre-persist
 intent validation. This lane does not prove the relay's conditional capability
 advertisement or installed picker behavior.
 
+The managed-agent deletion coordinator has a focused native lane:
+
+```text
+cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml \
+  -p buzz-desktop --lib managed_agent_delete -- --test-threads=1
+```
+
+It binds the production deletion journal's payload validator, channel cleanup
+operation UUIDs, exact-record fence, key/tombstone ordering, UTF-8 error cap,
+review-state recovery rules, global claim/list behavior, and renderer-terminal
+mutation rejection. A passing local lane does not prove installed process
+termination or relay readback; those remain runtime acceptance gates.
+
 Related issues may reuse one unchanged build and owned real-data run; keep an
 explicit issue-to-case mapping and post evidence on each corresponding issue.
 Record candidate SHA/build, source revision, runtime/model/profile, test data
@@ -516,7 +721,7 @@ The default-off native recap slice is tested through its production modules:
 `discovery::bounded_command`. The native `AppHandle` loader belongs to the full
 Tauri build gate; a small exact-module Cargo harness alone does not certify that
 integration. Run `just ci` before the PR and require the immutable head's
-NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-09)
+NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-10)
 for the current unsupported inventory.
 
 Test boundaries include explicit model/profile admission, identity invalidation,
@@ -540,9 +745,12 @@ all those properties and #348 supplies a separate runtime-ready grant. Evidence
 screenshots must label a source/tooling summary as such; they cannot substitute
 for the designated staging runtime acceptance required by #351/#356.
 
-The 2026-09-09 inventory used resolved native executables identified by the
-Architecture table's hashes, not the user's updating wrapper. Recorded arguments
-(excluding that executable) were:
+The historical 2026-09-09 executed inventory used resolved native executables,
+not the user's updating wrapper. The Claude image matches the current
+Architecture row; the historical Codex 0.153.4 image used SHA-256
+`b973d440acac501fd2594a43e7ca9ce41e0a65b9dfb28d0d7a7837c99e1261e3`, which
+differs from the current static row and is not current certification. Recorded
+arguments (excluding that executable) were:
 
 - Claude: `["--version"]` and `["--safe-mode", "--setting-sources", "", "--help"]`.
   Cleared environment allowlist: `HOME`, `PATH`, `TMPDIR`, `CLAUDE_CONFIG_DIR`,

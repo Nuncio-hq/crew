@@ -308,6 +308,7 @@ mod visibility_tests {
 
     fn summary(status: OperationStatus, reconciled: bool) -> OperationSummary {
         OperationSummary {
+            sequence: 0,
             id: "00000000-0000-0000-0000-000000000001".into(),
             kind: OperationKind::ChannelCrewConfig,
             resource_key: "channel".into(),

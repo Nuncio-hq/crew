@@ -9,6 +9,7 @@ import { AddTeamToChannelDialog } from "./AddTeamToChannelDialog";
 import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentDialog } from "./AgentDialog";
 import { HermesProfileArchivesPanel } from "./HermesProfileArchivesPanel";
+import { ManagedAgentDeletionRecoveryBanner } from "./ManagedAgentDeletionRecoveryBanner";
 import { CommunityCatalogDialog } from "./CommunityCatalogDialog";
 import { PersonaDeleteDialog } from "./PersonaDeleteDialog";
 import { PersonaShareDialog } from "./PersonaShareDialog";
@@ -239,6 +240,7 @@ export function AgentsView() {
             description="Set up and manage your agents."
             title="Agents"
           />
+          <ManagedAgentDeletionRecoveryBanner />
           <div className="flex flex-col gap-8">
             <UnifiedAgentsSection
               getAvailability={agents.getAvailability}

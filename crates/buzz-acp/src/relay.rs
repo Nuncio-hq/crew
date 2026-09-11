@@ -803,6 +803,11 @@ enum RelayCommand {
     Shutdown,
     /// Subscribe to global membership notifications.
     SubscribeMembership,
+    /// Mark the startup channel-intent batch complete. This is a local FIFO
+    /// barrier: readiness must stay unknown until every discovered-channel
+    /// command queued before this marker has been applied by the background
+    /// task (including the empty-set case).
+    StartupSubscriptionsReady,
     /// Subscribe to encrypted observer control frames addressed to this agent.
     SubscribeObserverControls,
     /// Publish a signed event to the relay (for typing indicators, etc.).
@@ -824,7 +829,7 @@ pub struct HarnessRelay {
     /// Receiver for events forwarded by the background task.
     event_rx: mpsc::Receiver<Option<BuzzEvent>>,
     /// Background-owned subscription intent; denial updates cannot be dropped.
-    subscription_snapshot_rx: tokio::sync::watch::Receiver<HashSet<Uuid>>,
+    subscription_snapshot_rx: tokio::sync::watch::Receiver<SubscriptionSnapshot>,
     /// Receiver for encrypted observer control events addressed to this agent.
     observer_control_rx: Option<mpsc::Receiver<Event>>,
     /// Sender for commands to the background task.
@@ -907,7 +912,7 @@ impl HarnessRelay {
             mpsc::channel::<Event>(event_channel_capacity());
         let (cmd_tx, cmd_rx) = mpsc::channel::<RelayCommand>(CMD_CHANNEL_CAPACITY);
         let (subscription_snapshot_tx, subscription_snapshot_rx) =
-            tokio::sync::watch::channel(HashSet::new());
+            tokio::sync::watch::channel(SubscriptionSnapshot::default());
 
         let bg_keys = keys.clone();
         let bg_relay_url = relay_url.to_string();
@@ -948,9 +953,12 @@ impl HarnessRelay {
         })
     }
 
-    /// Latest background subscription intent, including denial and reconnect changes.
+    /// Latest background subscription intent, including denial and reconnect changes,
+    /// plus whether the local authenticated socket currently covers that intent.
     /// Consumers can borrow immediately without waiting for the changed notification.
-    pub(crate) fn subscription_snapshots(&self) -> tokio::sync::watch::Receiver<HashSet<Uuid>> {
+    pub(crate) fn subscription_snapshots(
+        &self,
+    ) -> tokio::sync::watch::Receiver<SubscriptionSnapshot> {
         self.subscription_snapshot_rx.clone()
     }
 
@@ -1077,6 +1085,15 @@ impl HarnessRelay {
             .await
             .map_err(|_| RelayError::ConnectionClosed)?;
         Ok(())
+    }
+
+    /// Release membership readiness after the startup channel-intent batch has
+    /// crossed the background command queue.
+    pub async fn mark_startup_subscriptions_ready(&self) -> Result<(), RelayError> {
+        self.cmd_tx
+            .send(RelayCommand::StartupSubscriptionsReady)
+            .await
+            .map_err(|_| RelayError::ConnectionClosed)
     }
 
     /// Subscribe to encrypted observer control frames addressed to this agent.
@@ -1278,12 +1295,35 @@ impl TwoGenDedup {
     }
 }
 
+/// Latest subscription authority published by the background task.
+///
+/// `channels` is subscription *intent*: it changes at command-apply time so a
+/// membership diff never strands a channel behind an unconfirmed REQ.
+/// `confirmed` narrows that to local readiness — it is true only when the
+/// authenticated socket is live, the startup intent barrier has crossed, the
+/// membership notification watch is live, no membership replay is pending,
+/// every intended channel has a REQ written to the current live socket, and no
+/// channel retry is parked. It does not wait for an EOSE or any other relay
+/// acknowledgement. A consumer that reports a channel count must gate on
+/// `confirmed`; a consumer that reconciles membership intent must not.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SubscriptionSnapshot {
+    pub(crate) channels: HashSet<Uuid>,
+    pub(crate) confirmed: bool,
+}
+
 /// State maintained by the background WebSocket task.
 struct BgState {
     /// Active subscriptions: channel_id → subscription_id string.
     active_subscriptions: HashMap<Uuid, String>,
     /// Latest subscription intent, independent of bounded message delivery queues.
-    subscription_snapshot: tokio::sync::watch::Sender<HashSet<Uuid>>,
+    subscription_snapshot: tokio::sync::watch::Sender<SubscriptionSnapshot>,
+    /// Whether the background task currently holds an authenticated socket.
+    /// Subscription intent survives a disconnect; readiness does not.
+    connected: bool,
+    /// Whether the initial discovered-channel intent batch has crossed the
+    /// command queue. Dynamic subscriptions after startup do not change this.
+    startup_subscriptions_ready: bool,
     /// Most recent `created_at` timestamp seen per channel (for `since` filter).
     last_seen: HashMap<Uuid, u64>,
     /// Two-generation dedup set of event IDs seen.
@@ -1376,7 +1416,9 @@ impl BgState {
     fn new() -> Self {
         Self {
             active_subscriptions: HashMap::new(),
-            subscription_snapshot: tokio::sync::watch::channel(HashSet::new()).0,
+            subscription_snapshot: tokio::sync::watch::channel(SubscriptionSnapshot::default()).0,
+            connected: false,
+            startup_subscriptions_ready: false,
             last_seen: HashMap::new(),
             seen_ids: TwoGenDedup::new(SEEN_ID_LIMIT),
             active_filters: HashMap::new(),
@@ -1403,14 +1445,35 @@ impl BgState {
     }
 
     fn publish_subscription_snapshot(&self) {
+        let next = SubscriptionSnapshot {
+            channels: self.active_subscriptions.keys().copied().collect(),
+            // A channel parked in either drain has no REQ written on the
+            // current socket, and a dead socket invalidates every prior write.
+            confirmed: self.connected
+                && self.membership_sub_active
+                && self.startup_subscriptions_ready
+                && !self.membership_resub_needed
+                && self.membership_dropped_since.is_none()
+                && self.rate_limited_pending.is_empty()
+                && self.resubscribe_retry.is_empty(),
+        };
         self.subscription_snapshot.send_if_modified(|snapshot| {
-            let current: HashSet<_> = self.active_subscriptions.keys().copied().collect();
-            if *snapshot == current {
+            if *snapshot == next {
                 return false;
             }
-            *snapshot = current;
+            *snapshot = next;
             true
         });
+    }
+
+    /// Flip transport liveness and republish, so readiness cannot survive a
+    /// disconnect on the strength of retained subscription intent.
+    fn set_connected(&mut self, connected: bool) {
+        if self.connected == connected {
+            return;
+        }
+        self.connected = connected;
+        self.publish_subscription_snapshot();
     }
 
     /// Record a received event for dedup and `since` tracking.
@@ -1630,6 +1693,11 @@ fn apply_command_to_state(state: &mut BgState, cmd: RelayCommand) {
         }
         RelayCommand::SubscribeMembership => {
             state.membership_sub_active = true;
+            state.publish_subscription_snapshot();
+        }
+        RelayCommand::StartupSubscriptionsReady => {
+            state.startup_subscriptions_ready = true;
+            state.publish_subscription_snapshot();
         }
         RelayCommand::SubscribeObserverControls => {
             state.observer_control_sub_active = true;
@@ -1674,6 +1742,11 @@ fn retain_failed_command_intent(state: &mut BgState, cmd: RelayCommand) {
             filter,
             replay_since,
         } => {
+            // A command interrupted after it left the queue has not reached
+            // the relay. Keep it in the bounded retry drain as well as in the
+            // authoritative subscription intent. Park first so the intent
+            // publish below cannot announce an unsent REQ as confirmed.
+            state.resubscribe_retry.insert(channel_id);
             apply_command_to_state(
                 state,
                 RelayCommand::Subscribe {
@@ -1682,14 +1755,16 @@ fn retain_failed_command_intent(state: &mut BgState, cmd: RelayCommand) {
                     replay_since,
                 },
             );
-            // A command interrupted after it left the queue has not reached
-            // the relay. Keep it in the bounded retry drain as well as in the
-            // authoritative subscription intent.
-            state.resubscribe_retry.insert(channel_id);
         }
         RelayCommand::SubscribeMembership => {
-            apply_command_to_state(state, RelayCommand::SubscribeMembership);
+            // Park readiness before applying the retained intent. Otherwise a
+            // live socket can publish a transient confirmed snapshot while the
+            // membership REQ is still unsent.
             state.membership_resub_needed = true;
+            apply_command_to_state(state, RelayCommand::SubscribeMembership);
+        }
+        RelayCommand::StartupSubscriptionsReady => {
+            apply_command_to_state(state, RelayCommand::StartupSubscriptionsReady);
         }
         RelayCommand::SubscribeObserverControls => {
             apply_command_to_state(state, RelayCommand::SubscribeObserverControls);
@@ -1724,8 +1799,8 @@ fn retain_deferred_command_intent(
 
 /// Execute a command on a live WebSocket connection.
 ///
-/// Handles the five data commands: Subscribe, Unsubscribe,
-/// SubscribeMembership, PublishEvent, SetStartupWatermark. Callers handle
+/// Handles the data commands: Subscribe, Unsubscribe, SubscribeMembership,
+/// StartupSubscriptionsReady, PublishEvent, SetStartupWatermark. Callers handle
 /// Shutdown and Reconnect for control flow before dispatching here.
 ///
 /// Returns `true` if the command succeeded (or was a no-op). Returns `false`
@@ -1750,6 +1825,9 @@ async fn execute_connected_command(
                 debug!(
                     "rate-gated: deferring REQ for channel {channel_id} to rate_limited_pending"
                 );
+                // Park before recording intent: the intent publish must already
+                // see this channel as unconfirmed.
+                state.rate_limited_pending.insert(channel_id, retry_after);
                 apply_command_to_state(
                     state,
                     RelayCommand::Subscribe {
@@ -1758,7 +1836,6 @@ async fn execute_connected_command(
                         replay_since,
                     },
                 );
-                state.rate_limited_pending.insert(channel_id, retry_after);
                 return true; // connection is fine — just rate-limited
             }
 
@@ -1782,14 +1859,18 @@ async fn execute_connected_command(
                     .active_subscriptions
                     .insert(channel_id, channel_sub_id(channel_id));
                 state.active_filters.insert(channel_id, filter);
-                state.publish_subscription_snapshot();
                 // Evict stale drain entries so the drain loop can't send a
-                // duplicate REQ for this now-live subscription.
+                // duplicate REQ for this now-live subscription. Publishing
+                // before that eviction would announce readiness computed from
+                // drain entries this REQ has already retired.
                 state.rate_limited_pending.remove(&channel_id);
                 state.resubscribe_retry.remove(&channel_id);
+                state.publish_subscription_snapshot();
                 true
             } else {
-                // Send failed — record intent so reconnect restores it.
+                // Send failed — the socket is dead until the caller reconnects,
+                // so retained intent must not read as confirmed.
+                state.set_connected(false);
                 warn!("subscribe REQ failed for channel {channel_id} — recording intent for reconnect");
                 apply_command_to_state(
                     state,
@@ -1819,9 +1900,12 @@ async fn execute_connected_command(
         }
         RelayCommand::SubscribeMembership => {
             state.membership_sub_active = true;
+            // A new control REQ is pending until the write succeeds. This also
+            // covers a repeated command on an otherwise healthy socket.
+            state.membership_resub_needed = true;
+            state.publish_subscription_snapshot();
             if state.check_rate_gate().is_some() {
                 debug!("rate-gated: deferring membership subscription");
-                state.membership_resub_needed = true;
                 return true;
             }
             let since = state.membership_last_seen.or(state.startup_watermark);
@@ -1831,13 +1915,20 @@ async fn execute_connected_command(
                 if state.membership_last_seen.is_none() {
                     state.membership_last_seen = since;
                 }
+                state.publish_subscription_snapshot();
                 true
             } else {
                 // Send failed — record intent so reconnect restores it.
+                state.set_connected(false);
                 warn!("membership subscribe REQ failed — recording intent for reconnect");
-                state.membership_resub_needed = true;
+                state.publish_subscription_snapshot();
                 false
             }
+        }
+        RelayCommand::StartupSubscriptionsReady => {
+            state.startup_subscriptions_ready = true;
+            state.publish_subscription_snapshot();
+            true
         }
         RelayCommand::SubscribeObserverControls => {
             state.observer_control_sub_active = true;
@@ -1853,6 +1944,12 @@ async fn execute_connected_command(
             } else {
                 warn!("observer control subscribe REQ failed — recording intent for reconnect");
                 state.observer_resub_needed = true;
+                // A failed control-plane write means the socket cannot be
+                // treated as live until recovery completes. Keep readiness
+                // unknown even when this command is drained after a
+                // reconnect, where callers may otherwise retain the prior
+                // connected snapshot.
+                state.set_connected(false);
                 false
             }
         }
@@ -1927,7 +2024,7 @@ async fn run_background_task(
     initial_handshake_buffer: std::collections::VecDeque<RelayMessage>,
     event_tx: mpsc::Sender<Option<BuzzEvent>>,
     observer_control_tx: mpsc::Sender<Event>,
-    subscription_snapshot_tx: tokio::sync::watch::Sender<HashSet<Uuid>>,
+    subscription_snapshot_tx: tokio::sync::watch::Sender<SubscriptionSnapshot>,
     mut cmd_rx: mpsc::Receiver<RelayCommand>,
     keys: Keys,
     relay_url: String,
@@ -1938,6 +2035,9 @@ async fn run_background_task(
     let mut state = BgState::new();
     state.health = health;
     state.subscription_snapshot = subscription_snapshot_tx;
+    // The caller hands over an authenticated socket; subscriptions arrive as
+    // commands on it.
+    state.connected = true;
 
     let handshake_ok = process_handshake_buffer(
         &mut ws,
@@ -2122,6 +2222,7 @@ async fn run_background_task(
                     if send_membership_subscribe(&mut ws, &agent_pubkey_hex, replay_since).await {
                         state.membership_resub_needed = false;
                         state.membership_dropped_since = None;
+                        state.publish_subscription_snapshot();
                         budget = budget.saturating_sub(1);
                         any_sent = true;
                     } else {
@@ -2216,6 +2317,7 @@ async fn run_background_task(
                        };
 
                        if socket_lost {
+                           state.set_connected(false);
                            // Signal the caller, then attempt autonomous reconnect.
                            // Use try_send to avoid blocking on backpressure — recovery
                            // must not stall when the event channel is full.
@@ -2557,6 +2659,7 @@ async fn handle_ws_message(
                                 // replay starts early enough to re-deliver it.
                                 state.membership_dropped_since =
                                     Some(state.membership_dropped_since.map_or(ts, |d| d.min(ts)));
+                                state.publish_subscription_snapshot();
                                 // Proactively trigger resubscribe without waiting for a disconnect.
                                 state.proactive_resubscribe_needed = true;
                                 warn!(
@@ -2669,12 +2772,27 @@ async fn handle_ws_message(
                                 .as_secs_f64()
                         );
                         if let Some(channel_id) = channel_id_from_sub_id(&subscription_id) {
-                            state.rate_limited_pending.insert(channel_id, deadline);
+                            if state.active_subscriptions.contains_key(&channel_id) {
+                                state.rate_limited_pending.insert(channel_id, deadline);
+                                // The relay rejected this REQ: intent is unchanged
+                                // but the channel is no longer confirmed.
+                                state.publish_subscription_snapshot();
+                            } else {
+                                // A delayed CLOSED can arrive after the caller
+                                // unsubscribed and cleared this channel's
+                                // retry metadata. Preserve the global gate, but
+                                // never resurrect a removed channel as pending.
+                                debug!(
+                                    channel_id = %channel_id,
+                                    "ignoring rate-limited CLOSED for removed channel"
+                                );
+                            }
                         } else if subscription_id == MEMBERSHIP_NOTIF_SUB_ID {
                             // Mark membership sub for drain recovery. The relay rejected
                             // this REQ before registering it, so the sub does not exist
                             // server-side — the drain must re-send it.
                             state.membership_resub_needed = true;
+                            state.publish_subscription_snapshot();
                         } else if subscription_id == OBSERVER_CONTROL_SUB_ID {
                             state.observer_resub_needed = true;
                         }
@@ -2712,6 +2830,11 @@ async fn handle_ws_message(
                             return false;
                         }
                     } else if subscription_id == MEMBERSHIP_NOTIF_SUB_ID {
+                        // The watch is unavailable while this targeted REQ is
+                        // in flight; keep the count unknown until the write
+                        // succeeds or reconnect marks the socket dead.
+                        state.membership_resub_needed = true;
+                        state.publish_subscription_snapshot();
                         let since =
                             match (state.membership_dropped_since, state.membership_last_seen) {
                                 (Some(d), Some(l)) => Some(d.min(l)),
@@ -2723,6 +2846,8 @@ async fn handle_ws_message(
                         if sent {
                             // Success — subscription is live again.
                             state.membership_dropped_since = None;
+                            state.membership_resub_needed = false;
+                            state.publish_subscription_snapshot();
                         } else {
                             // Resubscribe failed — likely half-dead socket.
                             // Keep membership_sub_active = true so reconnect restores it.
@@ -3088,6 +3213,9 @@ async fn resubscribe_with_retained_commands(
                 state.resubscribe_retry.insert(channel_id);
             }
         }
+        // Intent is unchanged across reconnect; readiness reflects whatever this
+        // pass parked (or cleared).
+        state.publish_subscription_snapshot();
     }
 
     // Membership and observer-control are control-plane subscriptions: a silent
@@ -3097,6 +3225,7 @@ async fn resubscribe_with_retained_commands(
         if state.check_rate_gate().is_some() {
             debug!("rate-gated: parking membership resubscribe after reconnect");
             state.membership_resub_needed = true;
+            state.publish_subscription_snapshot();
         } else {
             if !state.active_subscriptions.is_empty()
                 && !pacing_sleep(cmd_rx, deferred_commands, REQ_PACING_INTERVAL).await
@@ -3113,8 +3242,11 @@ async fn resubscribe_with_retained_commands(
             if sent {
                 state.membership_dropped_since = None;
                 state.membership_resub_needed = false;
+                state.publish_subscription_snapshot();
             } else {
                 warn!("failed to resubscribe membership after reconnect");
+                state.membership_resub_needed = true;
+                state.publish_subscription_snapshot();
                 retain_deferred_command_intent(state, deferred_commands);
                 return ResubscribeResult::RetryConnection;
             }
@@ -3252,6 +3384,8 @@ async fn drain_rate_limited_pending(
             warn!("drain_rate_limited_pending: REQ failed for channel {channel_id} — re-queued with +5s penalty");
         }
     }
+    // Readiness changes when the last parked channel leaves the drain.
+    state.publish_subscription_snapshot();
     sent_count
 }
 
@@ -3308,6 +3442,8 @@ async fn drain_resubscribe_retry(
             // Leave in resubscribe_retry; next main-loop tick will try again.
         }
     }
+    // Readiness changes when the last parked channel leaves the drain.
+    state.publish_subscription_snapshot();
     sent_count
 }
 

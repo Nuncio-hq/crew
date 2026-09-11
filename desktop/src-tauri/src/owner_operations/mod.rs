@@ -28,6 +28,8 @@ pub enum OperationKind {
     ThreadHandoff,
     /// Channel Crew role configuration with fixed native admission policy.
     ChannelCrewConfig,
+    /// Durable local managed-agent removal and channel cleanup.
+    ManagedAgentDelete,
 }
 
 /// Observable operation phase. Reconciliation is independent of phase.
@@ -80,6 +82,15 @@ pub struct Operation {
 /// Bounded recovery-list entry. Load the exact ID separately for its payload.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationSummary {
+    /// Stable native insertion sequence used to order separate history rows.
+    /// Operation revisions are local to one row and cannot order a predecessor
+    /// against its successor, and `updated_at` is wall clock. This is the
+    /// row's SQLite identifier: retention always removes the *oldest* eligible
+    /// terminal rows, so two rows that exist at the same time keep the order
+    /// in which they were reserved. It is internal ordering metadata and is
+    /// deliberately never serialized to the renderer.
+    #[serde(skip)]
+    pub sequence: i64,
     /// Canonical operation UUID, also the stable pagination cursor.
     pub id: String,
     /// Consumer that owns reconciliation.
@@ -93,6 +104,30 @@ pub struct OperationSummary {
     /// Whether the consumer has reconciled all side effects.
     pub reconciled: bool,
     /// Native update time in Unix seconds.
+    pub updated_at: i64,
+}
+
+/// Redacted, app-global view of managed-agent deletion work. The payload is
+/// intentionally omitted so a workspace switch cannot expose another scope's
+/// cleanup details; callers can switch to `community` and load the operation
+/// through the normal scoped status/retry path.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ManagedAgentDeletionSummary {
+    /// Canonical operation UUID.
+    pub id: String,
+    /// Native owner public key that owns the record.
+    pub owner: String,
+    /// Canonical community origin that owns the record.
+    pub community: String,
+    /// Managed-agent public key whose local deletion is fenced.
+    pub resource_key: String,
+    /// Expected revision for the next scoped CAS.
+    pub revision: u64,
+    /// Last recorded phase.
+    pub status: OperationStatus,
+    /// Whether all domain side effects have been reconciled.
+    pub reconciled: bool,
+    /// Native last-update time in Unix seconds.
     pub updated_at: i64,
 }
 
@@ -128,6 +163,17 @@ pub enum CreateResult {
     Created(Operation),
     /// The current durable operation for an existing intent or resource claim.
     Existing(Operation),
+}
+
+/// Atomic retirement of one Wiki operation and reservation of its immediate
+/// successor. The predecessor is returned as the committed retirement
+/// snapshot so a lost IPC response can be recovered without a generic write.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WikiSuccessorResult {
+    /// The superseded, reconciled predecessor snapshot.
+    pub predecessor: Operation,
+    /// The newly reserved unresolved successor snapshot.
+    pub successor: Operation,
 }
 
 /// Admission limits. Unresolved operations are never evicted.
@@ -169,6 +215,7 @@ pub enum StoreError {
     Conflict,
     Missing,
     Unreconciled,
+    Pinned,
     Quota,
     Corrupt,
     Version,
@@ -181,8 +228,11 @@ pub struct OperationStore {
     limits: Limits,
 }
 
+mod managed_delete_claim;
 mod mutations;
 mod storage;
+
+pub(crate) use managed_delete_claim::validate_record as validate_managed_agent_delete_record;
 
 #[cfg(all(test, unix))]
 mod tests;
@@ -196,6 +246,7 @@ impl std::fmt::Display for StoreError {
             Self::Conflict => "recovery operation changed; reload",
             Self::Missing => "recovery operation is missing",
             Self::Unreconciled => "recovery operation has unresolved side effects",
+            Self::Pinned => "recovery operation is pinned by an unresolved Wiki successor",
             Self::Quota => "recovery storage quota reached",
             Self::Corrupt => "recovery storage is corrupt",
             Self::Version => "recovery storage version is unsupported",
@@ -213,6 +264,7 @@ mod kind_policy_tests;
 fn record_byte_limit(limits: Limits, kind: OperationKind) -> usize {
     match kind {
         OperationKind::ChannelCrewConfig => limits.bytes_per_operation.min(1024 * 1024),
+        OperationKind::ManagedAgentDelete => limits.bytes_per_operation.min(64 * 1024),
         _ => limits.bytes_per_operation,
     }
 }

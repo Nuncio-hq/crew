@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 // The mock identity's own pre-seeded message in #general (authored by
 // DEFAULT_MOCK_IDENTITY.pubkey in e2eBridge.ts). Editing/deleting one's own
@@ -44,7 +45,7 @@ async function submitEmptyEdit(
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 });
 

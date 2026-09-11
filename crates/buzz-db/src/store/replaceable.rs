@@ -9,9 +9,20 @@ use uuid::Uuid;
 use crate::observability::{self, LockType, TransactionOperation};
 use crate::{Db, DbError, Result};
 
+type ExistingReplaceableRow = (DateTime<Utc>, Vec<u8>, bool, bool, bool, i64);
+
 #[path = "replaceable_conditions.rs"]
 mod conditions;
 pub use conditions::{ParameterizedReplacePrecondition, ParameterizedReplaceStatus};
+
+/// Maximum live signed Wiki-event bytes per `(community, owner)` coordinate.
+///
+/// This is a logical live-row bound. Soft-deleted history remains available to
+/// the normal retention/deletion machinery and is deliberately excluded.
+pub const MAX_WIKI_LIVE_BYTES: i64 = 512 * 1024 * 1024;
+/// Maximum live Wiki rows per `(community, owner)` coordinate.
+pub const MAX_WIKI_LIVE_EVENTS: i64 = 4096;
+const MAX_WIKI_SIGNED_EVENT_BYTES: i64 = 192 * 1024;
 
 /// Result of a transaction-bound parameterized-replaceable event write.
 #[derive(Clone, Debug)]
@@ -72,6 +83,57 @@ pub(crate) fn event_replacement_lock_key(
     hash as i64
 }
 
+/// The replaceable Wiki head coordinate (`<repo-d>/_toc`). Only this address
+/// carries the conditional publication precondition.
+fn is_wiki_toc_d_tag(d_tag: &str) -> bool {
+    d_tag
+        .rsplit_once('/')
+        .is_some_and(|(repo, slug)| !repo.is_empty() && slug == "_toc")
+}
+
+/// Whether this exact event ID was accepted at this exact
+/// community/owner/kind/`d` coordinate and is now soft deleted.
+///
+/// Scoping every field is what makes the answer evidence: an event that only
+/// exists at some other coordinate, or under another owner or community, says
+/// nothing about this coordinate's precondition.
+async fn retired_at_coordinate(
+    tx: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    kind_i32: i32,
+    pubkey_bytes: &[u8],
+    d_tag: &str,
+    event_id: &[u8],
+) -> Result<bool> {
+    let found: Option<(bool,)> = sqlx::query_as(
+        "SELECT true FROM events \
+         WHERE community_id = $1 AND kind = $2 AND pubkey = $3 AND d_tag = $4 AND id = $5 \
+           AND deleted_at IS NOT NULL LIMIT 1",
+    )
+    .bind(community_id.as_uuid())
+    .bind(kind_i32)
+    .bind(pubkey_bytes)
+    .bind(d_tag)
+    .bind(event_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(found.is_some())
+}
+
+fn is_reserved_wiki_d_tag(d_tag: &str) -> bool {
+    let Some((_, slug)) = d_tag.rsplit_once('/') else {
+        return false;
+    };
+    ["p1-", "m1-"].iter().any(|prefix| {
+        slug.strip_prefix(prefix).is_some_and(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+    })
+}
+
 /// Replace a parameterized event in a caller-owned transaction.
 ///
 /// This function acquires a transaction-scoped advisory lock but never commits
@@ -92,6 +154,23 @@ async fn replace_parameterized_event_in_transaction_impl(
     let created_at = DateTime::from_timestamp(created_at_secs, 0)
         .ok_or(DbError::InvalidTimestamp(created_at_secs))?;
     let received_at = Utc::now();
+
+    // Wiki quota is owner-scoped, so every Wiki writer takes the owner lock
+    // before its coordinate lock. Deletion uses the same order. Holding both
+    // through commit makes the usage read and replacement one serializable
+    // decision even when two distinct Wiki coordinates race.
+    let is_wiki = kind_i32 == buzz_core::kind::KIND_REPO_WIKI_PAGE as i32;
+    if is_wiki {
+        let owner_lock_key =
+            event_replacement_lock_key(community_id, kind_i32, pubkey_bytes.as_slice(), None);
+        observability::observe_advisory_lock(
+            LockType::Replacement,
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(owner_lock_key)
+                .execute(&mut **tx),
+        )
+        .await?;
+    }
 
     let lock_key = event_replacement_lock_key(
         community_id,
@@ -148,10 +227,23 @@ async fn replace_parameterized_event_in_transaction_impl(
         }
         _ => (None, None),
     };
-    let existing_row: Option<(DateTime<Utc>, Vec<u8>, bool)> = sqlx::query_as(
-        "SELECT created_at, id, EXISTS(SELECT 1 FROM jsonb_array_elements(tags) tag WHERE tag->>0=$5 AND tag->>1=$6) FROM events \
+    let existing_row: Option<ExistingReplaceableRow> = sqlx::query_as(
+        "SELECT created_at, id, \
+                EXISTS(SELECT 1 FROM jsonb_array_elements(tags) tag WHERE tag->>0=$5 AND tag->>1=$6), \
+                (kind = 30623 AND EXISTS(SELECT 1 FROM jsonb_array_elements(tags) tag WHERE tag->>0='wiki-version' AND tag->>1='1')), \
+                (kind = 30623 AND d_tag ~ '/(p1|m1)-[0-9a-f]{64}$'), \
+                octet_length(jsonb_build_object(\
+                    'id', encode(id, 'hex'), \
+                    'pubkey', encode(pubkey, 'hex'), \
+                    'created_at', EXTRACT(EPOCH FROM created_at)::bigint, \
+                    'kind', kind, \
+                    'tags', tags, \
+                    'content', content, \
+                    'sig', encode(sig, 'hex')\
+                )::text)::bigint \
+         FROM events \
          WHERE community_id = $1 AND kind = $2 AND pubkey = $3 AND d_tag = $4 AND deleted_at IS NULL \
-         ORDER BY created_at DESC, id ASC LIMIT 1",
+         ORDER BY created_at DESC, id ASC LIMIT 1 FOR UPDATE",
     )
     .bind(community_id.as_uuid())
     .bind(kind_i32)
@@ -163,8 +255,19 @@ async fn replace_parameterized_event_in_transaction_impl(
     .await?;
     let blocked_live_tag = existing_row
         .as_ref()
-        .is_some_and(|(_, _, blocked)| *blocked);
-    let existing = existing_row.map(|(created_at, id, _)| (created_at, id));
+        .is_some_and(|(_, _, blocked, _, _, _)| *blocked);
+    let existing_v1_wiki = existing_row.as_ref().is_some_and(|(_, _, _, v1, _, _)| *v1);
+    let existing_reserved_wiki = existing_row
+        .as_ref()
+        .is_some_and(|(_, _, _, _, reserved, _)| *reserved);
+    let existing_envelope_bytes = existing_row
+        .as_ref()
+        .filter(|(_, _, _, _, reserved, _)| *reserved)
+        .map(|(_, _, _, _, _, bytes)| *bytes)
+        .unwrap_or_default();
+    let existing = existing_row
+        .as_ref()
+        .map(|(created_at, id, _, _, _, _)| (*created_at, id.clone()));
     let watermark: Option<(DateTime<Utc>, Vec<u8>)> = if is_nip_rs {
         sqlx::query_as(
             "SELECT created_at, event_id FROM parameterized_event_watermarks \
@@ -207,6 +310,41 @@ async fn replace_parameterized_event_in_transaction_impl(
         ));
     }
 
+    // Once a v1 Wiki head exists, an unconditioned or legacy-shaped incoming
+    // row must not downgrade it. This check is deliberately inside the locked
+    // replacement transaction and applies equally to an incoming conditional
+    // TOC that forgot its v1 tags.
+    let incoming_v1_wiki = !is_wiki
+        || event.tags.iter().any(|tag| {
+            let parts = tag.as_slice();
+            parts.len() == 2 && parts[0] == "wiki-version" && parts[1] == "1"
+        });
+    if is_wiki
+        && existing_v1_wiki
+        && (precondition == ParameterizedReplacePrecondition::Unconditional || !incoming_v1_wiki)
+    {
+        return Ok(ParameterizedReplaceResult::new(
+            event,
+            received_at,
+            channel_id,
+            ParameterizedReplaceStatus::RevisionMismatch,
+        ));
+    }
+
+    // Immutable p1-/m1- coordinates are create-only. An exact current replay
+    // returned above is the sole permitted write once one of these reserved
+    // addresses has a live head, regardless of whether the caller selected the
+    // conditional precondition.
+    let incoming_reserved_wiki = is_reserved_wiki_d_tag(d_tag);
+    if is_wiki && (existing_reserved_wiki || incoming_reserved_wiki) && existing.is_some() {
+        return Ok(ParameterizedReplaceResult::new(
+            event,
+            received_at,
+            channel_id,
+            ParameterizedReplaceStatus::RevisionMismatch,
+        ));
+    }
+
     if precondition == ParameterizedReplacePrecondition::ExactReplayOnly {
         return Ok(ParameterizedReplaceResult::new(
             event,
@@ -214,6 +352,72 @@ async fn replace_parameterized_event_in_transaction_impl(
             channel_id,
             ParameterizedReplaceStatus::ReplayOnlyMiss,
         ));
+    }
+
+    // D-079 head/precondition retirement (accepted; implementation pending
+    // acceptance). Only a conditional v1 Wiki `_toc` write qualifies, and only
+    // while this transaction already holds the owner then coordinate locks. A
+    // historical non-live exact event can never be reinserted, so its recorded
+    // identity is durable evidence that this exact attempt can never become
+    // live — unlike an empty read, which proves nothing. The exact live replay
+    // above is answered as a successful duplicate first, and a *different*
+    // live head keeps its existing conflict classification.
+    let conditional_toc = is_wiki
+        && incoming_v1_wiki
+        && !incoming_reserved_wiki
+        && is_wiki_toc_d_tag(d_tag)
+        && matches!(
+            precondition,
+            ParameterizedReplacePrecondition::ExpectedMissing
+                | ParameterizedReplacePrecondition::ExpectedRevision(_)
+        );
+    if conditional_toc {
+        // Classify a retired desired head *before* the generic
+        // ExpectedRevision early return, so a permanently retired H is never
+        // hidden behind RevisionMissing. A query failure propagates and can
+        // never be reported as proof.
+        if retired_at_coordinate(
+            tx,
+            community_id,
+            kind_i32,
+            pubkey_bytes.as_slice(),
+            d_tag,
+            incoming_id,
+        )
+        .await?
+        {
+            return Ok(ParameterizedReplaceResult::new(
+                event,
+                received_at,
+                channel_id,
+                ParameterizedReplaceStatus::WikiHeadRetired,
+            ));
+        }
+        if let ParameterizedReplacePrecondition::ExpectedRevision(expected_revision) = precondition
+        {
+            // The precondition is unsatisfiable only when there is no live
+            // head at all and the exact expected event is itself retired at
+            // this same coordinate. An unknown or foreign expected revision
+            // stays generic RevisionMissing.
+            if existing.is_none()
+                && retired_at_coordinate(
+                    tx,
+                    community_id,
+                    kind_i32,
+                    pubkey_bytes.as_slice(),
+                    d_tag,
+                    expected_revision,
+                )
+                .await?
+            {
+                return Ok(ParameterizedReplaceResult::new(
+                    event,
+                    received_at,
+                    channel_id,
+                    ParameterizedReplaceStatus::WikiExpectedHeadRetired,
+                ));
+            }
+        }
     }
 
     if let ParameterizedReplacePrecondition::ExpectedRevision(expected_revision) = precondition {
@@ -248,6 +452,71 @@ async fn replace_parameterized_event_in_transaction_impl(
             channel_id,
             ParameterizedReplaceStatus::Superseded,
         ));
+    }
+
+    if is_wiki {
+        let incoming_envelope_bytes = serde_json::to_vec(event)?.len() as i64;
+        if incoming_envelope_bytes > MAX_WIKI_SIGNED_EVENT_BYTES {
+            return Err(DbError::InvalidData(
+                "Wiki signed event exceeds the 192 KiB bound".into(),
+            ));
+        }
+        if incoming_reserved_wiki {
+            // A non-live replay must be classified before quota admission. The
+            // later INSERT conflict would preserve the row, but checking it
+            // only after the quota query could turn a retry of an already
+            // consumed immutable event into a misleading quota rejection.
+            let historical_duplicate: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM events WHERE community_id=$1 AND id=$2)",
+            )
+            .bind(community_id.as_uuid())
+            .bind(incoming_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if historical_duplicate {
+                return Ok(ParameterizedReplaceResult::new(
+                    event,
+                    received_at,
+                    channel_id,
+                    ParameterizedReplaceStatus::DuplicateNotLive,
+                ));
+            }
+
+            // Use the database's canonical JSONB text form for both the stored
+            // rows and the incoming value. `serde_json::to_vec` is used separately
+            // for the 192 KiB admission bound; using it only for the incoming
+            // quota delta would make replacement accounting disagree with the
+            // existing-row representation.
+            let incoming_json = serde_json::to_value(event)?;
+            let live_usage: (i64, i64, i64) = sqlx::query_as(
+                "SELECT COUNT(*)::bigint, COALESCE(SUM(octet_length(jsonb_build_object(\
+                     'id', encode(id, 'hex'), \
+                     'pubkey', encode(pubkey, 'hex'), \
+                     'created_at', EXTRACT(EPOCH FROM created_at)::bigint, \
+                     'kind', kind, \
+                     'tags', tags, \
+                     'content', content, \
+                     'sig', encode(sig, 'hex')\
+                 )::text)), 0)::bigint, octet_length($4::jsonb::text)::bigint \
+                 FROM events \
+                 WHERE community_id=$1 AND kind=$2 AND pubkey=$3 AND deleted_at IS NULL \
+                   AND d_tag ~ '/(p1|m1)-[0-9a-f]{64}$'",
+            )
+            .bind(community_id.as_uuid())
+            .bind(kind_i32)
+            .bind(pubkey_bytes.as_slice())
+            .bind(incoming_json)
+            .fetch_one(&mut **tx)
+            .await?;
+            let projected_events = live_usage.0 + if existing_reserved_wiki { 0 } else { 1 };
+            let projected_bytes = live_usage
+                .1
+                .saturating_sub(existing_envelope_bytes)
+                .saturating_add(live_usage.2);
+            if projected_events > MAX_WIKI_LIVE_EVENTS || projected_bytes > MAX_WIKI_LIVE_BYTES {
+                return Err(DbError::WikiStorageQuotaExceeded);
+            }
+        }
     }
 
     let mut savepoint = tx.begin().await?;

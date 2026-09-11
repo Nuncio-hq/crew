@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { FEATURE_OVERRIDES_STORAGE_KEY } from "../helpers/features";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const MOCK_IDENTITY_PUBKEY = "deadbeef".repeat(8);
@@ -91,7 +92,7 @@ test("Cowork channel has no workspace selector and shows the cowork chip", async
     ],
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toContainText("general");
   await expect(page.getByTestId("composer-workspace-selector")).toHaveCount(0);
 

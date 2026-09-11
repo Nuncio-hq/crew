@@ -987,11 +987,45 @@ pub async fn soft_delete_by_coordinate(
 ) -> Result<bool> {
     let deletion_created_at = DateTime::from_timestamp(deletion_created_at_secs, 0)
         .ok_or(DbError::InvalidTimestamp(deletion_created_at_secs))?;
-    let mut connection = crate::observability::acquire_writer(
+    let connection = crate::observability::acquire_writer(
         pool,
         crate::observability::WriterOperation::EventWrite,
     )
     .await?;
+    let mut tx = sqlx::Transaction::begin(connection, None).await?;
+
+    // Coordinate replacement and a-tag deletion share the same transaction
+    // lock. Wiki also has an owner-wide quota lock, which must precede the
+    // coordinate lock just as it does on the replacement path.
+    if kind == buzz_core::kind::KIND_REPO_WIKI_PAGE as i32 {
+        let owner_lock =
+            crate::replaceable::event_replacement_lock_key(community_id, kind, pubkey, None);
+        crate::observability::observe_advisory_lock(
+            crate::observability::LockType::Replacement,
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(owner_lock)
+                .execute(&mut *tx),
+        )
+        .await?;
+    }
+    let coordinate_lock = crate::replaceable::event_replacement_lock_key(
+        community_id,
+        kind,
+        pubkey,
+        Some(d_tag.as_bytes()),
+    );
+    crate::observability::observe_advisory_lock(
+        crate::observability::LockType::Replacement,
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(coordinate_lock)
+            .execute(&mut *tx),
+    )
+    .await?;
+
+    // The replacement lock makes this timestamp-bounded UPDATE serialize with
+    // every parameterized replacement for the same coordinate. Keep the
+    // original all-live-rows behavior: historical duplicate live rows are all
+    // tombstoned by one NIP-09 request.
     let result = sqlx::query(
         "UPDATE events SET deleted_at = NOW() \
          WHERE community_id = $1 AND kind = $2 AND pubkey = $3 AND d_tag = $4 AND deleted_at IS NULL \
@@ -1002,10 +1036,11 @@ pub async fn soft_delete_by_coordinate(
     .bind(pubkey)
     .bind(d_tag)
     .bind(deletion_created_at)
-    .execute(&mut *connection)
+    .execute(&mut *tx)
     .await?;
-
-    Ok(result.rows_affected() > 0)
+    let deleted = result.rows_affected() > 0;
+    tx.commit().await?;
+    Ok(deleted)
 }
 
 /// Atomically soft-delete an event and decrement thread reply counters.

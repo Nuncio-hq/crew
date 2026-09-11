@@ -9,10 +9,10 @@ mod record;
 mod save_lock;
 mod service;
 mod worker;
-#[allow(unused_imports)] // Consumed by the separately integrated durable deletion coordinator.
+// Used by managed-agent deletion after the outer journal is durable.
 pub(crate) use cleanup::save_channel_crew_member_cleanup;
-#[allow(unused_imports)] // Public crate contract for the deletion coordinator.
-pub(crate) use record::{Outcome as CrewSaveOutcome, Progress as CrewSaveProgress};
+// Shared outcome type for the role editor and managed-agent deletion.
+pub(crate) use record::Outcome as CrewSaveOutcome;
 
 pub(crate) use service::{list, retry, save, status};
 pub(crate) use worker::start;

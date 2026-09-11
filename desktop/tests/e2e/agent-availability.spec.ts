@@ -1,8 +1,263 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import type { ManagedAgentRuntimeStatus } from "../../src/shared/api/types";
 import { installMockBridge } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const LOCAL = "d".repeat(64);
+
+async function waitForPresenceSnapshot(page: Page, pubkey: string) {
+  await expect
+    .poll(() =>
+      page.evaluate((target) => {
+        const client = window.__BUZZ_E2E_QUERY_CLIENT__ as typeof window & {
+          getQueryCache?: () => {
+            getAll: () =>
+              | Array<{
+                  queryKey: readonly unknown[];
+                  state: { status: string };
+                }>
+              | undefined;
+          };
+        };
+        return (
+          client
+            .getQueryCache?.()
+            .getAll?.()
+            ?.some(
+              (query) =>
+                query.queryKey[0] === "presence" &&
+                query.queryKey.slice(1).includes(target) &&
+                query.state.status === "success",
+            ) ?? false
+        );
+      }, pubkey.toLowerCase()),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (authorPubkey) =>
+          window.__BUZZ_E2E_HAS_MOCK_AUTHOR_KIND_SUBSCRIPTION__?.({
+            authorPubkey,
+            kind: 20001,
+          }) ?? false,
+        pubkey,
+      ),
+    )
+    .toBe(true);
+}
+
+const MEMBERSHIP_RELAY = "ws://membership.fixture:3370";
+const MEMBERSHIP_TRANSPORT = {
+  state: "connected",
+  code: "none",
+  attempts: 0,
+  elapsedMs: 0,
+  nextRetryAtMs: null,
+  lastError: null,
+} as const;
+
+async function emitMembership(
+  page: Page,
+  count: number | null,
+  seq: number,
+  generation = "membership-one",
+) {
+  await page.evaluate(
+    ({ pubkey, count, seq, generation }) => {
+      const inject = window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__;
+      if (!inject) throw new Error("Observer bridge is unavailable");
+      inject({
+        agentPubkey: pubkey,
+        events: [
+          {
+            kind: "channel_membership",
+            seq,
+            timestamp: new Date(
+              Date.UTC(2026, 8, 10) + seq * 1000,
+            ).toISOString(),
+            agentIndex: null,
+            channelId: null,
+            sessionId: null,
+            turnId: null,
+            payload: {
+              channel_count: count,
+              generation,
+              generation_started_at: "2026-09-10T00:00:00Z",
+            },
+          },
+        ],
+      });
+    },
+    { pubkey: LOCAL, count, seq, generation },
+  );
+}
+
+async function overrideMembershipRuntime(
+  page: Page,
+  patch: Partial<ManagedAgentRuntimeStatus>,
+) {
+  // Change the native IPC response and refetch it. The production runtime
+  // query and membership hook remain responsible for the visible projection.
+  await page.evaluate(
+    async ({ pubkey, patch }) => {
+      const w = window as typeof window & {
+        __MEMBERSHIP_RUNTIME_PATCH__?: Partial<ManagedAgentRuntimeStatus>;
+        __MEMBERSHIP_RUNTIME_WRAPPED__?: boolean;
+        __TAURI_INTERNALS__: {
+          invoke: (
+            command: string,
+            payload: unknown,
+            options: unknown,
+          ) => Promise<unknown>;
+        };
+        __BUZZ_E2E_QUERY_CLIENT__: {
+          invalidateQueries: (filter: { queryKey: string[] }) => Promise<void>;
+        };
+      };
+      w.__MEMBERSHIP_RUNTIME_PATCH__ = patch;
+      if (!w.__MEMBERSHIP_RUNTIME_WRAPPED__) {
+        w.__MEMBERSHIP_RUNTIME_WRAPPED__ = true;
+        const original = w.__TAURI_INTERNALS__.invoke.bind(
+          w.__TAURI_INTERNALS__,
+        );
+        w.__TAURI_INTERNALS__.invoke = async (command, payload, options) => {
+          const response = await original(command, payload, options);
+          if (command !== "list_managed_agent_runtimes") return response;
+          return (response as ManagedAgentRuntimeStatus[]).map((row) =>
+            row.pubkey === pubkey
+              ? { ...row, ...w.__MEMBERSHIP_RUNTIME_PATCH__ }
+              : row,
+          );
+        };
+      }
+      await w.__BUZZ_E2E_QUERY_CLIENT__.invalidateQueries({
+        queryKey: ["managed-agent-runtimes"],
+      });
+    },
+    { pubkey: LOCAL, patch },
+  );
+}
+
+test("membership stays unknown until current transport and nonce agree, then recovers", async ({
+  page,
+}, testInfo) => {
+  await installMockBridge(
+    page,
+    {
+      managedAgents: [
+        {
+          pubkey: LOCAL,
+          name: "Membership agent",
+          status: "running",
+          channelNames: [],
+        },
+      ],
+      managedAgentRuntimes: [
+        {
+          pubkey: LOCAL,
+          relayUrl: MEMBERSHIP_RELAY,
+          startNonce: "membership-one",
+          lifecycle: "listening",
+          transport: MEMBERSHIP_TRANSPORT,
+          transportRetired: false,
+        },
+      ],
+    },
+    { relayWsUrl: MEMBERSHIP_RELAY },
+  );
+  await page.goto("/#/agents");
+  const card = page.getByTestId(`managed-agent-${LOCAL}`);
+  const unknown = card.getByText("Running · Channels unknown", { exact: true });
+  const zero = card.getByText("Running · No channels", { exact: true });
+  await expect(unknown).toBeVisible();
+  await expect(zero).toHaveCount(0);
+  await waitForAnimations(page);
+  await card.screenshot({
+    path: testInfo.outputPath("membership-unknown.png"),
+  });
+
+  await emitMembership(page, 0, 1);
+  await expect(zero).toBeVisible();
+  await expect(unknown).toHaveCount(0);
+  await waitForAnimations(page);
+  await card.screenshot({ path: testInfo.outputPath("membership-zero.png") });
+  await emitMembership(page, 2, 2);
+  await expect(zero).toHaveCount(0);
+  await expect(unknown).toHaveCount(0);
+  await expect(card.getByText("Working", { exact: true })).toHaveCount(0);
+
+  await overrideMembershipRuntime(page, {
+    transport: {
+      ...MEMBERSHIP_TRANSPORT,
+      state: "auth_rejected",
+      code: "auth_denied",
+    },
+  });
+  await expect(unknown).toBeVisible();
+  await emitMembership(page, 0, 3);
+  await expect(zero).toHaveCount(0);
+  await overrideMembershipRuntime(page, {});
+  await expect(zero).toBeVisible();
+  // The observer may beat the native status query after a restart. Refetching
+  // the older native row must preserve the pending frame for its future nonce.
+  await emitMembership(page, 2, 4, "membership-two");
+  await overrideMembershipRuntime(page, {});
+  await expect(zero).toBeVisible();
+  await overrideMembershipRuntime(page, { startNonce: "membership-two" });
+  await expect(unknown).toHaveCount(0);
+  await emitMembership(page, 0, 99, "membership-one");
+  await expect(zero).toHaveCount(0);
+  await expect(unknown).toHaveCount(0);
+  await overrideMembershipRuntime(page, {
+    startNonce: "membership-two",
+    transportRetired: true,
+  });
+  await expect(unknown).toBeVisible();
+  await overrideMembershipRuntime(page, { startNonce: "membership-three" });
+  await expect(unknown).toBeVisible();
+  await emitMembership(page, 2, 100, "membership-three");
+  await expect(unknown).toHaveCount(0);
+  await overrideMembershipRuntime(page, {
+    startNonce: "membership-three",
+    relayUrl: "ws://other-membership.fixture:3370",
+  });
+  await expect(unknown).toBeVisible();
+  await overrideMembershipRuntime(page, { startNonce: "membership-three" });
+  await expect(unknown).toHaveCount(0);
+  await waitForAnimations(page);
+  await card.screenshot({
+    path: testInfo.outputPath("membership-recovered.png"),
+  });
+
+  // Both unknown and confirmed zero preserve the existing keyboard recovery
+  // path. Opening Add exercises the affordance without inventing membership.
+  await emitMembership(page, 0, 101, "membership-three");
+  await expect(zero).toBeVisible();
+  await page
+    .getByRole("button", { name: "Membership agent agent profile" })
+    .press("Enter");
+  const restart = page.getByTestId("user-profile-agent-restart");
+  await expect(restart).toBeEnabled();
+  await restart.focus();
+  await expect(restart).toBeFocused();
+  await page.getByRole("tab", { name: "Channels", exact: true }).press("Enter");
+  const add = page.getByTestId("user-profile-agent-add-channel");
+  await expect(add).toBeEnabled();
+  await add.press("Enter");
+  const addDialog = page.getByRole("dialog", { name: "Add agent to channel" });
+  await expect(addDialog).toBeVisible();
+  await waitForAnimations(page);
+  await addDialog.screenshot({
+    path: testInfo.outputPath("membership-add.png"),
+  });
+  await page.keyboard.press("Escape");
+  await emitMembership(page, null, 102, "membership-three");
+  await expect(unknown).toBeVisible();
+  await expect(add).toBeEnabled();
+  await expect(restart).toBeEnabled();
+});
 
 test("saved deployment with offline presence is not shown as online", async ({
   page,
@@ -284,7 +539,7 @@ test("member menu starts a stopped local main runtime while a thread worker is p
     ],
   });
   await page.goto("/");
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await page.getByTestId("channel-members-trigger").click();
   const row = page.getByTestId(`sidebar-member-${LOCAL}`);
   await expect(row).toBeVisible();
@@ -298,6 +553,7 @@ test("member menu starts a stopped local main runtime while a thread worker is p
       ),
     )
     .toBe(true);
+  await waitForPresenceSnapshot(page, LOCAL);
   await page.evaluate(
     (pubkey) =>
       window.__BUZZ_E2E_EMIT_MOCK_PRESENCE__?.({ pubkey, status: "away" }),
@@ -341,7 +597,7 @@ for (const surface of ["agents", "members"] as const) {
     });
     await page.goto(surface === "agents" ? "/#/agents" : "/");
     if (surface === "members") {
-      await page.getByTestId("channel-agents").click();
+      await openWorkspaceChannel(page, "agents");
       await page.getByTestId("channel-members-trigger").click();
     }
     for (const pubkey of keys) {
@@ -398,6 +654,7 @@ for (const surface of ["agents", "members"] as const) {
         ),
       )
       .toBe(true);
+    await waitForPresenceSnapshot(page, LOCAL);
     await page.evaluate(
       (pubkey) =>
         window.__BUZZ_E2E_EMIT_MOCK_PRESENCE__?.({ pubkey, status: "away" }),
@@ -437,7 +694,7 @@ test("hover profile preserves unknown availability and announces only establishe
     ],
   });
   await page.goto("/");
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
 
   // Hold the actual single-key IPC read pending before opening the lazy hover

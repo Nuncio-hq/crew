@@ -45,7 +45,8 @@ async fn http_fixture(
     });
     let (_event_tx, event_rx) = mpsc::channel(1);
     let (cmd_tx, _cmd_rx) = mpsc::channel(1);
-    let (_snapshot_tx, subscription_snapshot_rx) = tokio::sync::watch::channel(HashSet::new());
+    let (_snapshot_tx, subscription_snapshot_rx) =
+        tokio::sync::watch::channel(SubscriptionSnapshot::default());
     let relay = HarnessRelay {
         event_rx,
         subscription_snapshot_rx,

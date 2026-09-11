@@ -193,6 +193,7 @@ export type MockManagedAgentSeed = {
 type MockManagedAgentRuntimeSeed = {
   pubkey: string;
   relayUrl: string;
+  startNonce?: string;
   lifecycle?: MockManagedAgentRuntimeRow["lifecycle"];
   transport?: import("@/shared/api/types").ManagedAgentRuntimeStatus["transport"];
   transportRetired?: boolean;
@@ -1186,6 +1187,7 @@ type MockManagedAgent = RawManagedAgent & {
 type MockManagedAgentRuntimeRow = {
   pubkey: string;
   relayUrl: string;
+  startNonce?: string;
   localSetup: boolean;
   lifecycle:
     | "starting"
@@ -1211,6 +1213,7 @@ type MockSubscription = {
    *  owner-scoped live subscription (e.g. the observer-archive `24200`
    *  reconciliation gate) independently of channel-scoped ones. */
   ownerPubkeys: string[];
+  authors: string[];
 };
 
 type MockFilter = {
@@ -1400,6 +1403,10 @@ declare global {
       kind: number;
     }) => boolean;
     __BUZZ_E2E_HAS_MOCK_GLOBAL_KIND_SUBSCRIPTION__?: (kind: number) => boolean;
+    __BUZZ_E2E_HAS_MOCK_AUTHOR_KIND_SUBSCRIPTION__?: (input: {
+      authorPubkey: string;
+      kind: number;
+    }) => boolean;
     __BUZZ_E2E_SET_MOCK_USER_STATUS__?: (input: {
       text: string;
       emoji?: string;
@@ -2839,6 +2846,7 @@ function resetMockManagedAgents(config?: E2eConfig) {
     (seed) => ({
       pubkey: seed.pubkey,
       relayUrl: seed.relayUrl,
+      startNonce: seed.startNonce,
       localSetup: true,
       lifecycle: seed.lifecycle ?? "ready",
       pid:
@@ -5617,6 +5625,22 @@ function hasMockOwnerKindSubscription(ownerPubkey: string, kind: number) {
     for (const subscription of socket.subscriptions.values()) {
       if (
         subscription.ownerPubkeys.includes(ownerPubkey) &&
+        (subscription.kinds?.includes(kind) ?? false)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function hasMockAuthorKindSubscription(authorPubkey: string, kind: number) {
+  const normalizedAuthor = authorPubkey.toLowerCase();
+  for (const socket of mockSockets.values()) {
+    for (const subscription of socket.subscriptions.values()) {
+      if (
+        subscription.authors.includes(normalizedAuthor) &&
         (subscription.kinds?.includes(kind) ?? false)
       ) {
         return true;
@@ -11731,6 +11755,7 @@ function sendToMockSocket(args: {
       const channelIds = new Set<string>();
       const kinds = new Set<number>();
       const ownerPubkeys = new Set<string>();
+      const authors = new Set<string>();
       for (const f of filters) {
         for (const channelId of f["#h"] ?? []) channelIds.add(channelId);
         for (const kind of f.kinds ?? []) {
@@ -11738,6 +11763,9 @@ function sendToMockSocket(args: {
         }
         for (const p of f["#p"] ?? []) {
           ownerPubkeys.add(p);
+        }
+        for (const author of f.authors ?? []) {
+          authors.add(author.toLowerCase());
         }
       }
       const onlyChannelId =
@@ -11759,6 +11787,7 @@ function sendToMockSocket(args: {
           channelIds.size > 0 ? [...channelIds] : [GLOBAL_MOCK_SUBSCRIPTION],
         kinds: kinds.size > 0 ? [...kinds] : null,
         ownerPubkeys: [...ownerPubkeys],
+        authors: [...authors],
       });
       sendWsText(socket.handler, ["EOSE", subId]);
       return;
@@ -12727,6 +12756,10 @@ export function maybeInstallE2eTauriMocks() {
   }) => hasMockOwnerKindSubscription(ownerPubkey, kind);
   window.__BUZZ_E2E_HAS_MOCK_GLOBAL_KIND_SUBSCRIPTION__ = (kind) =>
     hasMockLiveSubscription(GLOBAL_MOCK_SUBSCRIPTION, kind);
+  window.__BUZZ_E2E_HAS_MOCK_AUTHOR_KIND_SUBSCRIPTION__ = ({
+    authorPubkey,
+    kind,
+  }) => hasMockAuthorKindSubscription(authorPubkey, kind);
   window.__BUZZ_E2E_EMIT_MOCK_PRESENCE__ = ({ pubkey, status }) => {
     const author = pubkey.toLowerCase();
     setMockPresenceStatus(author, status);

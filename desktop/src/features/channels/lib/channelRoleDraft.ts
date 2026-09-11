@@ -12,6 +12,12 @@ export type ChannelRoleDraft = {
   roles: RoleDraft[];
   assignments: Record<string, string>;
   preservedAssignments: Record<string, string>;
+  /**
+   * Source spellings for assignments that were resolved only for display.
+   * Keeping this separate from `assignments` lets the form validate against a
+   * canonical member key without rewriting an unchanged raw canvas entry.
+   */
+  sourceAssignments: Record<string, { raw: string; label: string }>;
   contact: string | null;
   routing: Record<string, string>;
   capabilities: Record<string, string[]>;
@@ -36,6 +42,7 @@ export function createRoleDraft(
   }));
   const preservedAssignments = { ...canvas.storedAssignments };
   const assignments: Record<string, string> = {};
+  const sourceAssignments: ChannelRoleDraft["sourceAssignments"] = {};
   const counts = new Map<string, number>();
   for (const raw of Object.keys(preservedAssignments)) {
     const key = parsePubkeyInput(raw);
@@ -47,6 +54,10 @@ export function createRoleDraft(
     const role = roles.find((role) => roleKey(role.label) === roleKey(label));
     if (key && role && available.has(key) && counts.get(key) === 1) {
       assignments[key] = role.id;
+      // Canonical lowercase hex is byte-equivalent to what the native writer
+      // emits. Only retain a source mapping when normalization would change
+      // the stored key (whitespace, npub, or spelling).
+      if (raw !== key) sourceAssignments[key] = { raw, label };
       delete preservedAssignments[raw];
     }
   }
@@ -54,6 +65,7 @@ export function createRoleDraft(
     roles,
     assignments,
     preservedAssignments,
+    sourceAssignments,
     contact: canvas.contactPubkey,
     routing: { ...canvas.storedRouting },
     capabilities: { ...canvas.storedCapabilities },
@@ -91,15 +103,22 @@ export function createRoleDraftFromSubmitted(
     };
   });
   const assignments: Record<string, string> = {};
+  const sourceAssignments = { ...current.sourceAssignments };
   for (const [agent, label] of Object.entries(submitted.assignments)) {
     const role = roles.find((entry) => roleKey(entry.label) === roleKey(label));
-    if (role) assignments[agent] = role.id;
+    if (role) {
+      assignments[agent] = role.id;
+      // An entry included in the submitted canonical map was explicitly
+      // edited. It must not fall back to the source spelling on re-save.
+      delete sourceAssignments[agent];
+    }
   }
   return {
     ...current,
     roles,
     assignments,
     preservedAssignments: { ...submitted.preserved_assignments },
+    sourceAssignments,
     contact: submitted.contact,
     removeRouting: [...submitted.remove_routing],
     removeCapabilities: [...submitted.remove_capabilities],
@@ -127,10 +146,30 @@ export function serializeRoleDraft(draft: ChannelRoleDraft): CrewConfigDraft {
   const error = roleDraftError(draft);
   if (error) throw new Error(error);
   const assignments: Record<string, string> = {};
+  const preservedAssignments = { ...draft.preservedAssignments };
   for (const [agent, roleId] of Object.entries(draft.assignments)) {
     const role = draft.roles.find((role) => role.id === roleId);
     if (!role) throw new Error("Resolve assignments for the removed role.");
-    assignments[agent] = role.label.trim();
+    const source = draft.sourceAssignments[agent];
+    const sourceRole = source
+      ? draft.roles.find(
+          (candidate) =>
+            candidate.originalLabel !== null &&
+            roleKey(candidate.originalLabel) === roleKey(source.label),
+        )
+      : undefined;
+    if (source && sourceRole?.id === role.id) {
+      // The assignment still points at the same stored role. Preserve its
+      // exact source key/value; role renames are carried by `renames` below.
+      preservedAssignments[source.raw] = source.label;
+    } else {
+      // A direct reassignment is an explicit edit, so remove any matching
+      // unresolved source entry before emitting the canonical assignment.
+      for (const raw of Object.keys(preservedAssignments)) {
+        if (parsePubkeyInput(raw) === agent) delete preservedAssignments[raw];
+      }
+      assignments[agent] = role.label.trim();
+    }
   }
   const renames = Object.fromEntries(
     draft.roles.flatMap((role) =>
@@ -147,7 +186,7 @@ export function serializeRoleDraft(draft: ChannelRoleDraft): CrewConfigDraft {
     assignments,
     contact: draft.contact,
     renames,
-    preserved_assignments: { ...draft.preservedAssignments },
+    preserved_assignments: preservedAssignments,
     remove_routing: [...draft.removeRouting],
     remove_capabilities: [...draft.removeCapabilities],
   };

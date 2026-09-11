@@ -58,13 +58,22 @@ pub(crate) fn tombstone_managed_agent_pending(
     state: &AppState,
     agent_pubkey: &str,
 ) {
-    let result = (|| -> Result<(), String> {
-        let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-        tombstone_managed_agent_at(&scope.db_path, &scope.owner_keys, agent_pubkey)
-    })();
+    let result = try_tombstone_managed_agent_pending(app, state, agent_pubkey);
     if let Err(e) = result {
         eprintln!("buzz-desktop: agent-tombstone: {e}");
     }
+}
+
+/// Fallible tombstone seam for deletion coordinators that retain their own
+/// retry journal. The legacy wrapper above intentionally remains best-effort
+/// for callers whose existing contracts are not journaled.
+pub(crate) fn try_tombstone_managed_agent_pending(
+    app: &AppHandle,
+    state: &AppState,
+    agent_pubkey: &str,
+) -> Result<(), String> {
+    let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
+    tombstone_managed_agent_at(&scope.db_path, &scope.owner_keys, agent_pubkey)
 }
 
 /// Scope-free core of [`tombstone_managed_agent_pending`], so the atomic

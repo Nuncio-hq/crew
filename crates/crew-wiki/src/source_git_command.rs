@@ -94,10 +94,11 @@ fn run_inner(
         // callers only use this runner on Unix targets where /dev/fd is a
         // directory-capable retained-FD view. The descriptor remains owned by
         // GitReader through spawn and the complete bounded read.
+        let directory = format!("/dev/fd/{fd}");
         command
-            .current_dir("/")
-            .env("GIT_DIR", format!("/dev/fd/{fd}/.git"))
-            .env("GIT_WORK_TREE", format!("/dev/fd/{fd}"));
+            .current_dir(&directory)
+            .env("GIT_DIR", format!("{directory}/.git"))
+            .env("GIT_WORK_TREE", &directory);
     } else {
         command.current_dir(root);
     }

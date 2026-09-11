@@ -2016,6 +2016,7 @@ async fn finalize_push_inner(
             head: &success.manifest.head,
             refs: &success.manifest.refs,
             actor_pubkey_hex: &hex::encode(ctx.pusher.to_bytes()),
+            owner_pubkey_hex: &ctx.owner,
         };
         match build_ref_state_event(&inputs, &state.relay_keypair) {
             Ok(event) => {

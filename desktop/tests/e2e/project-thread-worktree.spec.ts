@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const ROOT_A = "a".repeat(64);
 const ROOT_B = "b".repeat(64);
@@ -451,7 +452,7 @@ test("Project threads show truthful isolated workspace and agent handoff", async
     },
   });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
 
   await emitProjectRoot(page, ROOT_A, "plan issue 4");
@@ -564,7 +565,7 @@ test("Docked thread panel can expand to show worktree branch detail", async ({
 }) => {
   await installMockBridge(page, { managedAgents: agents });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
 
   await emitProjectRoot(page, ROOT_A, "expand docked workspace detail");
@@ -602,7 +603,7 @@ test("Degraded GitHub availability shows a muted chip, not silent empty", async 
     },
   });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
 
   await emitProjectRoot(page, ROOT_A, "diagnose missing gh");
@@ -637,7 +638,7 @@ test("Docked <h2> title fallback does not steal Workspace clicks (#31)", async (
     };
     w.__BUZZ_E2E__ = { ...w.__BUZZ_E2E__, forceThreadTitleFallback: true };
   });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
 
   await emitProjectRoot(page, ROOT_A, "h2 title hit target");
@@ -657,7 +658,7 @@ test("Project workspace errors render failed truth without preparing affordances
 }) => {
   await installMockBridge(page, { managedAgents: agents });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
 
   await emitProjectRoot(page, ROOT_A, "reproduce setup failure");
@@ -704,7 +705,7 @@ test("Project thread phase chips and transcript peek stay reviewable after compl
     archivedObserverEvents: archivedPeekEvents,
   });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
 
   await emitProjectRoot(page, ROOT_A, "show mission control activity");
@@ -761,8 +762,8 @@ test("Project thread phase chips and transcript peek stay reviewable after compl
 
   await page.evaluate(() => window.__BUZZ_E2E_RESET_OBSERVER_EVENTS__?.());
   await seedPeekActivity(page, "conversation-issue-82", true);
-  await page.getByTestId("channel-random").click();
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "random");
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
   panel = await openThread(page, "show mission control activity");
   const historyPeek = panel.getByTestId("project-thread-activity-peek");

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const SHOTS = "test-results/doctor-cta";
 
@@ -95,10 +96,9 @@ async function injectNudgeAndNavigate(
     content,
   });
 
-  // Navigate to #general — the injected message is live-pushed so the card
-  // renders in the current message list.
-  await page.getByTestId("channel-general").click();
-  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  // Navigate to #general through the current workspace menu — the injected
+  // message is live-pushed so the card renders in the current message list.
+  await openWorkspaceChannel(page, "general");
 }
 
 test.describe("doctor CTA nudge card screenshots", () => {

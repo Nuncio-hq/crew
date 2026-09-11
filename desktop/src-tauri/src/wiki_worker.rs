@@ -2,8 +2,9 @@
 //!
 //! Caller-agnostic engine lives in `crew-wiki`. This command is the default
 //! face: one generate per repo (lock), heuristic unless `CREW_WIKI_API_KEY`
-//! is set on a build with the crate `llm` feature. Founder signing stays in JS
-//! (D-028).
+//! is set on a build with the crate `llm` feature. The legacy preview command
+//! returns unsigned drafts; durable publication signs and journals the complete
+//! snapshot in the native Wiki publication command.
 
 use crew_wiki::cadence::GenerateLock;
 use crew_wiki::cluster::plan_pages;
@@ -13,11 +14,13 @@ use crew_wiki::generate_root::{
 };
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::{page_event_tags, toc_content, toc_event_tags, PageDraft, TocManifest};
+use crew_wiki::source_folder::capture_folder;
 use crew_wiki::steering::load_captured_steering;
+use crew_wiki::types::WikiPlan;
 use serde::Serialize;
 use std::sync::OnceLock;
 
-fn generate_lock() -> &'static GenerateLock {
+pub(crate) fn generate_lock() -> &'static GenerateLock {
     static LOCK: OnceLock<GenerateLock> = OnceLock::new();
     LOCK.get_or_init(GenerateLock::default)
 }
@@ -70,6 +73,102 @@ pub struct WikiGenerateOutcome {
     pub cost_note: String,
 }
 
+/// Captured source, plan, and generated drafts used by native publication.
+/// The snapshot is retained in memory only until the signed graph is built;
+/// all events are then persisted in the owner-operation journal.
+pub(crate) struct WikiGeneration {
+    pub(crate) snapshot: RepoSnapshot,
+    pub(crate) plan: WikiPlan,
+    pub(crate) drafts: Vec<PageDraft>,
+}
+
+/// Closed source admission outcomes used by both preview and native prepare.
+#[derive(Debug)]
+pub(crate) enum WikiGenerationError {
+    MissingLocalPath,
+    EmptyTree,
+    Failed(String),
+}
+
+impl std::fmt::Display for WikiGenerationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingLocalPath => {
+                formatter.write_str("Source workspace is missing or not a directory.")
+            }
+            Self::EmptyTree => formatter.write_str("Source workspace is an empty repository."),
+            Self::Failed(error) => formatter.write_str(error),
+        }
+    }
+}
+
+/// Capture one explicitly selected workspace and generate a deterministic
+/// page set. This is shared by the legacy preview command and native writer so
+/// publication cannot silently use a second generation implementation.
+pub(crate) fn generate_wiki_pages(
+    owner: &str,
+    repo_d: &str,
+    repo_path: Option<&str>,
+    workspace_mode: Option<&str>,
+) -> Result<WikiGeneration, WikiGenerationError> {
+    let root = match resolve_wiki_generate_root(repo_path) {
+        WikiGenerateRoot::MissingLocalPath => return Err(WikiGenerationError::MissingLocalPath),
+        WikiGenerateRoot::Ready(root) => root,
+    };
+    let coordinate = format!("30617:{owner}:{repo_d}");
+    let snapshot = match workspace_mode {
+        Some("folder") => capture_folder(&root, &coordinate)
+            .map_err(|error| WikiGenerationError::Failed(error.to_string()))?,
+        Some("git") | None => RepoSnapshot::from_git(&root).map_err(|error| {
+            match classify_from_git_failure(&root, &error) {
+                WikiLocalSnapshotError::MissingLocalPath => WikiGenerationError::MissingLocalPath,
+                WikiLocalSnapshotError::EmptyTree => WikiGenerationError::EmptyTree,
+                WikiLocalSnapshotError::CaptureFailed => {
+                    WikiGenerationError::Failed(error.to_string())
+                }
+            }
+        })?,
+        Some(_) => {
+            return Err(WikiGenerationError::Failed(
+                "Unsupported Wiki workspace mode.".into(),
+            ))
+        }
+    };
+    if snapshot.is_empty_tree() {
+        return Err(WikiGenerationError::EmptyTree);
+    }
+    if snapshot.files.is_empty() {
+        return Err(WikiGenerationError::Failed(format!(
+            "Source coverage unavailable: no supported source files ({} omitted paths)",
+            snapshot.omissions.len()
+        )));
+    }
+    let steering = load_captured_steering(&snapshot)
+        .map_err(|error| WikiGenerationError::Failed(error.to_string()))?;
+    let plan = plan_pages(&snapshot, steering.as_ref())
+        .map_err(|error| WikiGenerationError::Failed(error.to_string()))?;
+    let generator = HeuristicGenerator;
+    let mut drafts = Vec::new();
+    for section in &plan.sections {
+        for page in &section.pages {
+            drafts.push(
+                generate_page(&generator, page, &snapshot, &plan.language)
+                    .map_err(|error| WikiGenerationError::Failed(error.to_string()))?,
+            );
+        }
+    }
+    if drafts.is_empty() {
+        return Err(WikiGenerationError::Failed(
+            "Source coverage unavailable: no Wiki pages were generated.".into(),
+        ));
+    }
+    Ok(WikiGeneration {
+        snapshot,
+        plan,
+        drafts,
+    })
+}
+
 /// Run `crew-wiki generate` for a repository coordinate.
 #[tauri::command]
 pub async fn wiki_generate(
@@ -88,47 +187,26 @@ pub async fn wiki_generate(
         "Heuristic generator · no API key billed".to_string()
     };
 
-    let root = match resolve_wiki_generate_root(repo_path.as_deref()) {
-        WikiGenerateRoot::MissingLocalPath => {
+    let generation = match generate_wiki_pages(&owner, &repo_d, repo_path.as_deref(), Some("git")) {
+        Ok(generation) => generation,
+        Err(WikiGenerationError::MissingLocalPath) => {
             return Ok(missing_local_outcome(&owner, &repo_d, cost_note));
         }
-        WikiGenerateRoot::Ready(root) => root,
-    };
-
-    let snapshot = match RepoSnapshot::from_git(&root) {
-        Ok(snapshot) if snapshot.is_empty_tree() => {
+        Err(WikiGenerationError::EmptyTree) => {
             return Ok(empty_outcome(&owner, &repo_d, cost_note));
         }
-        Ok(snapshot) if snapshot.files.is_empty() => {
-            return Err(format!(
-                "Source coverage unavailable: no supported source files ({} omitted paths)",
-                snapshot.omissions.len()
-            ));
-        }
-        Ok(snapshot) => snapshot,
-        Err(err) => {
-            return match classify_from_git_failure(&root, &err) {
-                WikiLocalSnapshotError::MissingLocalPath => {
-                    Ok(missing_local_outcome(&owner, &repo_d, cost_note))
-                }
-                WikiLocalSnapshotError::EmptyTree => Ok(empty_outcome(&owner, &repo_d, cost_note)),
-                WikiLocalSnapshotError::CaptureFailed => Err(err.to_string()),
-            };
-        }
+        Err(WikiGenerationError::Failed(error)) => return Err(error),
     };
-
-    let steering = load_captured_steering(&snapshot).map_err(|err| err.to_string())?;
-    let plan = plan_pages(&snapshot, steering.as_ref()).map_err(|err| err.to_string())?;
-    let generator = HeuristicGenerator;
-    let mut drafts = Vec::new();
-    for section in &plan.sections {
-        for page in &section.pages {
-            let draft = generate_page(&generator, page, &snapshot, &plan.language)
-                .map_err(|err| err.to_string())?;
+    let snapshot = generation.snapshot;
+    let plan = generation.plan;
+    let drafts = generation
+        .drafts
+        .into_iter()
+        .map(|draft| {
             let tags = page_event_tags(&owner, &repo_d, &draft)?;
-            drafts.push(dto_from_draft(draft, tags));
-        }
-    }
+            Ok(dto_from_draft(draft, tags))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let manifest = TocManifest {
         sections: plan.sections.clone(),
         commit: snapshot.commit.clone(),

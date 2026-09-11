@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const SHOTS = "test-results/activity-scope-label";
 
@@ -14,11 +15,10 @@ const AGENTS_CHANNEL_ID = "94a444a4-c0a3-5966-ab05-530c6ddc2301"; // #agents
 // observer-feed screenshot spec uses).
 async function openActivityFromChannel(
   page: import("@playwright/test").Page,
-  channelTestId: string,
   channelTitle: string,
 ) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId(channelTestId).click();
+  await openWorkspaceChannel(page, channelTitle);
   await expect(page.getByTestId("chat-title")).toHaveText(channelTitle);
 
   const messageRow = page
@@ -54,11 +54,7 @@ test.describe("activity panel scope label", () => {
       ],
     });
 
-    const panel = await openActivityFromChannel(
-      page,
-      "channel-agents",
-      "agents",
-    );
+    const panel = await openActivityFromChannel(page, "agents");
     await expect(page.getByTestId("agent-session-agent-name")).toHaveText(
       "Observer Agent",
     );

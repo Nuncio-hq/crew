@@ -342,7 +342,32 @@ removes route evidence before quota rows before tombstoning the community.
 
 Proposed behavior: human-authored channel messages and thread replies without explicit mention targets go to the selected contact; explicit mentions take priority and do not also wake the contact. Agent messages cannot trigger this fallback. The contact does not become the thread owner, gain a role, or gain tools. None leaves mention-only behavior. Missing, removed, or unavailable contacts require a visible unresolved state with no silent replacement. The real implementation must verify authors/structured mention targets, membership and canvas signer; retain kind/channel/access gates, deduplicate event delivery, fence stale subscriptions when contact changes, and handle acknowledgement/conflicts on save. Live validation must cover bot-loop prevention, mention priority, channel isolation, contact replacement/removal, reconnect and two-client edits. The prototype uses local atomic role/contact state and text matching for sample messages only.
 
-The v0.8 prototype adds agent deletion, recap settings and an Agent plans tab. Deletion maps to the existing `delete_managed_agent` lifecycle in `commands/agents.rs`: stop the process under the managed-store/process locks, recover/clear Bestie assignments through its existing journal, remove the record/key and enqueue identity tombstone/archive. This journal does not yet perform relay canvas role/contact cleanup. Preserve the deployed-remote guard and the existing higher-level deletion orchestration. The prototype retains an identity tombstone for historical display and projects active pickers/roles/contact from it; this local projection does not establish successful relay cleanup. Canvas role/contact removal must join a durable cleanup/retry flow before agent deletion can claim that cleanup.
+Managed-agent deletion uses the existing `delete_managed_agent` command plus a
+bounded owner-operation record. The coordinator snapshots the exact managed
+record and channel membership, reserves one cleanup UUID per channel, then
+stops and removes the local record under the managed-store/process locks. It
+releases those locks before calling `save_channel_crew_member_cleanup`; the
+outer record retains every unresolved channel step, key/tombstone step and
+failure for startup recovery. Only unchanged or applied channel outcomes mark
+the deletion complete; conflicts and exhausted retries remain reviewable.
+The native journal validates this progression on every create and compare-and-
+swap, while the renderer-facing generic create/update adapter rejects
+managed-delete records entirely; only the native deletion coordinator can
+advance them. A provider deployment checks the claim before invoking the
+provider and again, under the transition/store fence, before persisting its
+receipt, so a delete claimed during provider I/O cannot be overwritten by a
+stale completion. Deletion also waits on the same per-agent provider lock
+before capturing a remote record, so an in-flight deployment either finishes
+before the deletion fence or is blocked by it. Spawn, restart, lazy reconcile
+and launch restore all check the claim while holding the same transition/store
+fence used to reserve deletion.
+Canvas discovery pages signed kind 40100 history with the relay's composite
+cursor and fails closed when the bounded scan cannot prove exhaustion. The
+native recovery list exposes redacted unresolved summaries across communities;
+status and retry require switching to the operation's captured community. The
+deployed-remote guard and the existing Bestie assignment journal remain active.
+The identity tombstone/archive is retained for historical display and active
+pickers; it does not replace relay-authoritative channel cleanup.
 
 The Agents directory reuses the existing persona and managed-instance queries. Each query failure exposes its own Retry action, retaining any cached cards while the failed query recovers. Instance Delete confirmation names the agent and is keyed by its public key: replacing the selected instance dismisses the confirmation, including same-name replacements. Renaming the same identity preserves its target. Cancel performs no removal. Relay-only rows use the existing policy-filtered relay query, exclude local instance keys and archived identities, and open the exact public-key profile without local management controls. Unknown local inventory blocks relay-only classification and offers Retry. Directory/profile Start and Restart, and profile Message, capture the community and signer for existing native scope assertions; component lifetime and target checks discard stale completions. Message pending state belongs to its captured scope, so changing scope permits a new operation and a retired completion cannot clear its pending state. These directory controls do not establish successful native process termination or canvas cleanup; those require separate runtime evidence.
 
@@ -353,9 +378,23 @@ User-facing thread recap is a separate proposed capability, default Off and gene
 Stage 0 #344 source audit: existing Project.projectChannelId, relatedChannelIds
 and buzz-related-channel already support home/related channel mapping; member
 repository channels are existing data. No one-project-only invariant is approved.
-Existing membership signals/badges need readiness repair (#337), not a parallel
-membership store. Receipt validation currently rejects mentionless direct triggers
-(`receipt_parent_targets_agent`, ingest.rs); #355 must prove relay-authoritative
+The existing ACP `channel_membership` signal remains the sole membership source.
+Its background subscription snapshot separates channel intent from readiness.
+Readiness stays unknown until the startup command batch is applied, the
+authenticated socket and membership watch are live, and channel/control replay
+queues have recovered. A successful REQ write is local socket evidence, not a
+relay acknowledgement, EOSE, or proof of work delivery.
+Desktop projects it through the live observer ingress, retaining bounded rows per
+normalized agent and harness generation. A row is readable only when the native
+runtime status matches the agent and canonical community relay, carries the same
+`startNonce`, is connected, and is not retired; missing, invalid, stale, or
+disconnected input stays `unknown`. Community changes clear the projection, so
+confirmed zero/nonzero counts stay distinct from startup or closed-watch
+unknown without creating a parallel membership store. Retired-generation replay
+fences are bounded and recyclable; the exact native nonce remains the authority
+that makes a fresh generation readable after repeated restarts. #337's staging
+recovery remains open. Receipt validation currently rejects mentionless direct
+triggers (`receipt_parent_targets_agent`, ingest.rs); #355 must prove relay-authoritative
 routing and durable execution/replay before its approved successor can ship.
 Client-selected canvas/contact data alone cannot authorize a receipt.
 
@@ -366,12 +405,54 @@ Wiki (30623 repository / 30023 company) and channel/thread models. #361 owns
 exact selected-repository folder operations and legacy/zero/multiple mapping;
 #349 owns scoped navigation. Prototype names and in-memory lists are fixtures.
 
-#362 owns coherent publication/retention and shared G-DURABLE. Publishing TOC
-last alone cannot preserve old replaced pages. There is no established generic
-Project/Wiki journal, private Ask history store or message outbox in the audited
-desktop; the concrete bounded owner-local seam must be approved, with private
-history separated from signed-event recovery. No new authoritative domain store
-is implied by this handoff.
+#362 owns coherent publication/retention and shared G-DURABLE. D-079 accepts
+immutable kind 30623 pages and manifests, a conditional TOC commit, and the
+native `owner_operations` SQLite recovery journal. The #362 integration uses
+`crew-wiki` to build and verify the complete signed graph, persists that graph
+before transport, verifies immutable dependencies, and changes the TOC through
+the relay's existing replacement transaction. Retries retain the signed event
+IDs. Cadence changes reuse the verified manifest and pages. A lost TOC
+acknowledgement remains unresolved until an exact live read establishes the
+outcome; cancellation alone cannot prove that an attempted write did not land.
+Cancel stops automatic sends. For an unresolved ambiguous attempt, explicit
+Resume publication durably revokes cancellation before reusing the same graph
+and CAS precondition. Reconcile remains read-only. A typed permanently retired
+dependency requires Regenerate instead. When the relay proves that the exact
+head, or the exact non-absent revision it required, was accepted and later
+deleted, the attempt is settled terminally as superseded and its claim is
+released in the same guarded write — no new state, action or network step. All
+other absence remains unresolved; see D-079 for the full recovery contract.
+
+The native `wiki_snapshot_read` command reads one exact repository coordinate
+under a captured owner/community/generation token and rereads its replaceable
+head after loading dependencies. The renderer shares one repository query and
+read coordinator across Wiki consumers, with two concurrent native reads,
+128 automatic repository reads per pass and a 64 MiB retained-graph budget.
+Selection and explicit retry can prioritize repositories outside the automatic
+set. An incomplete refresh can retain a previously verified graph only within
+the same native scope, visibly marked stale; it cannot merge revisions.
+Company kind 30023 knowledge remains an independent query and retains its
+existing ACL. Push freshness uses the exact repository association and scoped
+relay identity described in the D-079 clarification.
+
+Writer/reader integration, restart recovery, and real cross-client acceptance
+remain in progress. Signed relay events remain domain authority. Private Ask
+history remains separate from shared publication recovery; this journal is not
+a private history store or a channel-message outbox.
+
+The accepted permanent-dependency recovery extension in D-079 adds a Wiki-only
+atomic successor operation. Explicit Regenerate signs a new UUID-bound graph,
+retains the unusable predecessor and transfers its local claim in one SQLite
+transaction. Only direct predecessors of unresolved successors are pinned;
+older ancestors follow normal retention. The exact relay refusal, fresh
+dependency checks and locked relay CAS establish the outcome. A local check
+before sending cannot revoke work already admitted by the relay. This requires
+journal schema v3: the v1-to-v2 managed-agent claim migration and the
+v2-to-v3 Wiki successor migration are both atomic and idempotent. Older
+binaries fail closed, so recovery preserves the v3 data and uses a verified
+compatible build rather than restoring a stale v1 database. See [the recovery
+runbook](TESTING.md#wiki-journal-v3-recovery) and
+[D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
 #363 certifies installed-runtime generation and immutable Git/folder snapshots;
 #364 owns scoped full-body retrieval and exact-revision source reads. Current
@@ -433,22 +514,31 @@ unknown-entry flooding can delay reclamation, and pending-process roots require
 separate verified ownership recovery. Non-Unix private-state ACLs are unproved
 and rejected.
 
-### Bounded inventory limits (2026-09-09)
+### Bounded inventory limits (2026-09-10)
 
-These observations describe the installed artifacts examined for #351, not
-permanent limitations of the products. None is a successful recap generation.
+These observations describe the installed artifacts statically revalidated for
+#351 at Crew HEAD `a179fc99e0558eda2b1ad35eab54b2d26c335336`, not permanent
+limitations of the products. Earlier executed evidence is called out in the
+rows; none is a successful recap generation. The #375 foundation is unchanged:
+`classify_recap` returns failure states only; there is no positive capability
+cache or recap executor.
 
-| Candidate inspected | Evidence scope | Current blocker |
+| Candidate inspected | Static identity and evidence scope | Current blocker / execution status |
 | --- | --- | --- |
-| Claude Code 2.1.266, native macOS arm64 image, SHA-256 `553d1b9e9e7068b275c0a783c7e139ff6503096f286e674c8c919379fb0eca62` | Isolated help/version and exact-image hook selection inspection | `unsupported_tool_isolation`: managed hooks survive safe mode/user hook-disable settings, including in-process HTTP hooks. |
-| Codex CLI 0.153.4, native macOS arm64 image, SHA-256 `b973d440acac501fd2594a43e7ca9ce41e0a65b9dfb28d0d7a7837c99e1261e3` | Isolated help/version/exec help and locally generated app-server JSON schema | `unsupported_tool_isolation`: exhaustive native tool denial was not proved by the available controls/schema. |
-| Hermes installed source declaring 0.21.1 in `pyproject.toml` | Read-only source inventory; no Hermes process executed | `unsupported_state_isolation`: CLI import enters installation repair; both CLI and `run_agent.AIAgent` import paths load the installation `.env` independently of disposable HOME. `hermes_cli/oneshot.py` imports the same AIAgent. |
+| Claude Code image label 2.1.266, native macOS arm64 image, SHA-256 `553d1b9e9e7068b275c0a783c7e139ff6503096f286e674c8c919379fb0eca62` | Static hash matches the 2026-09-09 image; earlier isolated help/version and exact-image hook selection remain the executed evidence. | `unsupported_tool_isolation`: exact-image source shows managed hooks retained under safe mode/user hook-disable settings, with an in-process HTTP execution path; no native hook-denial test was run. |
+| Codex CLI release-directory label 0.154.0, native macOS arm64 artifact, SHA-256 `4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc` | Static hash only; no version/help ran on 2026-09-10. The historical 0.153.4 help/exec-help/schema observation is retired and not reused. | No certification for this artifact; one-shot/tool isolation remains unproved. |
+| Goose, Mach-O `x86_64` artifact on the native macOS arm64 host, SHA-256 `8c38970cf68dd45df63f38d855ec00e215bc591a9aad547672c0b7a179c6f4c1` | Static hash only; version unprobed, with no native tool or descendant-containment proof. | No certification; native tool and containment behavior remain unproved. |
+| Hermes installed mutable source declaring 0.21.1 in `pyproject.toml` | Read-only source inspection: `run_agent.py:95` calls `load_hermes_dotenv` with the installation `.env`; `env_loader.py:346-362` sanitizes/loads it even with isolated `HOME`. No Hermes process executed. | `unsupported_state_isolation`: the source declaration is not an executed version result; `hermes_cli/oneshot.py` imports the same AIAgent path. |
 
-The installed Hermes source location was the user's `.hermes/hermes-agent`
-checkout; its declared package version is not a binary fingerprint or an
-executed version result. Mutable source, wrappers, executable upgrades, model,
-profile, platform or enforcement changes invalidate any future positive proof.
+Mutable source, wrappers, executable upgrades, model, profile, platform or
+enforcement changes invalidate any future positive proof.
 Exact local path observations and one-run logs belong to #351/task evidence.
+
+No candidate has an allocated recap profile, requested/effective model, or auth
+grant; no strict descendant containment or recap generation was exercised. The
+#348 ownership receipt remains inert and is not a runtime-ready grant. The
+catalog still includes `buzz-agent`, but its `recap_contract()` exposes no
+native one-shot command; no additional frontend/runtime list is inferred.
 
 G-THREAD-1 v3 extends `toolPaneStore` with bounded scoped view selection, not a
 second resource/session store. `ThreadFocusForgeSplit` and `ChannelToolPane`

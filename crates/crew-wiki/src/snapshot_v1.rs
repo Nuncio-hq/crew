@@ -336,7 +336,7 @@ struct PageProjection<'a> {
     slug: &'a str,
     title: &'a str,
 }
-fn projection(manifest: &SnapshotManifest) -> Result<String, WikiError> {
+pub(crate) fn projection(manifest: &SnapshotManifest) -> Result<String, WikiError> {
     let mut sections = Vec::new();
     let by_slug: BTreeMap<_, _> = manifest.7.iter().map(|p| (&p.0, p)).collect();
     for (id, title, slugs) in &manifest.6 {

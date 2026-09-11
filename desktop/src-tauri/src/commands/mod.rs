@@ -101,7 +101,25 @@ mod thread_workspace_git;
 mod thread_workspace_tests;
 mod updater;
 mod user_input;
+mod wiki_publication_commands;
+mod wiki_publication_driver;
+#[cfg(all(test, unix))]
+mod wiki_publication_driver_tests;
+#[cfg(test)]
+mod wiki_publication_head_proof_tests;
+#[cfg(all(test, unix))]
+mod wiki_publication_native_fence_tests;
+mod wiki_publication_native_reads;
+mod wiki_publication_record;
+mod wiki_publication_runtime;
+#[cfg(test)]
+mod wiki_publication_test_fixture;
+mod wiki_publication_worker;
+mod wiki_snapshot;
 mod wiki_source;
+pub(crate) use wiki_publication_commands::*;
+pub(crate) use wiki_publication_worker::start as start_wiki_publication_worker;
+pub(crate) use wiki_snapshot::*;
 mod window_chrome;
 mod window_vibrancy;
 mod workflows;

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const SHOTS = "test-results/agent-access-warning";
 
@@ -18,7 +19,7 @@ async function openAgentAccessDialog(
   agentPubkey: string,
 ) {
   if (!(await page.getByTestId("members-sidebar").isVisible())) {
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await page.getByTestId("channel-members-trigger").click();
     await expect(page.getByTestId("members-sidebar")).toBeVisible();
   }
