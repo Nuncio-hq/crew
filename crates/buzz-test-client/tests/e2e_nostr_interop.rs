@@ -335,6 +335,87 @@ async fn test_nip50_search_returns_results_and_eose() {
     client.disconnect().await.expect("disconnect");
 }
 
+/// Restrict a NIP-50 search to one event id and verify the allowlist reaches
+/// both relay search surfaces. This must stay a production-seam test: removing
+/// the SQL `ids` pushdown from either the WS handler or the HTTP bridge would
+/// return both matching messages and make one of these assertions fail.
+#[tokio::test]
+#[ignore]
+async fn test_nip50_search_ids_allowlist_matches_ws_and_http() {
+    let url = relay_url();
+    let keys = Keys::generate();
+    let channel = create_test_channel(&keys).await;
+    let unique_token = format!("searchids_{}", uuid::Uuid::new_v4().simple());
+
+    let first_id =
+        send_rest_message(&keys, &channel, &format!("first matching {unique_token}")).await;
+    let second_id =
+        send_rest_message(&keys, &channel, &format!("second matching {unique_token}")).await;
+    assert_ne!(first_id, second_id, "seed messages must have distinct ids");
+
+    // Give the asynchronous Postgres indexer time to materialize both rows.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let first_event_id = nostr::EventId::from_hex(&first_id).expect("first event id");
+
+    // The WS handler must push the ids allowlist into FTS before hydrating the
+    // result page, then still deliver the event through the normal filter gate.
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let sid = sub_id("nip50-search-ids");
+    let ws_filter = Filter::new()
+        .kind(Kind::Custom(9))
+        .search(&unique_token)
+        .id(first_event_id)
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::H), [channel.as_str()]);
+    client
+        .subscribe(&sid, vec![ws_filter])
+        .await
+        .expect("subscribe to ids-restricted search");
+    let ws_events = client
+        .collect_until_eose(&sid, Duration::from_secs(10))
+        .await
+        .expect("collect WS search until EOSE");
+    assert_eq!(
+        ws_events.iter().map(|event| event.id).collect::<Vec<_>>(),
+        vec![first_event_id],
+        "WS search must return exactly the allowlisted event, excluding {second_id}"
+    );
+    client.disconnect().await.expect("disconnect");
+
+    // The HTTP bridge must apply the same ids pushdown before hydrating rows.
+    let http_filter = serde_json::json!([{
+        "kinds": [9],
+        "search": unique_token,
+        "ids": [first_id],
+        "#h": [channel],
+        "limit": 10,
+    }]);
+    let response = reqwest::Client::new()
+        .post(format!("{}/query", relay_http_url()))
+        .header("X-Pubkey", keys.public_key().to_hex())
+        .header("Content-Type", "application/json")
+        .body(serde_json::to_string(&http_filter).expect("serialize HTTP search filter"))
+        .send()
+        .await
+        .expect("submit HTTP ids-restricted search");
+    assert!(
+        response.status().is_success(),
+        "HTTP ids-restricted search failed: {}",
+        response.status()
+    );
+    let http_events: Vec<serde_json::Value> =
+        response.json().await.expect("parse HTTP search response");
+    let http_ids = http_events
+        .iter()
+        .filter_map(|event| event["id"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        http_ids,
+        vec![first_id.as_str()],
+        "HTTP search must return exactly the allowlisted event, excluding {second_id}"
+    );
+}
+
 /// Subscribe with mixed search + non-search filters.
 /// Verify: relay sends CLOSED with error message containing "mixed".
 #[tokio::test]
