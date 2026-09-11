@@ -27,13 +27,14 @@ the Mac over Tailscale. It is live data even though the host is named
 dev-server. Deployment details and current verification are in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`STATE.md`](STATE.md).
 
-**Agreed topology, not yet provisioned:** run a separate staging stack on
-the same dev-server; connect the local Crew build and test agents to it over
-Tailscale. Staging must have its own relay endpoint, PostgreSQL, Redis,
-media storage, Git storage where needed, volumes, and network configuration.
-Set CPU/RAM limits so load tests do not starve the daily relay. Record the
-verified staging endpoint here when provisioned; do not guess one or fall
-back to the daily relay if staging is unavailable.
+**Verified owned snapshot staging:** the #348 snapshot stack is provisioned
+on the same dev-server and reachable from the Mac over Tailscale at
+`ws://100.86.143.13:3348`. It uses the isolated `crew_staging_348_snapshot`
+database and its own relay, PostgreSQL, Redis, media storage, Git storage
+where needed, volumes, and network configuration. Keep CPU/RAM limits so
+checks do not starve the daily relay. Record the effective staging endpoint
+and destinations with each result; do not guess one or fall back to the daily
+relay if staging is unavailable.
 
 Choose the environment for the check:
 
@@ -83,6 +84,31 @@ Before launching agents or a write test, verify the effective relay URL,
 database/storage destination, workspace and enabled external tools. Record
 these non-secret destinations and the snapshot identifier with results in
 the task/PR. Stop on a live destination mismatch.
+
+### NIP-43 admission for new staging identities
+
+The staging relay requires both NIP-42 authentication and an active NIP-43
+relay-membership row. A profile export does not admit a pubkey, and the
+`auth_references` field in the ownership envelope is not a substitute for
+relay membership. Before the first connection from a new disposable app or
+agent identity, the staging operator must use the version-matched
+`buzz-admin` binary against the explicitly owned relay container:
+
+```sh
+docker exec <owned-staging-relay-container> <version-matched-buzz-admin> \
+  add-member --pubkey <new-staging-pubkey> --role member
+docker exec <owned-staging-relay-container> <version-matched-buzz-admin> \
+  list-members
+```
+
+The readback must show the exact new pubkey as an active `member` before the
+app or agent retries. Keep the admin binary and key in the private staging
+workspace; do not add them to the profile export or copy them into the daily
+app-data tree. If the first attempt was denied with
+`relay_membership_required`, retain that denial in the run evidence, admit the
+identity once, and then verify a subsequent authenticated read and write. This
+admission is a staging control-plane operation; it does not grant channel
+membership, provider access, or generation permission.
 
 ### Existing harness limitations
 
