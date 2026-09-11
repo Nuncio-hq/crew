@@ -2271,11 +2271,11 @@ mod tests {
         /// revocation regression. The test wrapper supplies an isolated
         /// database; all three live handlers and fan-out then call their real
         /// writer-backed membership seams.
-        async fn closed_membership_state() -> Option<(
+        async fn closed_membership_state() -> (
             Arc<AppState>,
             crate::state::AuditShutdownHandle,
             sqlx::PgPool,
-        )> {
+        ) {
             let mut config = test_config();
             config.database_url = crate::test_support::database_url();
             config.redis_url = std::env::var("BUZZ_TEST_REDIS_URL")
@@ -2283,15 +2283,23 @@ mod tests {
                 .unwrap_or_else(|_| "redis://127.0.0.1:56471/13".to_owned());
             config.require_relay_membership = true;
 
-            let pool = sqlx::PgPool::connect(&config.database_url).await.ok()?;
+            let pool = crate::test_support::bounded(
+                "connect closed-relay PostgreSQL",
+                sqlx::PgPool::connect(&config.database_url),
+            )
+            .await
+            .expect("connect closed-relay PostgreSQL");
             let db = buzz_db::Db::from_pool(pool.clone());
             let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
                 .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-                .ok()?;
+                .expect("create closed-relay Redis pool");
             let pubsub = Arc::new(
-                buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
-                    .await
-                    .ok()?,
+                crate::test_support::bounded(
+                    "create closed-relay pubsub manager",
+                    buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone()),
+                )
+                .await
+                .expect("create closed-relay pubsub manager"),
             );
             let auth = buzz_auth::AuthService::new(config.auth.clone());
             let search = buzz_search::SearchService::new(pool.clone());
@@ -2299,7 +2307,14 @@ mod tests {
                 db.clone(),
                 buzz_workflow::WorkflowConfig::default(),
             ));
-            let media_storage = buzz_media::MediaStorage::new(&config.media).ok()?;
+            let media_config = config.media.clone();
+            let media_storage = crate::test_support::bounded(
+                "create closed-relay media storage",
+                tokio::task::spawn_blocking(move || buzz_media::MediaStorage::new(&media_config)),
+            )
+            .await
+            .expect("create closed-relay media storage task")
+            .expect("create closed-relay media storage");
             let (state, audit_shutdown) = AppState::new(
                 config,
                 db,
@@ -2312,7 +2327,7 @@ mod tests {
                 Keys::generate(),
                 media_storage,
             );
-            Some((Arc::new(state), audit_shutdown, pool))
+            (Arc::new(state), audit_shutdown, pool)
         }
 
         async fn authenticated_conn(
@@ -2446,121 +2461,131 @@ mod tests {
         #[tokio::test]
         #[ignore = "requires isolated PostgreSQL"]
         async fn closed_relay_membership_removal_denies_req_count_event_and_fanout() {
-            let Some((state, audit_shutdown, pool)) = closed_membership_state().await else {
-                return;
-            };
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
             let community_uuid = Uuid::new_v4();
             let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
             let host = format!("closed-revocation-{community_uuid}.example");
             let keys = Keys::generate();
             let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
 
-            sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
-                .bind(community_uuid)
-                .bind(&host)
-                .execute(&pool)
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert closed-relay community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
                 .await
-                .expect("insert isolated community");
-            sqlx::query(
-                "INSERT INTO relay_members (community_id, pubkey, role) VALUES ($1, $2, 'member')",
-            )
-            .bind(community_uuid)
-            .bind(&pubkey_hex)
-            .execute(&pool)
-            .await
-            .expect("insert relay member");
-
-            let tenant = TenantContext::resolved(community, &host);
-            let (sweep_conn, _sweep_rx, mut sweep_ctrl) =
-                authenticated_conn(&state, &tenant, &keys).await;
-            assert_eq!(
-                state.revalidate_live_relay_memberships().await,
-                0,
-                "a current writer membership must keep the idle socket open"
-            );
-            sqlx::query("DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2")
-                .bind(community_uuid)
-                .bind(&pubkey_hex)
-                .execute(&pool)
+                .expect("insert closed-relay community");
+                crate::test_support::bounded(
+                    "insert closed-relay membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
                 .await
-                .expect("remove relay member");
-            assert_eq!(
-                state.revalidate_live_relay_memberships().await,
-                1,
-                "the writer-backed sweep must close an idle revoked socket"
-            );
-            assert!(sweep_conn.cancel.is_cancelled());
-            assert!(
-                matches!(sweep_ctrl.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
-                "a background sweep closes the socket without an unsolicited event ACK"
-            );
-            state.conn_manager.deregister(sweep_conn.conn_id);
+                .expect("insert closed-relay membership");
 
-            let (req_conn, _req_rx, mut req_ctrl) =
-                authenticated_conn(&state, &tenant, &keys).await;
-            crate::handlers::req::handle_req(
-                "revoked-req".to_owned(),
-                vec![Filter::new().kinds([Kind::TextNote])],
-                vec![None],
-                req_conn,
-                Arc::clone(&state),
-            )
-            .await;
-            assert!(
-                matches!(req_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
-            );
-
-            let (count_conn, _count_rx, mut count_ctrl) =
-                authenticated_conn(&state, &tenant, &keys).await;
-            crate::handlers::count::handle_count(
-                "revoked-count".to_owned(),
-                vec![Filter::new().kinds([Kind::TextNote])],
-                count_conn,
-                Arc::clone(&state),
-            )
-            .await;
-            assert!(
-                matches!(count_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
-            );
-
-            let (event_conn, _event_rx, mut event_ctrl) =
-                authenticated_conn(&state, &tenant, &keys).await;
-            let event = EventBuilder::new(Kind::TextNote, "revoked")
-                .sign_with_keys(&keys)
-                .expect("sign event");
-            crate::handlers::event::handle_event(event, event_conn, Arc::clone(&state)).await;
-            assert!(
-                matches!(event_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("OK") && text.contains("false"))
-            );
-
-            let (fanout_conn, _fanout_rx, _fanout_ctrl) =
-                authenticated_conn(&state, &tenant, &keys).await;
-            let sub_id = "revoked-fanout".to_owned();
-            state.sub_registry.register_scoped(
-                community,
-                fanout_conn.conn_id,
-                sub_id.clone(),
-                vec![Filter::new()],
-                None,
-            );
-            let stored = channel_event(None);
-            let matches = state.sub_registry.fan_out_scoped(community, &stored);
-            assert_eq!(matches, vec![(fanout_conn.conn_id, sub_id.clone())]);
-            let filtered = filter_fanout_by_access(&state, community, &stored, matches, None).await;
-            assert!(
-                filtered.is_empty(),
-                "revoked identity must be removed at fan-out"
-            );
-
-            sqlx::query("DELETE FROM communities WHERE id = $1")
-                .bind(community_uuid)
-                .execute(&pool)
+                let tenant = TenantContext::resolved(community, &host);
+                let (sweep_conn, _sweep_rx, mut sweep_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                assert_eq!(
+                    state.revalidate_live_relay_memberships().await,
+                    0,
+                    "a current writer membership must keep the idle socket open"
+                );
+                crate::test_support::bounded(
+                    "remove closed-relay membership",
+                    sqlx::query(
+                        "DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
                 .await
-                .expect("remove isolated community");
-            drop(state);
-            audit_shutdown
-                .drain(std::time::Duration::from_secs(1))
+                .expect("remove closed-relay membership");
+                assert_eq!(
+                    state.revalidate_live_relay_memberships().await,
+                    1,
+                    "the writer-backed sweep must close an idle revoked socket"
+                );
+                assert!(sweep_conn.cancel.is_cancelled());
+                assert!(
+                    matches!(sweep_ctrl.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+                    "a background sweep closes the socket without an unsolicited event ACK"
+                );
+                state.conn_manager.deregister(sweep_conn.conn_id);
+
+                let (req_conn, _req_rx, mut req_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                crate::handlers::req::handle_req(
+                    "revoked-req".to_owned(),
+                    vec![Filter::new().kinds([Kind::TextNote])],
+                    vec![None],
+                    req_conn,
+                    Arc::clone(&state),
+                )
                 .await;
+                assert!(
+                    matches!(req_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+                );
+
+                let (count_conn, _count_rx, mut count_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                crate::handlers::count::handle_count(
+                    "revoked-count".to_owned(),
+                    vec![Filter::new().kinds([Kind::TextNote])],
+                    count_conn,
+                    Arc::clone(&state),
+                )
+                .await;
+                assert!(
+                    matches!(count_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+                );
+
+                let (event_conn, _event_rx, mut event_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                let event = EventBuilder::new(Kind::TextNote, "revoked")
+                    .sign_with_keys(&keys)
+                    .expect("sign event");
+                crate::handlers::event::handle_event(event, event_conn, Arc::clone(&state)).await;
+                assert!(
+                    matches!(event_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("OK") && text.contains("false"))
+                );
+
+                let (fanout_conn, _fanout_rx, _fanout_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                let sub_id = "revoked-fanout".to_owned();
+                state.sub_registry.register_scoped(
+                    community,
+                    fanout_conn.conn_id,
+                    sub_id.clone(),
+                    vec![Filter::new()],
+                    None,
+                );
+                let stored = channel_event(None);
+                let matches = state.sub_registry.fan_out_scoped(community, &stored);
+                assert_eq!(matches, vec![(fanout_conn.conn_id, sub_id.clone())]);
+                let filtered =
+                    filter_fanout_by_access(&state, community, &stored, matches, None).await;
+                assert!(
+                    filtered.is_empty(),
+                    "revoked identity must be removed at fan-out"
+                );
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
         }
 
         #[tokio::test]
