@@ -144,7 +144,7 @@ pub async fn filter_fanout_by_access(
             let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
                 continue;
             };
-            let owner = state.conn_manager.agent_owner_for_conn(conn_id);
+            let owner = state.conn_manager.admission_owner_for_conn(conn_id);
             let cache_key = (pubkey.clone(), owner.clone());
             let is_member = if let Some(cached) = membership_cache.get(&cache_key) {
                 *cached
@@ -2099,12 +2099,16 @@ mod tests {
         use std::sync::atomic::AtomicU8;
         use std::sync::Arc;
 
+        use buzz_auth::{AuthContext, AuthMethod, Scope};
         use buzz_core::StoredEvent;
-        use nostr::{EventBuilder, Keys, Kind};
+        use nostr::{EventBuilder, Filter, Keys, Kind};
         use tokio::sync::{mpsc, Mutex};
         use tokio_util::sync::CancellationToken;
         use uuid::Uuid;
 
+        use buzz_core::tenant::TenantContext;
+
+        use crate::connection::AuthState;
         use crate::handlers::event::filter_fanout_by_access;
         use crate::state::AppState;
 
@@ -2154,6 +2158,103 @@ mod tests {
 
         pub(super) async fn test_state() -> Arc<AppState> {
             test_state_with_redis_url("redis://127.0.0.1:1").await
+        }
+
+        /// Build the production-bound state used by the closed-relay
+        /// revocation regression. The test wrapper supplies an isolated
+        /// database; all three live handlers and fan-out then call their real
+        /// writer-backed membership seams.
+        async fn closed_membership_state() -> Option<(
+            Arc<AppState>,
+            crate::state::AuditShutdownHandle,
+            sqlx::PgPool,
+        )> {
+            let mut config = test_config();
+            config.database_url = crate::test_support::database_url();
+            config.redis_url = std::env::var("BUZZ_TEST_REDIS_URL")
+                .or_else(|_| std::env::var("REDIS_URL"))
+                .unwrap_or_else(|_| "redis://127.0.0.1:56471/13".to_owned());
+            config.require_relay_membership = true;
+
+            let pool = sqlx::PgPool::connect(&config.database_url).await.ok()?;
+            let db = buzz_db::Db::from_pool(pool.clone());
+            let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+                .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+                .ok()?;
+            let pubsub = Arc::new(
+                buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
+                    .await
+                    .ok()?,
+            );
+            let auth = buzz_auth::AuthService::new(config.auth.clone());
+            let search = buzz_search::SearchService::new(pool.clone());
+            let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+                db.clone(),
+                buzz_workflow::WorkflowConfig::default(),
+            ));
+            let media_storage = buzz_media::MediaStorage::new(&config.media).ok()?;
+            let (state, audit_shutdown) = AppState::new(
+                config,
+                db,
+                redis_pool,
+                None::<buzz_audit::AuditService>,
+                pubsub,
+                auth,
+                search,
+                workflow_engine,
+                Keys::generate(),
+                media_storage,
+            );
+            Some((Arc::new(state), audit_shutdown, pool))
+        }
+
+        async fn authenticated_conn(
+            state: &Arc<AppState>,
+            tenant: &TenantContext,
+            keys: &Keys,
+        ) -> (
+            Arc<crate::connection::ConnectionState>,
+            mpsc::Receiver<axum::extract::ws::Message>,
+            mpsc::Receiver<axum::extract::ws::Message>,
+        ) {
+            let (tx, data_rx) = mpsc::channel(16);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
+            let cancel = CancellationToken::new();
+            let subscriptions = Arc::new(Mutex::new(HashMap::new()));
+            let conn_id = Uuid::new_v4();
+            let conn = Arc::new(crate::connection::ConnectionState {
+                conn_id,
+                tenant: tenant.clone(),
+                remote_addr: "127.0.0.1:1234".parse().expect("test socket address"),
+                auth_state: tokio::sync::RwLock::new(AuthState::Authenticated(AuthContext {
+                    pubkey: keys.public_key(),
+                    scopes: Scope::all_known(),
+                    channel_ids: None,
+                    auth_method: AuthMethod::Nip42,
+                    agent_owner_pubkey: None,
+                })),
+                subscriptions: Arc::clone(&subscriptions),
+                send_tx: tx,
+                ctrl_tx: ctrl_tx.clone(),
+                cancel,
+                backpressure_count: Arc::new(AtomicU8::new(0)),
+                grace_limit: 3,
+            });
+            state.conn_manager.register(
+                conn_id,
+                conn.send_tx.clone(),
+                ctrl_tx,
+                None,
+                conn.cancel.clone(),
+                tenant.community(),
+                Arc::clone(&conn.backpressure_count),
+                subscriptions,
+                3,
+            );
+            state
+                .conn_manager
+                .set_authenticated_pubkey(conn_id, keys.public_key().to_bytes().to_vec());
+            (conn, data_rx, ctrl_rx)
         }
 
         /// Real-PG, real-Redis state that hands back the audit shutdown handle so
@@ -2230,6 +2331,111 @@ mod tests {
                 .sign_with_keys(&Keys::generate())
                 .expect("sign event");
             StoredEvent::new(event, channel_id)
+        }
+
+        /// Production-bound closed-relay regression: after the real writer
+        /// row is deleted, every live read/write seam and the fan-out
+        /// chokepoint must deny the already-authenticated principal.
+        #[tokio::test]
+        #[ignore = "requires isolated PostgreSQL"]
+        async fn closed_relay_membership_removal_denies_req_count_event_and_fanout() {
+            let Some((state, audit_shutdown, pool)) = closed_membership_state().await else {
+                return;
+            };
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("closed-revocation-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+
+            sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                .bind(community_uuid)
+                .bind(&host)
+                .execute(&pool)
+                .await
+                .expect("insert isolated community");
+            sqlx::query(
+                "INSERT INTO relay_members (community_id, pubkey, role) VALUES ($1, $2, 'member')",
+            )
+            .bind(community_uuid)
+            .bind(&pubkey_hex)
+            .execute(&pool)
+            .await
+            .expect("insert relay member");
+
+            let tenant = TenantContext::resolved(community, &host);
+            sqlx::query("DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2")
+                .bind(community_uuid)
+                .bind(&pubkey_hex)
+                .execute(&pool)
+                .await
+                .expect("remove relay member");
+
+            let (req_conn, mut req_rx, _req_ctrl) =
+                authenticated_conn(&state, &tenant, &keys).await;
+            crate::handlers::req::handle_req(
+                "revoked-req".to_owned(),
+                vec![Filter::new().kinds([Kind::TextNote])],
+                vec![None],
+                req_conn,
+                Arc::clone(&state),
+            )
+            .await;
+            assert!(
+                matches!(req_rx.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+            );
+
+            let (count_conn, mut count_rx, _count_ctrl) =
+                authenticated_conn(&state, &tenant, &keys).await;
+            crate::handlers::count::handle_count(
+                "revoked-count".to_owned(),
+                vec![Filter::new().kinds([Kind::TextNote])],
+                count_conn,
+                Arc::clone(&state),
+            )
+            .await;
+            assert!(
+                matches!(count_rx.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+            );
+
+            let (event_conn, _event_rx, mut event_ctrl) =
+                authenticated_conn(&state, &tenant, &keys).await;
+            let event = EventBuilder::new(Kind::TextNote, "revoked")
+                .sign_with_keys(&keys)
+                .expect("sign event");
+            crate::handlers::event::handle_event(event, event_conn, Arc::clone(&state)).await;
+            assert!(
+                matches!(event_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("OK") && text.contains("false"))
+            );
+
+            let (fanout_conn, _fanout_rx, _fanout_ctrl) =
+                authenticated_conn(&state, &tenant, &keys).await;
+            let sub_id = "revoked-fanout".to_owned();
+            state.sub_registry.register_scoped(
+                community,
+                fanout_conn.conn_id,
+                sub_id.clone(),
+                vec![Filter::new()],
+                None,
+            );
+            let stored = channel_event(None);
+            let matches = state.sub_registry.fan_out_scoped(community, &stored);
+            assert_eq!(matches, vec![(fanout_conn.conn_id, sub_id.clone())]);
+            let filtered = filter_fanout_by_access(&state, community, &stored, matches, None).await;
+            assert!(
+                filtered.is_empty(),
+                "revoked identity must be removed at fan-out"
+            );
+
+            sqlx::query("DELETE FROM communities WHERE id = $1")
+                .bind(community_uuid)
+                .execute(&pool)
+                .await
+                .expect("remove isolated community");
+            drop(state);
+            audit_shutdown
+                .drain(std::time::Duration::from_secs(1))
+                .await;
         }
 
         #[tokio::test]

@@ -86,6 +86,19 @@ pub struct ScopedConnControl {
     pub command: ConnControl,
 }
 
+/// Lifecycle notification for the Redis connection-control subscriber.
+///
+/// A successful reconnect is a resynchronization boundary: the relay must
+/// reconcile its local authenticated identities against the durable roster
+/// because commands published while this subscriber was offline were lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnControlStatus {
+    /// The subscriber has completed its pattern subscription.
+    Connected,
+    /// The current Redis stream ended and the reconnect loop will retry.
+    Disconnected,
+}
+
 /// Initial reconnect backoff (1 second).
 const BACKOFF_INITIAL_SECS: u64 = 1;
 /// Maximum reconnect backoff (30 seconds).
@@ -97,11 +110,12 @@ const BACKOFF_MAX_SECS: u64 = 30;
 pub async fn run_conn_control_subscriber(
     redis_url: String,
     broadcast_tx: broadcast::Sender<ScopedConnControl>,
+    status_tx: broadcast::Sender<ConnControlStatus>,
 ) {
     let mut backoff_secs = BACKOFF_INITIAL_SECS;
 
     loop {
-        match connect_and_subscribe(&redis_url, &broadcast_tx).await {
+        match connect_and_subscribe(&redis_url, &broadcast_tx, &status_tx).await {
             Ok(()) => {
                 backoff_secs = BACKOFF_INITIAL_SECS;
                 tracing::warn!(
@@ -123,6 +137,7 @@ pub async fn run_conn_control_subscriber(
 async fn connect_and_subscribe(
     redis_url: &str,
     broadcast_tx: &broadcast::Sender<ScopedConnControl>,
+    status_tx: &broadcast::Sender<ConnControlStatus>,
 ) -> Result<(), redis::RedisError> {
     let client = redis::Client::open(redis_url)?;
     let mut conn = client.get_async_pubsub().await?;
@@ -130,6 +145,7 @@ async fn connect_and_subscribe(
     conn.psubscribe(CONN_CONTROL_PATTERN).await?;
 
     tracing::info!("Redis conn-control subscriber connected — listening on {CONN_CONTROL_PATTERN}");
+    let _ = status_tx.send(ConnControlStatus::Connected);
 
     let mut stream = conn.on_message();
     while let Some(msg) = stream.next().await {
@@ -164,6 +180,8 @@ async fn connect_and_subscribe(
             tracing::trace!("No conn-control receivers — message dropped");
         }
     }
+
+    let _ = status_tx.send(ConnControlStatus::Disconnected);
 
     Ok(())
 }

@@ -511,6 +511,18 @@ impl SubscriptionRegistry {
             .and_then(|conn_subs| conn_subs.get(sub_id).map(|(filters, _, _)| filters.clone()))
     }
 
+    /// Return whether a subscription is still authoritative for its connection.
+    ///
+    /// REQ registration and membership revocation may overlap. Callers use this
+    /// post-registration fence after retaining Redis topics so a revocation that
+    /// won the race can roll back the retain instead of leaving an orphaned
+    /// topic reference.
+    pub fn contains(&self, conn_id: ConnId, sub_id: &str) -> bool {
+        self.subs
+            .get(&conn_id)
+            .is_some_and(|conn_subs| conn_subs.contains_key(sub_id))
+    }
+
     /// Return the total number of active subscriptions across all connections.
     pub fn total_subscriptions(&self) -> usize {
         self.subs.iter().map(|e| e.value().len()).sum()
@@ -1096,12 +1108,15 @@ mod tests {
 
         registry.register(conn_id, "sub1".to_string(), filters.clone(), None);
 
+        assert!(registry.contains(conn_id, "sub1"));
         let retrieved = registry.get_filters(conn_id, "sub1");
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().len(), 1);
 
         let missing = registry.get_filters(conn_id, "nonexistent");
         assert!(missing.is_none());
+        registry.remove_subscription(conn_id, "sub1");
+        assert!(!registry.contains(conn_id, "sub1"));
     }
 
     #[test]

@@ -121,6 +121,12 @@ The relay also rechecks the writer-backed membership row before each live
 `REQ`, `COUNT`, and `EVENT`, and before fan-out delivery, so a missed
 connection-control message cannot preserve query, write, or subscription
 access.
+As an idle-session backstop, each pod periodically reconciles its authenticated
+identities against that same writer-backed roster (the interval is bounded by
+`BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS`), and repeats the reconciliation
+after a connection-control Redis reconnect or broadcast lag. A Redis publish
+failure therefore leaves an operator-visible propagation error while the
+durable row remains the authority for the next bounded sweep.
 
 ## Project Wiki read/search/source slice (#397)
 

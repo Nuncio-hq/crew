@@ -54,7 +54,9 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use crate::cache_invalidation::{
     cache_invalidation_channel, CacheInvalidation, ScopedCacheInvalidation,
 };
-use crate::conn_control::{conn_control_channel, ConnControl, ScopedConnControl};
+use crate::conn_control::{
+    conn_control_channel, ConnControl, ConnControlStatus, ScopedConnControl,
+};
 pub use crate::topic::{channel_key, global_key, EventTopic, EventTopicKey};
 
 /// A Nostr event received on a scoped Redis event topic, broadcast to local subscribers.
@@ -110,6 +112,7 @@ pub struct PubSubManager {
     broadcast_tx: broadcast::Sender<ChannelEvent>,
     cache_invalidation_tx: broadcast::Sender<ScopedCacheInvalidation>,
     conn_control_tx: broadcast::Sender<ScopedConnControl>,
+    conn_control_status_tx: broadcast::Sender<ConnControlStatus>,
 }
 
 impl PubSubManager {
@@ -126,6 +129,7 @@ impl PubSubManager {
         let (broadcast_tx, _) = broadcast::channel(4096);
         let (cache_invalidation_tx, _) = broadcast::channel(4096);
         let (conn_control_tx, _) = broadcast::channel(4096);
+        let (conn_control_status_tx, _) = broadcast::channel(16);
         let (subscription_tx, subscription_rx) = mpsc::channel(4096);
 
         Ok(Self {
@@ -138,6 +142,7 @@ impl PubSubManager {
             broadcast_tx,
             cache_invalidation_tx,
             conn_control_tx,
+            conn_control_status_tx,
         })
     }
 
@@ -176,6 +181,7 @@ impl PubSubManager {
         conn_control::run_conn_control_subscriber(
             self.redis_url.clone(),
             self.conn_control_tx.clone(),
+            self.conn_control_status_tx.clone(),
         )
         .await;
     }
@@ -263,6 +269,14 @@ impl PubSubManager {
     /// Returns a new broadcast receiver for cross-pod connection-control commands.
     pub fn subscribe_conn_control(&self) -> broadcast::Receiver<ScopedConnControl> {
         self.conn_control_tx.subscribe()
+    }
+
+    /// Returns a receiver for connection-control Redis lifecycle boundaries.
+    /// A `Connected` notification means commands published while the previous
+    /// stream was unavailable may have been missed and local identities should
+    /// be reconciled against the writer-backed roster.
+    pub fn subscribe_conn_control_status(&self) -> broadcast::Receiver<ConnControlStatus> {
+        self.conn_control_status_tx.subscribe()
     }
 
     /// Publish a cache-key drop to all pods. Fire-and-forget at the call site:

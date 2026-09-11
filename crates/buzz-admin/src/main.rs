@@ -60,7 +60,8 @@ enum Command {
     /// Remove a pubkey from the relay membership list.
     ///
     /// Accepts a bech32 npub or 64-char hex pubkey. After removing the DB row,
-    /// publishes a kind:13534 membership roster via Redis and disconnects the
+    /// publishes a kind:13534 membership roster via Redis. When
+    /// BUZZ_REQUIRE_RELAY_MEMBERSHIP is enabled, it also disconnects the
     /// removed member's live relay sessions. Cannot remove the relay owner —
     /// change RELAY_OWNER_PUBKEY config instead.
     RemoveMember {
@@ -262,7 +263,7 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
         }
     };
 
-    if removed {
+    if removed && relay_membership_enforced() {
         // `buzz-admin` runs outside the relay process, so publish the same
         // tenant-scoped connection-control command the relay uses for an
         // in-process NIP-43 removal. The all-zero id is a synthetic marker:
@@ -273,20 +274,35 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
             reason: "restricted: not a relay member".to_string(),
             exclude_conn_id: None,
         };
-        match pubsub.publish_conn_control(&tenant, &command).await {
-            Ok(0) => {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            pubsub.publish_conn_control(&tenant, &command),
+        )
+        .await
+        {
+            Ok(Ok(0)) => {
                 eprintln!(
                     "warning: member removed but no relay pod acknowledged the live-session disconnect"
                 );
             }
-            Ok(_) => {}
-            Err(e) => {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
                 eprintln!(
                     "error: member removed from DB but live-session disconnect publish failed: {e}"
                 );
                 return Ok(6);
             }
+            Err(_) => {
+                eprintln!(
+                    "error: member removed from DB but live-session disconnect publish timed out"
+                );
+                return Ok(6);
+            }
         }
+    } else if removed {
+        eprintln!(
+            "member removed from the roster; live sessions remain admitted because relay membership enforcement is disabled"
+        );
     }
 
     if let Err(e) = publish_membership_list_with_bump(&db, &pubsub, &relay_keypair, &tenant).await {
@@ -294,6 +310,16 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
     }
 
     Ok(0)
+}
+
+/// Mirror the relay's `BUZZ_REQUIRE_RELAY_MEMBERSHIP` parsing for the
+/// sidecar removal command. Open relays treat roster deletion as data cleanup;
+/// disconnecting a currently authenticated socket there would contradict the
+/// admission contract that allows it to reconnect immediately.
+fn relay_membership_enforced() -> bool {
+    std::env::var("BUZZ_REQUIRE_RELAY_MEMBERSHIP")
+        .map(|value| value == "true" || value == "1")
+        .unwrap_or(false)
 }
 
 async fn cmd_list_product_feedback(limit: u16) -> Result<i32> {

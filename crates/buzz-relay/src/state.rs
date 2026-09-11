@@ -10,6 +10,7 @@ use axum::body::Bytes;
 use axum::extract::ws::{Message as WsMessage, Utf8Bytes as WsUtf8Bytes};
 use dashmap::DashMap;
 use futures_util::future::join_all;
+use thiserror::Error;
 use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -122,7 +123,9 @@ struct ConnEntry {
     backpressure_count: Arc<AtomicU8>,
     subscriptions: ConnectionSubscriptions,
     authenticated_pubkey: Arc<std::sync::RwLock<Option<Vec<u8>>>>,
-    /// Owner pubkey for NIP-OA delegated sessions, if any.
+    /// Owner pubkey recorded as admission provenance for NIP-OA delegated
+    /// sessions, if any. This is populated from the verified admission result,
+    /// never from the durable `users.agent_owner_pubkey` metadata backfill.
     authenticated_agent_owner: Arc<std::sync::RwLock<Option<Vec<u8>>>>,
     /// Sender paired with the writer's close-reason receiver. Set immediately
     /// after registration, before any receive task starts, so a policy action
@@ -433,6 +436,27 @@ impl ConnectionManager {
             .collect()
     }
 
+    /// Snapshot authenticated identities and their owner-admission provenance
+    /// for one community. The snapshot is intentionally local: the caller
+    /// rechecks each identity against the writer before deciding whether to
+    /// revoke it, so a Redis miss cannot leave an idle socket indefinitely.
+    pub(crate) fn authenticated_identities_in_community(
+        &self,
+        community_id: CommunityId,
+    ) -> Vec<(Uuid, Vec<u8>, Option<Vec<u8>>)> {
+        self.connections
+            .iter()
+            .filter_map(|entry| {
+                if entry.community_id != community_id {
+                    return None;
+                }
+                let pubkey = entry.authenticated_pubkey.read().ok()?.clone()?;
+                let owner = entry.authenticated_agent_owner.read().ok()?.clone();
+                Some((*entry.key(), pubkey, owner))
+            })
+            .collect()
+    }
+
     /// Return the authenticated pubkey recorded for a connection, if any.
     pub fn pubkey_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
         self.connections
@@ -440,11 +464,18 @@ impl ConnectionManager {
             .and_then(|entry| entry.authenticated_pubkey.read().ok()?.clone())
     }
 
-    /// Return the NIP-OA owner pubkey recorded for a connection, if any.
-    pub fn agent_owner_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
+    /// Return the NIP-OA admission owner recorded for a connection, if any.
+    pub fn admission_owner_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
         self.connections
             .get(&conn_id)
             .and_then(|entry| entry.authenticated_agent_owner.read().ok()?.clone())
+    }
+
+    /// Backward-compatible alias for callers that used the old field name.
+    /// The value is admission provenance, not the receipt/observer metadata
+    /// stored in `users.agent_owner_pubkey`.
+    pub fn agent_owner_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
+        self.admission_owner_for_conn(conn_id)
     }
 
     /// Queue a control frame without applying data-buffer backpressure.
@@ -452,6 +483,40 @@ impl ConnectionManager {
         self.connections
             .get(&conn_id)
             .is_some_and(|entry| entry.ctrl_tx.try_send(msg).is_ok())
+    }
+
+    /// Queue one control frame, waiting briefly for a stalled writer to make
+    /// room. Revocation ACKs use this path because a best-effort `try_send`
+    /// can otherwise make a successful self-leave look like a lost request.
+    /// The bounded deadline keeps a dead writer from holding the revocation
+    /// task forever; callers receive `false` and still cancel the socket.
+    pub(crate) async fn send_control_bounded(
+        &self,
+        conn_id: Uuid,
+        msg: WsMessage,
+        timeout: std::time::Duration,
+    ) -> bool {
+        let Some(tx) = self
+            .connections
+            .get(&conn_id)
+            .map(|entry| entry.ctrl_tx.clone())
+        else {
+            return false;
+        };
+
+        match tx.try_send(msg) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Full(msg)) => {
+                match tokio::time::timeout(timeout, tx.reserve()).await {
+                    Ok(Ok(permit)) => {
+                        permit.send(msg);
+                        true
+                    }
+                    Ok(Err(_)) | Err(_) => false,
+                }
+            }
+        }
     }
 
     /// Set a policy close reason without cancelling the connection yet.
@@ -775,6 +840,34 @@ struct PendingPubkeyRevocation {
     excluded: bool,
     removed: Vec<crate::subscription::RemovedSubscription>,
 }
+
+/// Bounded failure returned by a cluster-wide live revocation.
+#[derive(Debug, Error)]
+pub(crate) enum RevocationError {
+    /// Redis publication failed after the durable authorization mutation.
+    #[error("connection-control publication failed: {0}")]
+    Publish(#[from] buzz_pubsub::PubSubError),
+    /// Redis did not complete the publication before the bounded deadline.
+    #[error("connection-control publication timed out")]
+    PublishTimeout,
+    /// The initiating self-leave connection could not accept its event ACK
+    /// before the control-frame deadline. The socket is still policy-closed.
+    #[error("self-leave acknowledgement could not be queued before the deadline")]
+    AckDeliveryTimeout,
+}
+
+/// Result of the local finalization phase. The ACK bit is meaningful only for
+/// the self-leave variant; ordinary revocations use the policy-close fallback.
+struct PubkeyRevocationFinish {
+    closed: usize,
+    ack_delivered: bool,
+}
+
+/// A stalled Redis command must not hold local revocation finalization forever.
+const REVOCATION_REDIS_PUBLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A stalled control writer must not block membership revocation forever.
+const REVOCATION_CONTROL_SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Shared application state, cloned cheaply via inner `Arc` fields.
 #[derive(Clone)]
@@ -1373,41 +1466,78 @@ impl AppState {
             if skip_excluded && excluded_conn_id == Some(conn_id) {
                 continue;
             }
-            let marked = if reason == RELAY_MEMBERSHIP_REVOKED_REASON {
-                self.conn_manager.mark_relay_membership_revoked(conn_id)
-            } else {
-                self.conn_manager.mark_policy_close(conn_id, reason)
-            };
-            if !marked {
-                continue;
+            if let Some(entry) = self
+                .prepare_connection_revocation(
+                    tenant,
+                    conn_id,
+                    reason,
+                    excluded_conn_id == Some(conn_id),
+                )
+                .await
+            {
+                pending.push(entry);
             }
-            let removed = self.evict_connection_subscriptions(tenant, conn_id).await;
-            pending.push(PendingPubkeyRevocation {
-                conn_id,
-                excluded: excluded_conn_id == Some(conn_id),
-                removed,
-            });
         }
         pending
+    }
+
+    /// Prepare one connection for a local policy revocation. Keeping this
+    /// operation connection-id based lets the durable membership sweep close
+    /// only the denied identity; selecting by pubkey would also close valid
+    /// owner-attested agent sessions that happen to share that pubkey as an
+    /// owner relationship.
+    async fn prepare_connection_revocation(
+        &self,
+        tenant: &TenantContext,
+        conn_id: Uuid,
+        reason: &str,
+        excluded: bool,
+    ) -> Option<PendingPubkeyRevocation> {
+        let marked = if reason == RELAY_MEMBERSHIP_REVOKED_REASON {
+            self.conn_manager.mark_relay_membership_revoked(conn_id)
+        } else {
+            self.conn_manager.mark_policy_close(conn_id, reason)
+        };
+        if !marked {
+            return None;
+        }
+        let removed = self.evict_connection_subscriptions(tenant, conn_id).await;
+        Some(PendingPubkeyRevocation {
+            conn_id,
+            excluded,
+            removed,
+        })
     }
 
     /// Queue final subscription closures and cancel the pending connections.
     /// A full control queue is safe because `mark_policy_close` has already
     /// installed the policy close fallback consumed by the writer.
-    fn finish_pubkey_revocation(
+    async fn finish_pubkey_revocation(
         &self,
         pending: Vec<PendingPubkeyRevocation>,
         event_id: &str,
         reason: &str,
         ack: Option<(Uuid, WsMessage)>,
-    ) -> usize {
+    ) -> PubkeyRevocationFinish {
         let mut closed = 0;
+        let mut ack_delivered = ack.is_none();
         for entry in pending {
             let ack_frame = ack.as_ref().and_then(|(ack_conn_id, frame)| {
                 (entry.excluded && *ack_conn_id == entry.conn_id).then_some(frame)
             });
             if let Some(frame) = ack_frame {
-                let _ = self.conn_manager.send_control(entry.conn_id, frame.clone());
+                // The self-leave ACK is the one control frame that cannot be
+                // replaced by a policy-close fallback. Wait briefly for the
+                // writer to make room and report a terminal failure if it
+                // remains unavailable.
+                ack_delivered = self
+                    .conn_manager
+                    .send_control_bounded(
+                        entry.conn_id,
+                        frame.clone(),
+                        REVOCATION_CONTROL_SEND_TIMEOUT,
+                    )
+                    .await;
             } else {
                 let frame = crate::protocol::RelayMessage::ok(event_id, false, reason);
                 let _ = self
@@ -1425,14 +1555,24 @@ impl AppState {
             self.conn_manager.cancel_connection(entry.conn_id);
             closed += 1;
         }
-        closed
+        if ack.is_some() && !ack_delivered {
+            metrics::counter!("buzz_relay_revocation_ack_delivery_failures_total").increment(1);
+            tracing::error!(
+                event_id,
+                "self-leave ACK could not be queued before the bounded control deadline"
+            );
+        }
+        PubkeyRevocationFinish {
+            closed,
+            ack_delivered,
+        }
     }
 
     /// Disconnect a tenant-scoped pubkey on this pod only. Used by the Redis
     /// consumer after a command has already been published by another pod.
     /// The local eviction is idempotent, so a command may safely be delivered
     /// more than once or after the origin pod already closed its sockets.
-    pub(crate) async fn disconnect_pubkey_local(
+    pub async fn disconnect_pubkey_local(
         &self,
         tenant: &TenantContext,
         pubkey: &[u8],
@@ -1444,6 +1584,8 @@ impl AppState {
             .prepare_pubkey_revocation(tenant, pubkey, reason, excluded_conn_id, true)
             .await;
         self.finish_pubkey_revocation(pending, event_id, reason, None)
+            .await
+            .closed
     }
 
     /// Enforce a live ban or relay-membership revocation cluster-wide. The
@@ -1456,13 +1598,13 @@ impl AppState {
     /// have no remote subscriber, and the durable current-membership gate still
     /// denies any later request. Actual Redis errors are returned to the caller
     /// so the mutation surface cannot report propagation success.
-    pub async fn disconnect_pubkey_clusterwide(
+    pub(crate) async fn disconnect_pubkey_clusterwide(
         &self,
         tenant: &TenantContext,
         pubkey: &[u8],
         event_id: &str,
         reason: &str,
-    ) -> Result<usize, buzz_pubsub::PubSubError> {
+    ) -> Result<usize, RevocationError> {
         self.disconnect_pubkey_clusterwide_inner(tenant, pubkey, event_id, reason, None, None)
             .await
     }
@@ -1471,7 +1613,7 @@ impl AppState {
     /// excluded from the remote-style `OK false` path and receives exactly one
     /// event-level response before its policy close: `OK true` when Redis
     /// publication succeeded, `OK false` when it failed.
-    pub async fn disconnect_pubkey_clusterwide_for_leave(
+    pub(crate) async fn disconnect_pubkey_clusterwide_for_leave(
         &self,
         tenant: &TenantContext,
         pubkey: &[u8],
@@ -1479,7 +1621,7 @@ impl AppState {
         reason: &str,
         conn_id: Uuid,
         success_message: &str,
-    ) -> Result<usize, buzz_pubsub::PubSubError> {
+    ) -> Result<usize, RevocationError> {
         self.disconnect_pubkey_clusterwide_inner(
             tenant,
             pubkey,
@@ -1499,7 +1641,7 @@ impl AppState {
         reason: &str,
         excluded_conn_id: Option<Uuid>,
         leave_success_message: Option<String>,
-    ) -> Result<usize, buzz_pubsub::PubSubError> {
+    ) -> Result<usize, RevocationError> {
         let pending = self
             .prepare_pubkey_revocation(tenant, pubkey, reason, excluded_conn_id, false)
             .await;
@@ -1510,7 +1652,23 @@ impl AppState {
             reason: reason.to_owned(),
             exclude_conn_id: excluded_conn_id,
         };
-        let publish_result = self.pubsub.publish_conn_control(tenant, &command).await;
+        let publish_result = match tokio::time::timeout(
+            REVOCATION_REDIS_PUBLISH_TIMEOUT,
+            self.pubsub.publish_conn_control(tenant, &command),
+        )
+        .await
+        {
+            Ok(Ok(subscriber_count)) => Ok(subscriber_count),
+            Ok(Err(error)) => Err(RevocationError::Publish(error)),
+            Err(_) => {
+                metrics::counter!("buzz_relay_revocation_publish_timeouts_total").increment(1);
+                tracing::error!(
+                    event_id,
+                    "connection-control publication exceeded the bounded deadline"
+                );
+                Err(RevocationError::PublishTimeout)
+            }
+        };
 
         let ack = match (leave_success_message, excluded_conn_id) {
             (Some(success), Some(conn_id)) => {
@@ -1526,9 +1684,15 @@ impl AppState {
             }
             _ => None,
         };
-        let closed = self.finish_pubkey_revocation(pending, event_id, reason, ack);
+        let finish = self
+            .finish_pubkey_revocation(pending, event_id, reason, ack)
+            .await;
 
-        publish_result.map(|_| closed)
+        let _subscriber_count = publish_result?;
+        if !finish.ack_delivered {
+            return Err(RevocationError::AckDeliveryTimeout);
+        }
+        Ok(finish.closed)
     }
 
     /// Disconnect a community locally and publish the command to every relay pod.
@@ -1565,6 +1729,83 @@ impl AppState {
             tracing::warn!(%community_id, %error, "community lifecycle revalidation failed; retaining its sockets until next tick");
         }
         closed
+    }
+
+    /// Reconcile every authenticated local WebSocket against the writer-backed
+    /// relay-membership roster. This is the durable backstop for a Redis
+    /// disconnect, a broadcast receiver with no listeners, or a lagged
+    /// connection-control consumer: a removed row eventually closes the idle
+    /// socket even when no imperative command reached this process.
+    ///
+    /// Identity checks are deduplicated per `(community, pubkey, owner)` so a
+    /// client with many subscriptions does not amplify database work. A DB
+    /// error leaves the socket in place for the next bounded retry; it never
+    /// turns an unavailable roster read into an authoritative revoke.
+    pub async fn revalidate_live_relay_memberships(&self) -> usize {
+        if !self.config.require_relay_membership {
+            return 0;
+        }
+
+        let mut checked: HashMap<(CommunityId, Vec<u8>, Option<Vec<u8>>), bool> = HashMap::new();
+        let mut denied = Vec::new();
+
+        for community_id in self.conn_manager.per_community_ws_connections().into_keys() {
+            for (conn_id, pubkey, owner) in self
+                .conn_manager
+                .authenticated_identities_in_community(community_id)
+            {
+                let key = (community_id, pubkey.clone(), owner.clone());
+                let allowed = if let Some(cached) = checked.get(&key) {
+                    *cached
+                } else {
+                    let result = crate::api::relay_members::current_relay_membership_for_auth(
+                        self,
+                        community_id,
+                        &pubkey,
+                        owner.as_deref(),
+                    )
+                    .await;
+                    match result {
+                        Ok(value) => {
+                            checked.insert(key, value);
+                            value
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                %community_id,
+                                conn_id = %conn_id,
+                                "live relay-membership reconciliation failed: {error}"
+                            );
+                            continue;
+                        }
+                    }
+                };
+                if !allowed {
+                    denied.push((community_id, conn_id));
+                }
+            }
+        }
+
+        let event_id = "0".repeat(64);
+        let mut pending = Vec::with_capacity(denied.len());
+        for (community_id, conn_id) in denied {
+            let tenant = TenantContext::resolved(community_id, "membership-reconciler");
+            if let Some(entry) = self
+                .prepare_connection_revocation(
+                    &tenant,
+                    conn_id,
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    false,
+                )
+                .await
+            {
+                pending.push(entry);
+            }
+        }
+
+        self.finish_pubkey_revocation(pending, &event_id, RELAY_MEMBERSHIP_REVOKED_REASON, None)
+            .await
+            .closed
     }
 
     /// Get accessible channel IDs with a 10-second cache. Falls back to DB on miss.
@@ -2567,6 +2808,35 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn owner_revocation_selection_ignores_direct_member_backfill_metadata() {
+        let mgr = ConnectionManager::new();
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+        let community = CommunityId::from_uuid(Uuid::nil());
+        mgr.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            CancellationToken::new(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let owner = vec![4u8; 32];
+        // A direct member may have the same owner persisted for receipts, but
+        // that metadata is deliberately not copied into connection admission
+        // provenance.
+        mgr.set_authenticated_identity(conn_id, vec![5u8; 32], None);
+
+        assert!(mgr
+            .connection_ids_for_pubkey_or_owner_in_community(community, &owner)
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn finish_pubkey_revocation_gives_self_leave_one_success_and_others_failure() {
         let state = test_state().await;
@@ -2612,15 +2882,16 @@ pub(crate) mod tests {
             },
         ];
         let success = crate::protocol::RelayMessage::ok(event_id.as_str(), true, "you left");
-        assert_eq!(
-            state.finish_pubkey_revocation(
+        let finish = state
+            .finish_pubkey_revocation(
                 pending,
                 event_id.as_str(),
                 reason,
                 Some((self_conn, WsMessage::Text(success.into()))),
-            ),
-            2
-        );
+            )
+            .await;
+        assert_eq!(finish.closed, 2);
+        assert!(finish.ack_delivered);
 
         let self_ack = self_ctrl.try_recv().expect("self ACK is queued");
         assert!(matches!(self_ack, WsMessage::Text(ref text) if text.as_str().contains("true")));
@@ -2636,6 +2907,57 @@ pub(crate) mod tests {
         );
         assert!(self_cancel.is_cancelled());
         assert!(other_cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn self_leave_ack_full_control_queue_is_bounded_and_reported() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx.clone(),
+            None,
+            cancel.clone(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        // Occupy the only control slot. The ACK path must wait only for its
+        // bounded deadline, then return a terminal failure while still
+        // cancelling the policy-revoked socket.
+        ctrl_tx
+            .try_send(WsMessage::Ping(axum::body::Bytes::new()))
+            .expect("fill control queue");
+
+        let started = std::time::Instant::now();
+        let finish = state
+            .finish_pubkey_revocation(
+                vec![PendingPubkeyRevocation {
+                    conn_id,
+                    excluded: true,
+                    removed: Vec::new(),
+                }],
+                &"2".repeat(64),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                Some((
+                    conn_id,
+                    WsMessage::Text(
+                        crate::protocol::RelayMessage::ok(&"2".repeat(64), true, "you left").into(),
+                    ),
+                )),
+            )
+            .await;
+
+        assert!(!finish.ack_delivered);
+        assert!(cancel.is_cancelled());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(matches!(ctrl_rx.try_recv(), Ok(WsMessage::Ping(_))));
     }
 
     #[tokio::test]

@@ -421,6 +421,20 @@ pub async fn handle_req(
             .await;
     }
 
+    // A revocation can remove the registry entry after the pre-registration
+    // cancellation check but before (or during) the Redis retain above. Fence
+    // that second half of the operation with the authoritative registry and
+    // roll the retain back if the revocation won the race. Without this check,
+    // connection cleanup has no subscription entry to release and the desired
+    // topic refcount can stay permanently elevated.
+    if conn.cancel.is_cancelled() || !state.sub_registry.contains(conn_id, &sub_id) {
+        if let Some(removed) = state.sub_registry.remove_subscription(conn_id, &sub_id) {
+            release_subscription_topics(&state, &conn.tenant, &removed.scope).await;
+        }
+        conn.subscriptions.lock().await.remove(&sub_id);
+        return;
+    }
+
     debug!(conn_id = %conn_id, sub_id = %sub_id, "Subscription registered");
 
     // NIP-01 OR semantics: execute one DB query per filter and deduplicate results

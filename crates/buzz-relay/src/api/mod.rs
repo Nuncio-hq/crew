@@ -174,6 +174,14 @@ pub mod relay_members {
             return Ok(true);
         }
 
+        // The owner relationship is an admission credential, not a general
+        // users-table lookup.  Keep the live fallback behind the same policy
+        // switch as initial NIP-OA admission so a disabled policy cannot
+        // silently preserve a delegated session.
+        if !state.config.allow_nip_oa_auth {
+            return Ok(false);
+        }
+
         let Some(owner_bytes) = agent_owner_pubkey else {
             return Ok(false);
         };
