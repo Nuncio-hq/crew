@@ -18,6 +18,7 @@ struct Fixture {
     event: nostr::Event,
     response: Arc<Mutex<Response>>,
     submissions: Arc<Mutex<Vec<nostr::Event>>>,
+    submission_notify: Arc<tokio::sync::Notify>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -49,8 +50,10 @@ impl Fixture {
         };
         let response = Arc::new(Mutex::new(response));
         let submissions = Arc::new(Mutex::new(Vec::new()));
+        let submission_notify = Arc::new(tokio::sync::Notify::new());
         let reply_state = Arc::clone(&response);
         let received = Arc::clone(&submissions);
+        let received_notify = Arc::clone(&submission_notify);
         let server = tokio::spawn(async move {
             loop {
                 let (mut socket, _) = listener.accept().await.expect("accept");
@@ -62,6 +65,7 @@ impl Fixture {
                     let mode = if event.kind.as_u16() as u32 == buzz_core::kind::KIND_AGENT_RECEIPT
                     {
                         received.lock().expect("submissions").push(event.clone());
+                        received_notify.notify_waiters();
                         reply_state.lock().expect("response").clone()
                     } else {
                         Response::Accept
@@ -93,6 +97,7 @@ impl Fixture {
             event,
             response,
             submissions,
+            submission_notify,
             server,
         }
     }
@@ -124,6 +129,16 @@ impl Fixture {
 
     fn submitted(&self) -> Vec<nostr::Event> {
         self.submissions.lock().expect("submissions").clone()
+    }
+
+    async fn wait_for_submissions(&self, expected: usize) {
+        loop {
+            let notified = self.submission_notify.notified();
+            if self.submitted().len() >= expected {
+                return;
+            }
+            notified.await;
+        }
     }
 }
 
