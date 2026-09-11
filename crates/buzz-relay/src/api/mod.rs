@@ -490,4 +490,141 @@ pub mod relay_members {
             assert_eq!(result, None);
         }
     }
+
+    #[cfg(test)]
+    mod postgres_tests {
+        use std::sync::Arc;
+
+        use buzz_core::tenant::CommunityId;
+        use nostr::Keys;
+        use uuid::Uuid;
+
+        use super::*;
+        use crate::{config::Config, state::AppState};
+
+        /// Build the real relay state used by the writer-backed membership
+        /// gate. The test wrapper supplies an isolated DATABASE_URL; Redis is
+        /// only needed to construct the normal AppState services.
+        async fn membership_test_state() -> (
+            Arc<AppState>,
+            crate::state::AuditShutdownHandle,
+            sqlx::PgPool,
+        ) {
+            let mut config = Config::from_env().expect("default config loads");
+            config.database_url = crate::test_support::database_url();
+            config.redis_url = std::env::var("BUZZ_TEST_REDIS_URL")
+                .or_else(|_| std::env::var("REDIS_URL"))
+                .unwrap_or_else(|_| "redis://127.0.0.1:56471/13".to_owned());
+            config.require_relay_membership = true;
+
+            let pool = sqlx::PgPool::connect(&config.database_url)
+                .await
+                .expect("connect isolated PostgreSQL database");
+            let db = buzz_db::Db::from_pool(pool.clone());
+            let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+                .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+                .expect("create Redis pool");
+            let pubsub = Arc::new(
+                buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
+                    .await
+                    .expect("create pubsub manager"),
+            );
+            let auth = buzz_auth::AuthService::new(config.auth.clone());
+            let search = buzz_search::SearchService::new(pool.clone());
+            let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+                db.clone(),
+                buzz_workflow::WorkflowConfig::default(),
+            ));
+            let media_storage =
+                buzz_media::MediaStorage::new(&config.media).expect("create media storage");
+            let (state, audit_shutdown) = AppState::new(
+                config,
+                db,
+                redis_pool,
+                None::<buzz_audit::AuditService>,
+                pubsub,
+                auth,
+                search,
+                workflow_engine,
+                Keys::generate(),
+                media_storage,
+            );
+            (Arc::new(state), audit_shutdown, pool)
+        }
+
+        #[tokio::test]
+        #[ignore = "requires isolated PostgreSQL"]
+        async fn current_relay_membership_for_auth_tracks_writer_roster_changes() {
+            let (state, audit_shutdown, pool) = membership_test_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = CommunityId::from_uuid(community_uuid);
+            let owner = Keys::generate();
+            let agent = Keys::generate();
+            let owner_bytes = owner.public_key().to_bytes();
+            let owner_hex = owner.public_key().to_hex();
+            let agent_bytes = agent.public_key().to_bytes();
+            let host = format!("membership-gate-{community_uuid}.example");
+
+            sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                .bind(community_uuid)
+                .bind(&host)
+                .execute(&pool)
+                .await
+                .expect("insert isolated community");
+            sqlx::query(
+                "INSERT INTO relay_members (community_id, pubkey, role) \
+                 VALUES ($1, $2, 'owner')",
+            )
+            .bind(community_uuid)
+            .bind(&owner_hex)
+            .execute(&pool)
+            .await
+            .expect("insert owner membership");
+
+            assert!(
+                current_relay_membership_for_auth(&state, community, &owner_bytes, None,)
+                    .await
+                    .expect("read direct membership")
+            );
+            assert!(current_relay_membership_for_auth(
+                &state,
+                community,
+                &agent_bytes,
+                Some(&owner_bytes),
+            )
+            .await
+            .expect("read delegated membership"));
+
+            sqlx::query("DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2")
+                .bind(community_uuid)
+                .bind(&owner_hex)
+                .execute(&pool)
+                .await
+                .expect("remove owner membership");
+
+            assert!(
+                !current_relay_membership_for_auth(&state, community, &owner_bytes, None,)
+                    .await
+                    .expect("read removed direct membership")
+            );
+            assert!(!current_relay_membership_for_auth(
+                &state,
+                community,
+                &agent_bytes,
+                Some(&owner_bytes),
+            )
+            .await
+            .expect("read removed delegated membership"));
+
+            sqlx::query("DELETE FROM communities WHERE id = $1")
+                .bind(community_uuid)
+                .execute(&pool)
+                .await
+                .expect("remove isolated community");
+            drop(state);
+            audit_shutdown
+                .drain(std::time::Duration::from_secs(1))
+                .await;
+        }
+    }
 }

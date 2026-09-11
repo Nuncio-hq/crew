@@ -2485,6 +2485,60 @@ pub(crate) mod tests {
         assert!(cancel.is_cancelled(), "local revocation cancels the socket");
     }
 
+    #[tokio::test]
+    async fn disconnect_pubkey_local_skips_the_excluded_origin_connection() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let pubkey = vec![6u8; 32];
+
+        let register = |state: &AppState| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(4);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            state
+                .conn_manager
+                .set_authenticated_pubkey(conn_id, pubkey.clone());
+            (conn_id, ctrl_rx, cancel)
+        };
+
+        let (origin_conn, mut origin_ctrl, origin_cancel) = register(&state);
+        let (_other_conn, mut other_ctrl, other_cancel) = register(&state);
+
+        assert_eq!(
+            state
+                .disconnect_pubkey_local(
+                    &tenant,
+                    &pubkey,
+                    &"0".repeat(64),
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    Some(origin_conn),
+                )
+                .await,
+            1
+        );
+        assert!(!origin_cancel.is_cancelled(), "origin socket stays live");
+        assert!(matches!(
+            origin_ctrl.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(other_cancel.is_cancelled(), "other session is revoked");
+        let frame = other_ctrl.try_recv().expect("other rejection is queued");
+        assert!(matches!(frame, WsMessage::Text(ref text) if text.as_str().contains("false")));
+    }
+
     #[test]
     fn owner_revocation_selection_includes_nip_oa_agent_sessions() {
         let mgr = ConnectionManager::new();
