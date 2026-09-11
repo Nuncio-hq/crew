@@ -237,6 +237,15 @@ test("the Project Wiki search input invokes scoped body search and selects a res
   );
   try {
     const input = screen.getByTestId("wiki-page-search");
+    assert.equal(input.maxLength, 256);
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "n" } });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "ne" } });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
     await act(async () => {
       fireEvent.change(input, { target: { value: "needle" } });
     });
@@ -251,6 +260,10 @@ test("the Project Wiki search input invokes scoped body search and selects a res
     assert.equal(
       calls.find((call) => call.command === "wiki_search").args.snapshotId,
       SNAPSHOT,
+    );
+    assert.deepEqual(
+      calls.find((call) => call.command === "wiki_search").args.pageIds,
+      [firstPage.id, secondPage.id],
     );
     await act(async () => {
       fireEvent.click(screen.getByTestId("wiki-search-result-runtime"));

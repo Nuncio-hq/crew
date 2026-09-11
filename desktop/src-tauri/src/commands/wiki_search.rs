@@ -15,6 +15,7 @@ use crate::app_state::AppState;
 
 const MAX_SEARCH_QUERY_CHARS: usize = 256;
 const MAX_SEARCH_RESULTS: usize = 50;
+const MAX_SEARCH_PAGE_IDS: usize = 256;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct WikiSearchRead {
@@ -31,9 +32,10 @@ pub(crate) async fn wiki_search(
     expected: OwnerScopeToken,
     coordinate: String,
     snapshot_id: String,
+    page_ids: Vec<String>,
     query: String,
 ) -> Result<ScopedOperationResult<WikiSearchRead>, String> {
-    search_wiki(app, expected, coordinate, snapshot_id, query).await
+    search_wiki(app, expected, coordinate, snapshot_id, page_ids, query).await
 }
 
 /// Production seam for the scoped Wiki body search command. Tests call this
@@ -43,6 +45,7 @@ pub(super) async fn search_wiki<R: Runtime>(
     expected: OwnerScopeToken,
     coordinate: String,
     snapshot_id: String,
+    page_ids: Vec<String>,
     query: String,
 ) -> Result<ScopedOperationResult<WikiSearchRead>, String> {
     let captured = capture(app.clone()).await?;
@@ -57,6 +60,26 @@ pub(super) async fn search_wiki<R: Runtime>(
     if query.is_empty() || query.chars().count() > MAX_SEARCH_QUERY_CHARS {
         return Err("Wiki search query must contain 1-256 characters".into());
     }
+    if page_ids.len() > MAX_SEARCH_PAGE_IDS
+        || page_ids.iter().any(|id| !valid_event_id(id))
+        || page_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != page_ids.len()
+    {
+        return Err("Wiki snapshot page identity is invalid".into());
+    }
+    if page_ids.is_empty() {
+        assert_current(app.clone(), &captured.token).await?;
+        return Ok(ScopedOperationResult {
+            token: captured.token,
+            value: WikiSearchRead {
+                events: Vec::new(),
+                truncated: false,
+            },
+        });
+    }
     let transport = OwnerOperationTransport::captured(
         &app.state::<AppState>(),
         captured.token.scope.community.clone(),
@@ -66,9 +89,9 @@ pub(super) async fn search_wiki<R: Runtime>(
     .map_err(|error| error.to_string())?;
     // NIP-01 filters only accept single-letter `#X` keys. The longer
     // `wiki-snapshot` protocol tag cannot be sent through the typed relay
-    // filter without being silently dropped by nostr's deserializer. Keep the
-    // exact snapshot check below as a strict post-filter; an old/foreign hit
-    // fails closed instead of being rendered.
+    // filter without being silently dropped by nostr's deserializer. The
+    // verified page-id allowlist is the query boundary; the exact snapshot
+    // check below remains a strict post-filter defense.
     let events = scoped_query(
         app.clone(),
         &captured.token,
@@ -77,6 +100,7 @@ pub(super) async fn search_wiki<R: Runtime>(
             "kinds": [WIKI_EVENT_KIND],
             "authors": [owner],
             "#a": [coordinate],
+            "ids": page_ids,
             "search": query,
             "limit": MAX_SEARCH_RESULTS + 1,
         }),
@@ -108,6 +132,13 @@ fn valid_snapshot_id(value: &str) -> bool {
                 || byte.is_ascii_digit()
                 || (b'a'..=b'f').contains(byte)
         })
+}
+
+fn valid_event_id(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn validate_search_event(

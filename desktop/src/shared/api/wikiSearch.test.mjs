@@ -6,6 +6,7 @@ const FOREIGN_OWNER = "b".repeat(64);
 const REPO = "crew";
 const COMMUNITY = "https://relay.example";
 const SNAPSHOT = "12345678-1234-4234-9234-123456789abc";
+const OLD_SNAPSHOT = "22345678-1234-4234-9234-123456789abc";
 const COORDINATE = `30617:${OWNER}:${REPO}`;
 const SOURCE_REVISION = `git:${"c".repeat(40)}`;
 
@@ -23,6 +24,7 @@ function event({
   slug = "intro",
   content = "Canonical body text with Unicode café.",
   title = "Introduction",
+  snapshotId = SNAPSHOT,
 } = {}) {
   return {
     id,
@@ -35,7 +37,7 @@ function event({
       ["d", `${REPO}/${slug}`],
       ["a", COORDINATE],
       ["wiki-version", "1"],
-      ["wiki-snapshot", SNAPSHOT],
+      ["wiki-snapshot", snapshotId],
       ["title", title],
       ["section", "overview"],
       ["commit", "c".repeat(40)],
@@ -103,6 +105,7 @@ after(() => {
 
 const {
   findWikiBodyMatch,
+  MAX_ACTIVE_WIKI_SEARCHES,
   searchWikiAtScope,
   verifiedWikiSnapshotIdentity,
   wikiSearchExcerpt,
@@ -148,9 +151,42 @@ test("scoped search projects relay hits onto the verified snapshot and forwards 
       expected: expectedScope,
       coordinate: COORDINATE,
       snapshotId: SNAPSHOT,
+      pageIds: [page.id],
       query: "canonical",
     },
   });
+});
+
+test("retained previous-generation pages cannot consume the current search query", async () => {
+  const current = event({
+    id: "6".repeat(64),
+    content: "Current generation needle",
+  });
+  const retained = event({
+    id: "7".repeat(64),
+    content: "Retained generation needle",
+    snapshotId: OLD_SNAPSHOT,
+  });
+  const graph = snapshot([retained, current]);
+  installInvoke((command, args) => {
+    if (command === "owner_operation_scope") return expectedScope;
+    assert.equal(command, "wiki_search");
+    assert.deepEqual(args.pageIds, [current.id]);
+    return {
+      token: expectedScope,
+      value: { events: [current], truncated: false },
+    };
+  });
+  const result = await searchWikiAtScope({
+    scope: expectedScope,
+    coordinate: COORDINATE,
+    snapshot: graph,
+    query: "needle",
+  });
+  assert.deepEqual(
+    result.results.map((entry) => entry.pageEventId),
+    [current.id],
+  );
 });
 
 test("old-generation and foreign-owner hits are rejected instead of becoming false matches", async () => {
@@ -292,4 +328,37 @@ test("an incomplete snapshot never invokes a live unscoped search", async () => 
     /complete verified snapshot/,
   );
   assert.deepEqual(calls, []);
+});
+
+test("bounded native admission keeps rapid query churn to one active request and one replacement", async () => {
+  const page = event({ id: "8".repeat(64), content: "needle" });
+  const graph = snapshot([page]);
+  let active = 0;
+  let maxActive = 0;
+  let callCount = 0;
+  installInvoke(async (command) => {
+    if (command === "owner_operation_scope") return expectedScope;
+    assert.equal(command, "wiki_search");
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    callCount += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    active -= 1;
+    return {
+      token: expectedScope,
+      value: { events: [page], truncated: false },
+    };
+  });
+  const inputs = ["n", "ne", "needle"].map((query) =>
+    searchWikiAtScope({
+      scope: expectedScope,
+      coordinate: COORDINATE,
+      snapshot: graph,
+      query,
+    }),
+  );
+  const settled = await Promise.allSettled(inputs);
+  assert.equal(maxActive, MAX_ACTIVE_WIKI_SEARCHES);
+  assert.ok(callCount <= 2);
+  assert.equal(settled[2]?.status, "fulfilled");
 });

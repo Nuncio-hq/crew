@@ -208,15 +208,27 @@ fn normalized_search_text(q: &str) -> Option<String> {
 /// WHERE community_id = $ctx
 ///   AND deleted_at IS NULL
 ///   AND search_tsv @@ query
-///   [+ channel scope, kinds, authors, since, until]
+///   [+ event ids, channel scope, kinds, authors, since, until]
 /// ORDER BY rank DESC, created_at DESC, id
 /// LIMIT $per_page OFFSET (($page - 1) * $per_page)
 /// ```
 ///
 /// `community_id = $ctx` is the first predicate and is non-negotiable. There
 /// is no code path through this function that omits it.
-#[datastore_span(name = "search", system = "postgresql")]
 pub async fn search(pool: &PgPool, query: &SearchQuery) -> Result<SearchResult, SearchError> {
+    search_with_ids(pool, query, None).await
+}
+
+/// Execute a community-scoped FTS query restricted to an optional event-id
+/// allowlist. The allowlist is an existing NIP-01 `ids` constraint, pushed into
+/// the same SQL query as the full-text predicate so post-filtering cannot let
+/// old or unrelated rows consume the bounded search page.
+#[datastore_span(name = "search", system = "postgresql")]
+pub async fn search_with_ids(
+    pool: &PgPool,
+    query: &SearchQuery,
+    ids: Option<&[Vec<u8>]>,
+) -> Result<SearchResult, SearchError> {
     let Some(search_text) = normalized_search_text(&query.q) else {
         return Ok(SearchResult {
             hits: Vec::new(),
@@ -251,6 +263,12 @@ pub async fn search(pool: &PgPool, query: &SearchQuery) -> Result<SearchResult, 
     qb.push(" AS query) AS search_query WHERE community_id = ");
     qb.push_bind(*query.community.as_uuid());
     qb.push(" AND deleted_at IS NULL AND search_tsv @@ search_query.query");
+
+    if let Some(ids) = ids.filter(|values| !values.is_empty()) {
+        qb.push(" AND id = ANY(");
+        qb.push_bind(ids.to_vec());
+        qb.push(")");
+    }
 
     // Channel scope — see `ChannelScope` doc for the four-case mapping. The
     // emitted SQL fragments are identical to the legacy 2x2 tuple for the

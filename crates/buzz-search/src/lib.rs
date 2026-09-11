@@ -51,4 +51,15 @@ impl SearchService {
     pub async fn search(&self, query: &SearchQuery) -> Result<SearchResult, SearchError> {
         query::search(&self.pool, query).await
     }
+
+    /// Execute a community-scoped FTS query restricted to an optional event-id
+    /// allowlist. This is the relay's NIP-01 `ids` pushdown seam for bounded
+    /// snapshot reads.
+    pub async fn search_with_ids(
+        &self,
+        query: &SearchQuery,
+        ids: Option<&[Vec<u8>]>,
+    ) -> Result<SearchResult, SearchError> {
+        query::search_with_ids(&self.pool, query, ids).await
+    }
 }

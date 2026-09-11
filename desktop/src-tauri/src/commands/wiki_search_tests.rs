@@ -47,3 +47,10 @@ fn search_snapshot_identity_requires_a_lowercase_v4_uuid() {
     assert!(!valid_snapshot_id("12345678-1234-4234-9234-123456789ABC"));
     assert!(!valid_snapshot_id("not-a-snapshot"));
 }
+
+#[test]
+fn search_page_ids_require_unique_lowercase_event_ids() {
+    assert!(valid_event_id(&"a".repeat(64)));
+    assert!(!valid_event_id(&"A".repeat(64)));
+    assert!(!valid_event_id(&"a".repeat(63)));
+}
