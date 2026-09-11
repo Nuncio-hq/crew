@@ -463,7 +463,7 @@ export function useWikiSearch(input: {
   const scopeKey = input.scope
     ? wikiSnapshotScopeKey(input.scope)
     : ["", "", -1, -1];
-  return useQuery({
+  const result = useQuery({
     queryKey: [
       "crew-wiki-search",
       ...scopeKey,
@@ -491,4 +491,8 @@ export function useWikiSearch(input: {
     staleTime: 5_000,
     gcTime: 0,
   });
+  return {
+    ...result,
+    isDebouncing: normalized !== debounced,
+  };
 }

@@ -307,7 +307,11 @@ function WikiSearchResultsPanel({
       </p>
     );
   }
-  if (searchQuery.isPending || searchQuery.isFetching) {
+  if (
+    searchQuery.isDebouncing ||
+    searchQuery.isPending ||
+    searchQuery.isFetching
+  ) {
     return (
       <p
         aria-live="polite"

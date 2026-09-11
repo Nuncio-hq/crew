@@ -170,6 +170,15 @@ before(() => {
     invoke: async (command, args) => {
       calls.push({ command, args });
       if (command === "wiki_search") {
+        if (args.query === "missing") {
+          return {
+            token: scope,
+            value: { events: [], truncated: false },
+          };
+        }
+        if (args.query === "error") {
+          throw new Error("simulated Wiki search failure");
+        }
         return {
           token: scope,
           value: { events: [secondPage], truncated: false },
@@ -257,6 +266,36 @@ test("the Project Wiki search input invokes scoped body search and selects a res
       calls.filter((call) => call.command === "wiki_search").length,
       1,
     );
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "missing" } });
+    });
+    assert.ok(screen.getByTestId("wiki-search-loading"));
+    assert.equal(screen.queryByTestId("wiki-search-results"), null);
+    assert.equal(screen.queryByTestId("wiki-search-result-runtime"), null);
+    await waitFor(() => assert.ok(screen.getByTestId("wiki-search-empty")));
+    assert.equal(
+      calls.filter((call) => call.command === "wiki_search").length,
+      2,
+    );
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "error" } });
+    });
+    assert.ok(screen.getByTestId("wiki-search-loading"));
+    assert.equal(screen.queryByTestId("wiki-search-empty"), null);
+    await waitFor(() => assert.ok(screen.getByTestId("wiki-search-error")));
+    assert.equal(
+      calls.filter((call) => call.command === "wiki_search").length,
+      3,
+    );
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "needle" } });
+    });
+    assert.ok(screen.getByTestId("wiki-search-loading"));
+    assert.equal(screen.queryByTestId("wiki-search-error"), null);
+    await waitFor(() => {
+      assert.ok(screen.getByTestId("wiki-search-results"));
+      assert.ok(screen.getByTestId("wiki-search-result-runtime"));
+    });
     assert.equal(
       calls.find((call) => call.command === "wiki_search").args.snapshotId,
       SNAPSHOT,
