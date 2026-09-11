@@ -4,6 +4,12 @@
   "recordedAt": "2026-09-07",
   "areas": [
     {
+      "area": "crates/buzz-admin/**",
+      "why": "Live membership revocation command delivery and explicit failure reporting (#362).",
+      "resolve": "Preserve the admin command's durable membership write and propagate control-plane delivery failures with a non-success exit; keep upstream authorization and readback behavior.",
+      "filesAtRecord": 1
+    },
+    {
       "area": "crates/buzz-acp/**",
       "why": "Crew's agent kernel: session ledger + resume-first (#169/#180), thread worktree leases + Cowork (#187/#188), elicitation, receipts + recovery (#91/#339/#340), governor/desktop-control env (#196/#197), lazy slot fill (#302), roles (#116/#148), Crew prompt sections. Crew has NOT adopted upstream #6732 thread-per-session (`session_owners`/`SessionPolicy`); scope.rs + session_model_*.md are present but unwired.",
       "resolve": "Crew is ahead here: cherry-pick upstream commits onto Crew (do not rebase Crew onto upstream). Keep one idle reaper, additive Crew modules, `Option<&'static str>` base prompt. A change that touches session ownership needs a decision first.",
@@ -76,6 +82,12 @@
           "resolve": "retain the module line"
         }
       ]
+    },
+    {
+      "area": "crates/buzz-pubsub/**",
+      "why": "Live membership revocation control metadata and cross-pod delivery (#362).",
+      "resolve": "Retain backward-compatible control-event decoding, correlated disconnect acknowledgements, and self-leave exclusion; upstream pub/sub transport behavior remains authoritative.",
+      "filesAtRecord": 2
     },
     {
       "area": "crates/buzz-db/**",
