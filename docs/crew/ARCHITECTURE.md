@@ -454,8 +454,18 @@ compatible build rather than restoring a stale v1 database. See [the recovery
 runbook](TESTING.md#wiki-journal-v3-recovery) and
 [D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
-#363 certifies installed-runtime generation and immutable Git/folder snapshots;
-#364 owns scoped full-body retrieval and exact-revision source reads. Current
+#363 owns the installed-runtime generation seam and immutable Git/folder
+snapshot handoff. Native publication resolves an owner/community/repository
+scoped Wiki runtime preference, then starts a fresh bounded process through the
+caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
+profile; Claude/Codex receive an explicit model selection. Missing or failed
+runtime execution is a failed generation with no heuristic or HTTP fallback;
+the unsigned legacy preview remains deterministic for compatibility. The
+adapter's state, prompt input, stdout/stderr, deadline, and cancellation are
+bounded, and selection is independent from employee sessions and recap
+settings. #348's real installed-runtime staging evidence is still required
+before any runtime combination is called certified. #364 owns scoped full-body
+retrieval and exact-revision source reads. Current
 local file reads use worktree bytes and cannot prove historical source. #365
 proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
