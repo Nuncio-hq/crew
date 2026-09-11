@@ -1411,6 +1411,7 @@ dependencies = [
  "hex",
  "nostr 0.44.7",
  "rand 0.10.1",
+ "redis",
  "reqwest 0.13.4",
  "rust-s3",
  "rustls",
