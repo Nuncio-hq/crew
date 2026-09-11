@@ -40,6 +40,10 @@ export type RecapAction =
       error?: string | null;
     }
   | {
+      type: "lookup_failed";
+      error: string;
+    }
+  | {
       type: "generate_started";
       requestId: string;
     }
@@ -98,6 +102,14 @@ export function recapReducer(
         cancelRequested: false,
         recap: action.recap,
         error: action.error ?? null,
+      };
+    case "lookup_failed":
+      return {
+        ...state,
+        status: "failed",
+        requestId: null,
+        cancelRequested: false,
+        error: action.error,
       };
     case "generate_started":
       return {

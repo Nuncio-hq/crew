@@ -124,9 +124,7 @@ export function ThreadRecapPanel({
           .catch((error: unknown) => {
             if (!active) return;
             dispatch({
-              type: "loaded",
-              status: "no_recap",
-              recap: null,
+              type: "lookup_failed",
               error: recapErrorMessage(error),
             });
           });

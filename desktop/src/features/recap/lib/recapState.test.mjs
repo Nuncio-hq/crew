@@ -51,3 +51,14 @@ test("cancel fences a late provider result and preserves the previous recap", ()
   assert.equal(state.requestId, null);
   assert.deepEqual(state.recap, previous);
 });
+
+test("lookup failure preserves the previous recap and reports failure", () => {
+  const previous = { text: "old", generationId: "old-generation" };
+  const state = recapReducer(
+    { ...initialRecapState(), status: "current", recap: previous },
+    { type: "lookup_failed", error: "relay unavailable" },
+  );
+  assert.equal(state.status, "failed");
+  assert.equal(state.error, "relay unavailable");
+  assert.deepEqual(state.recap, previous);
+});
