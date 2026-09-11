@@ -24,8 +24,8 @@ use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::RelayMessage;
 use crate::rejection::{reject_revoked_connection, RejectionTarget};
 use crate::state::{
-    AppState, SelfLeaveRevocation, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT,
-    RELAY_MEMBERSHIP_REVOKED_REASON,
+    AppState, SelfLeaveRevocation, RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT,
+    RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT, RELAY_MEMBERSHIP_REVOKED_REASON,
 };
 
 use super::ingest::{reject_with_transport, IngestAuth, IngestError};
@@ -650,6 +650,21 @@ async fn enqueue_event_created_audit(
     }
 }
 
+/// Result of the leave-specific pre-ingest membership check. Keeping this
+/// separate from [`IngestError`] lets `handle_event` release the fence before
+/// routing a raced revocation through the generic rejection path while still
+/// retaining the real ingest error for the ordinary EVENT response.
+enum RelayLeavePreparation {
+    /// The membership check passed and the real ingest pipeline completed (or
+    /// rejected) under the leave operation deadline.
+    Ingest(Result<super::ingest::IngestResult, IngestError>),
+    /// A competing revocation removed the row before this leave reached the
+    /// delete seam.
+    Revoked,
+    /// The writer-backed membership check failed before ingest.
+    CheckFailed(String),
+}
+
 /// Handle an EVENT message from a WebSocket connection.
 ///
 /// Extracts auth from the WS connection, dispatches ephemeral events locally,
@@ -849,8 +864,12 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     // Claim the same per-connection fence used by live revocation and the
     // durable sweep before ingest can delete the sender's membership row. A
     // second membership read after the bounded wait closes the race where a
-    // competing admin removal completed while this handler was waiting.
-    let mut leave_revocation_guard = if is_relay_leave {
+    // competing admin removal completed while this handler was waiting. The
+    // complete writer-backed check/delete/side-effect phase is one bounded
+    // operation while that guard is held. If the deadline expires, consume
+    // the guard through the same finalizer used by a raced `NotFound` result so
+    // the event receives its one terminal response before policy cancellation.
+    let (mut leave_revocation_guard, ingest_result) = if is_relay_leave {
         let Some(guard) = state
             .conn_manager
             .acquire_revocation_lock(conn_id, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT)
@@ -864,16 +883,32 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             ));
             return;
         };
-        match crate::api::relay_members::current_relay_membership_for_auth(
-            &state,
-            conn.tenant.community(),
-            &pubkey_bytes,
-            agent_owner_pubkey.as_deref(),
-        )
-        .await
-        {
-            Ok(true) => Some(guard),
-            Ok(false) => {
+        let leave_state = Arc::clone(&state);
+        let leave_tenant = conn.tenant.clone();
+        let leave_pubkey = pubkey_bytes.clone();
+        let leave_owner = agent_owner_pubkey.clone();
+        let leave_event_id = event.id;
+        let prepared = tokio::time::timeout(RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT, async move {
+            match crate::api::relay_members::current_relay_membership_for_auth(
+                &leave_state,
+                leave_tenant.community(),
+                &leave_pubkey,
+                leave_owner.as_deref(),
+            )
+            .await
+            {
+                Ok(true) => RelayLeavePreparation::Ingest(
+                    super::ingest::ingest_event(&leave_state, &leave_tenant, event, ingest_auth)
+                        .await,
+                ),
+                Ok(false) => RelayLeavePreparation::Revoked,
+                Err(error) => RelayLeavePreparation::CheckFailed(error),
+            }
+        })
+        .await;
+        match prepared {
+            Ok(RelayLeavePreparation::Ingest(result)) => (Some(guard), result),
+            Ok(RelayLeavePreparation::Revoked) => {
                 // The second membership check can observe a competing
                 // revocation. Release the leave fence before the generic
                 // rejection path tries to acquire it for cleanup.
@@ -881,29 +916,50 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 reject_revoked_connection(
                     &state,
                     &conn,
-                    RejectionTarget::Event(event.id),
+                    RejectionTarget::Event(leave_event_id),
                     RELAY_MEMBERSHIP_REVOKED_REASON,
                 )
                 .await;
                 return;
             }
-            Err(error) => {
+            Ok(RelayLeavePreparation::CheckFailed(error)) => {
                 warn!(conn_id = %conn_id, "Current relay membership check failed before leave ingest: {error}");
                 drop(guard);
                 reject_revoked_connection(
                     &state,
                     &conn,
-                    RejectionTarget::Event(event.id),
+                    RejectionTarget::Event(leave_event_id),
                     "error: internal server error",
                 )
                 .await;
                 return;
             }
+            Err(_) => {
+                let timeout_message = "error: relay membership leave operation timed out";
+                let ack = RelayMessage::ok(&event_id_hex, false, timeout_message).into();
+                let finalized = state
+                    .finalize_fenced_connection_revocation(
+                        &conn.tenant,
+                        conn_id,
+                        &event_id_hex,
+                        RELAY_MEMBERSHIP_REVOKED_REASON,
+                        ack,
+                        guard,
+                    )
+                    .await;
+                if finalized.is_none() {
+                    conn.send(RelayMessage::ok(&event_id_hex, false, timeout_message));
+                }
+                return;
+            }
         }
     } else {
-        None
+        (
+            None,
+            super::ingest::ingest_event(&state, &conn.tenant, event, ingest_auth).await,
+        )
     };
-    match super::ingest::ingest_event(&state, &conn.tenant, event, ingest_auth).await {
+    match ingest_result {
         Ok(result) => {
             if result.accepted {
                 // buzz_events_stored_total is emitted inside ingest_event()
@@ -2207,8 +2263,9 @@ mod tests {
         use std::sync::Arc;
 
         use buzz_auth::{AuthContext, AuthMethod, Scope};
+        use buzz_core::kind::KIND_NIP43_LEAVE_REQUEST;
         use buzz_core::StoredEvent;
-        use nostr::{EventBuilder, Filter, Keys, Kind};
+        use nostr::{EventBuilder, Filter, Keys, Kind, Tag};
         use tokio::sync::{mpsc, Mutex};
         use tokio_util::sync::CancellationToken;
         use uuid::Uuid;
@@ -2525,12 +2582,15 @@ mod tests {
 
                 let (req_conn, _req_rx, mut req_ctrl) =
                     authenticated_conn(&state, &tenant, &keys).await;
-                crate::handlers::req::handle_req(
-                    "revoked-req".to_owned(),
-                    vec![Filter::new().kinds([Kind::TextNote])],
-                    vec![None],
-                    req_conn,
-                    Arc::clone(&state),
+                crate::test_support::bounded(
+                    "handle revoked REQ",
+                    crate::handlers::req::handle_req(
+                        "revoked-req".to_owned(),
+                        vec![Filter::new().kinds([Kind::TextNote])],
+                        vec![None],
+                        req_conn,
+                        Arc::clone(&state),
+                    ),
                 )
                 .await;
                 assert!(
@@ -2539,11 +2599,14 @@ mod tests {
 
                 let (count_conn, _count_rx, mut count_ctrl) =
                     authenticated_conn(&state, &tenant, &keys).await;
-                crate::handlers::count::handle_count(
-                    "revoked-count".to_owned(),
-                    vec![Filter::new().kinds([Kind::TextNote])],
-                    count_conn,
-                    Arc::clone(&state),
+                crate::test_support::bounded(
+                    "handle revoked COUNT",
+                    crate::handlers::count::handle_count(
+                        "revoked-count".to_owned(),
+                        vec![Filter::new().kinds([Kind::TextNote])],
+                        count_conn,
+                        Arc::clone(&state),
+                    ),
                 )
                 .await;
                 assert!(
@@ -2555,7 +2618,11 @@ mod tests {
                 let event = EventBuilder::new(Kind::TextNote, "revoked")
                     .sign_with_keys(&keys)
                     .expect("sign event");
-                crate::handlers::event::handle_event(event, event_conn, Arc::clone(&state)).await;
+                crate::test_support::bounded(
+                    "handle revoked EVENT",
+                    crate::handlers::event::handle_event(event, event_conn, Arc::clone(&state)),
+                )
+                .await;
                 assert!(
                     matches!(event_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("OK") && text.contains("false"))
                 );
@@ -2573,11 +2640,156 @@ mod tests {
                 let stored = channel_event(None);
                 let matches = state.sub_registry.fan_out_scoped(community, &stored);
                 assert_eq!(matches, vec![(fanout_conn.conn_id, sub_id.clone())]);
-                let filtered =
-                    filter_fanout_by_access(&state, community, &stored, matches, None).await;
+                let filtered = crate::test_support::bounded(
+                    "filter revoked fanout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
                 assert!(
                     filtered.is_empty(),
                     "revoked identity must be removed at fan-out"
+                );
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires isolated PostgreSQL"]
+        async fn self_leave_not_found_ack_wins_over_a_concurrent_revoked_event() {
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("closed-leave-race-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert leave-race community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert leave-race community");
+                crate::test_support::bounded(
+                    "insert leave-race membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert leave-race membership");
+
+                let tenant = TenantContext::resolved(community, &host);
+                let (conn, _data_rx, mut ctrl_rx) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                let leave_hook = Arc::new(crate::handlers::ingest::RelayLeaveTestHook {
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                });
+                crate::handlers::ingest::install_relay_leave_test_hook(Some(Arc::clone(
+                    &leave_hook,
+                )))
+                .await;
+
+                let leave_event =
+                    EventBuilder::new(Kind::Custom(KIND_NIP43_LEAVE_REQUEST as u16), "")
+                        .tags([Tag::parse(["-"]).expect("protected leave tag")])
+                        .sign_with_keys(&keys)
+                        .expect("sign leave event");
+                let leave_event_id = leave_event.id.to_hex();
+                let leave_task = tokio::spawn(crate::handlers::event::handle_event(
+                    leave_event,
+                    Arc::clone(&conn),
+                    Arc::clone(&state),
+                ));
+
+                crate::test_support::bounded(
+                    "wait for leave delete seam",
+                    leave_hook.entered.notified(),
+                )
+                .await;
+                crate::test_support::bounded(
+                    "delete leave-race membership",
+                    sqlx::query(
+                        "DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("delete leave-race membership");
+
+                // This request observes the same real writer deletion while
+                // the leave handler still owns the per-connection fence. It
+                // must wait for the leave finalizer instead of cancelling the
+                // socket ahead of its correlated event response.
+                let revoked_event = EventBuilder::new(Kind::TextNote, "raced")
+                    .sign_with_keys(&keys)
+                    .expect("sign raced event");
+                let revoked_task = tokio::spawn(crate::handlers::event::handle_event(
+                    revoked_event,
+                    Arc::clone(&conn),
+                    Arc::clone(&state),
+                ));
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                assert!(
+                    !conn.cancel.is_cancelled(),
+                    "the concurrent revoked request must remain behind the leave fence"
+                );
+                assert!(
+                    matches!(
+                        ctrl_rx.try_recv(),
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    ),
+                    "no request response may precede the leave finalizer"
+                );
+
+                leave_hook.release.notify_one();
+                crate::test_support::bounded("join self-leave handler", leave_task)
+                    .await
+                    .expect("self-leave handler task");
+                crate::handlers::ingest::install_relay_leave_test_hook(None).await;
+                crate::test_support::bounded("join raced event handler", revoked_task)
+                    .await
+                    .expect("raced event handler task");
+
+                let frame = ctrl_rx.try_recv().expect("leave race ACK is queued");
+                let axum::extract::ws::Message::Text(text) = frame else {
+                    panic!("expected leave race OK frame");
+                };
+                let frame: serde_json::Value =
+                    serde_json::from_str(text.as_str()).expect("leave race frame JSON");
+                assert_eq!(frame[0], "OK");
+                assert_eq!(frame[1], leave_event_id);
+                assert_eq!(frame[2], false);
+                assert_eq!(
+                    frame[3],
+                    crate::handlers::ingest::RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE
+                );
+                assert!(
+                    matches!(
+                        ctrl_rx.try_recv(),
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    ),
+                    "the raced request must not append a second event ACK"
+                );
+                assert!(
+                    conn.cancel.is_cancelled(),
+                    "leave finalizer policy-closes origin"
                 );
 
                 drop(state);

@@ -923,13 +923,26 @@ const RELAY_MEMBERSHIP_SWEEP_CONCURRENCY: usize = 16;
 const RELAY_MEMBERSHIP_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 /// Overall deadline for one bounded reconciliation pass.
 const RELAY_MEMBERSHIP_SWEEP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Reserve half of every bounded pass for fresh identities whenever retry
+/// work and live identities coexist. A permanently failing writer lookup must
+/// therefore make progress through the fresh cursor ring instead of occupying
+/// the whole window forever.
+const RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET: usize = RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES / 2;
 /// A concurrent trigger gets one coalesced follow-up pass, then waits for the
 /// next periodic/reconnect trigger. This keeps work finite during a storm.
 const RELAY_MEMBERSHIP_SWEEP_MAX_PASSES: usize = 2;
 /// A self-leave must claim its fence before deleting the durable row, but a
-/// stalled competing revocation must not hold the event handler forever.
+/// stalled competing revocation must not hold the event handler forever. The
+/// leave handler's database phase is bounded separately; keep this wait longer
+/// than that phase plus the terminal control-frame budget so a request racing
+/// an owned leave never reaches its cancellation fallback first.
 pub(crate) const RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(6);
+    std::time::Duration::from_secs(12);
+/// The complete writer-backed self-leave operation, from its final membership
+/// read through durable deletion, must reach a terminal event response within
+/// this deadline while the per-connection revocation fence remains held.
+pub(crate) const RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MembershipLookupOutcome {
@@ -1089,6 +1102,59 @@ fn select_bounded_membership_groups_with_limit(
     (0..selected_count)
         .map(|offset| groups[(start + offset) % groups.len()].clone())
         .collect()
+}
+
+/// Choose retry work and fresh cursor work for one bounded sweep. Retry groups
+/// retain FIFO order, but they receive only a bounded share when fresh
+/// identities are available. This helper is shared by the production pass and
+/// its fairness regression so the guard cannot be removed without changing a
+/// falsifiable selection result.
+fn select_membership_revalidation_work(
+    grouped: &mut HashMap<RelayMembershipIdentity, Vec<Uuid>>,
+    queued: Vec<RelayMembershipGroup>,
+    cursor: &AtomicU64,
+) -> (Vec<RelayMembershipGroup>, Vec<RelayMembershipGroup>) {
+    let mut retry_candidates = Vec::new();
+    for (identity, _) in queued {
+        let Some(conn_ids) = grouped.remove(&identity) else {
+            continue;
+        };
+        retry_candidates.push((identity, conn_ids));
+    }
+
+    let retry_budget = if grouped.is_empty() {
+        RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES
+    } else {
+        RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET.max(1)
+    };
+    let retry_count = retry_candidates.len().min(retry_budget);
+    let mut selected = retry_candidates.drain(..retry_count).collect::<Vec<_>>();
+    let mut deferred = retry_candidates;
+    let fresh_limit = RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES.saturating_sub(selected.len());
+    let fresh_candidates = grouped.drain().collect::<Vec<_>>();
+    if fresh_limit > 0 && !fresh_candidates.is_empty() {
+        let fresh_selected = select_bounded_membership_groups_with_limit(
+            fresh_candidates.clone(),
+            cursor,
+            fresh_limit,
+        );
+        let selected_fresh_ids: HashSet<_> = fresh_selected
+            .iter()
+            .map(|(identity, _)| identity.clone())
+            .collect();
+        selected.extend(fresh_selected);
+        deferred.extend(
+            fresh_candidates
+                .into_iter()
+                .filter(|(identity, _)| !selected_fresh_ids.contains(identity)),
+        );
+    } else {
+        // The fresh ring is still live work even when retries consume the
+        // whole bounded window. Retain it behind the retry queue instead of
+        // dropping the identities that did not fit this pass.
+        deferred.extend(fresh_candidates);
+    }
+    (selected, deferred)
 }
 
 /// Bounded failure returned by a cluster-wide live revocation.
@@ -2086,6 +2152,36 @@ impl AppState {
     /// single-flight fence; keeping the pass separate makes the finite work
     /// and its timeout behavior independently testable.
     async fn revalidate_live_relay_memberships_once(&self) -> usize {
+        self.revalidate_live_relay_memberships_once_with_lookup(
+            |community_id, pubkey, owner| async move {
+                crate::api::relay_members::current_relay_membership_for_auth(
+                    self,
+                    community_id,
+                    &pubkey,
+                    owner.as_deref(),
+                )
+                .await
+            },
+        )
+        .await
+    }
+
+    /// Execute one bounded reconciliation pass with an injected writer lookup.
+    ///
+    /// Production calls this with
+    /// [`crate::api::relay_members::current_relay_membership_for_auth`]. The
+    /// injected seam is kept at the executor boundary so tests exercise the
+    /// same identity snapshot, fair planner, retry queue, revocation fence,
+    /// subscription eviction, and terminal cancellation used in production;
+    /// only the external writer result is controlled by the test.
+    async fn revalidate_live_relay_memberships_once_with_lookup<Lookup, CheckFuture, LookupError>(
+        &self,
+        lookup: Lookup,
+    ) -> usize
+    where
+        Lookup: Fn(CommunityId, Vec<u8>, Option<Vec<u8>>) -> CheckFuture,
+        CheckFuture: Future<Output = Result<bool, LookupError>>,
+    {
         let mut grouped: HashMap<RelayMembershipIdentity, Vec<Uuid>> = HashMap::new();
         for community_id in self.conn_manager.per_community_ws_connections().into_keys() {
             for (conn_id, pubkey, owner) in self
@@ -2102,33 +2198,20 @@ impl AppState {
         // Retry deferred work before advancing the fresh cursor window. Use
         // current connection IDs for a still-live identity so a reconnect can
         // replace stale IDs while a disconnected socket is simply discarded.
-        let mut selected = Vec::new();
-        let mut deferred = Vec::new();
-        {
+        // The shared planner reserves a fresh slice whenever both classes are
+        // present, so a persistent writer failure cannot starve new sockets.
+        let (selected, deferred) = {
             let mut retry_queue = self
                 .relay_membership_revalidation_pending_groups
                 .lock()
                 .await;
             let queued = retry_queue.drain(..).collect::<Vec<_>>();
-            for (identity, _) in queued {
-                let Some(conn_ids) = grouped.remove(&identity) else {
-                    continue;
-                };
-                if selected.len() < RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES {
-                    selected.push((identity, conn_ids));
-                } else {
-                    deferred.push((identity, conn_ids));
-                }
-            }
-            let fresh_limit = RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES.saturating_sub(selected.len());
-            if fresh_limit > 0 {
-                selected.extend(select_bounded_membership_groups_with_limit(
-                    grouped.into_iter().collect(),
-                    &self.relay_membership_revalidation_cursor,
-                    fresh_limit,
-                ));
-            }
-        }
+            select_membership_revalidation_work(
+                &mut grouped,
+                queued,
+                &self.relay_membership_revalidation_cursor,
+            )
+        };
         if selected.is_empty() {
             self.retain_relay_membership_revalidation_groups(deferred)
                 .await;
@@ -2137,15 +2220,7 @@ impl AppState {
 
         let batch = run_bounded_membership_lookups(
             selected,
-            |community_id, pubkey, owner| async move {
-                crate::api::relay_members::current_relay_membership_for_auth(
-                    self,
-                    community_id,
-                    &pubkey,
-                    owner.as_deref(),
-                )
-                .await
-            },
+            lookup,
             RELAY_MEMBERSHIP_LOOKUP_TIMEOUT,
             RELAY_MEMBERSHIP_SWEEP_DEADLINE,
             RELAY_MEMBERSHIP_SWEEP_CONCURRENCY,
@@ -3190,6 +3265,144 @@ pub(crate) mod tests {
             batch.unresolved.len(),
             8,
             "both in-flight and never-started groups must remain retryable"
+        );
+    }
+
+    #[tokio::test]
+    async fn persistent_membership_failures_cannot_starve_fresh_revocation() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::from_u128(0xd00d));
+        let register = |pubkey: Vec<u8>| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            state.conn_manager.set_authenticated_pubkey(conn_id, pubkey);
+            cancel
+        };
+
+        // Fill one complete bounded pass with identities whose writer lookup
+        // will fail forever. The first pass must retain every one for retry.
+        let mut failed_cancels = Vec::with_capacity(RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES);
+        for index in 0..RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES {
+            let [high, low] = (index as u16).to_be_bytes();
+            let mut pubkey = vec![0u8; 32];
+            pubkey[0] = high;
+            pubkey[1] = low;
+            failed_cancels.push(register(pubkey));
+        }
+        assert_eq!(
+            state
+                .revalidate_live_relay_memberships_once_with_lookup(
+                    |_community, _pubkey, _owner| async {
+                        Err::<bool, _>("persistent writer failure")
+                    },
+                )
+                .await,
+            0,
+            "failed writer probes must remain retryable"
+        );
+        assert_eq!(
+            state
+                .relay_membership_revalidation_pending_groups
+                .lock()
+                .await
+                .len(),
+            RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES,
+            "the complete failed window is retained for the next pass"
+        );
+
+        // A fresh revoked window arrives while the retry queue is full. The
+        // second pass uses the same production planner and revocation executor;
+        // its injected writer result denies every fresh identity that fits the
+        // reserved slice. One tail identity must remain queued for a later
+        // pass, which makes dropping unselected fresh work falsifiable too.
+        let fresh_count = RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET + 1;
+        let mut fresh_cancels = Vec::with_capacity(fresh_count);
+        for index in 0..fresh_count {
+            let [high, low] = (index as u16).to_be_bytes();
+            let mut pubkey = vec![0u8; 32];
+            pubkey[0] = 0xfe;
+            pubkey[1] = high;
+            pubkey[2] = low;
+            fresh_cancels.push(register(pubkey));
+        }
+        let fresh_lookups = Arc::new(AtomicU64::new(0));
+        let make_lookup = || {
+            let fresh_lookups = Arc::clone(&fresh_lookups);
+            move |_community: CommunityId, pubkey: Vec<u8>, _owner: Option<Vec<u8>>| {
+                let is_fresh = pubkey.first() == Some(&0xfe);
+                if is_fresh {
+                    fresh_lookups.fetch_add(1, Ordering::SeqCst);
+                }
+                async move {
+                    if is_fresh {
+                        Ok::<bool, &'static str>(false)
+                    } else {
+                        Err::<bool, &'static str>("persistent writer failure")
+                    }
+                }
+            }
+        };
+        let closed = state
+            .revalidate_live_relay_memberships_once_with_lookup(make_lookup())
+            .await;
+
+        assert_eq!(
+            closed, RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET,
+            "fresh denied work must be revoked in this pass"
+        );
+        assert_eq!(
+            fresh_lookups.load(Ordering::SeqCst),
+            RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET as u64
+        );
+        assert_eq!(
+            fresh_cancels
+                .iter()
+                .filter(|cancel| cancel.is_cancelled())
+                .count(),
+            RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET,
+            "the reserved fresh slice must reach the production revocation executor"
+        );
+        assert!(
+            fresh_cancels
+                .iter()
+                .filter(|cancel| !cancel.is_cancelled())
+                .count()
+                == 1,
+            "one fresh tail remains retryable after the bounded pass"
+        );
+        assert!(
+            failed_cancels.iter().all(|cancel| !cancel.is_cancelled()),
+            "failed identities remain live until a writer result is available"
+        );
+        let pending = state
+            .relay_membership_revalidation_pending_groups
+            .lock()
+            .await;
+        assert_eq!(
+            pending.len(),
+            RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES + 1,
+            "unselected fresh work must be retained with the failed retry queue"
+        );
+        assert_eq!(
+            pending
+                .iter()
+                .filter(|(identity, _)| identity.1.first() == Some(&0xfe))
+                .count(),
+            1,
+            "the fresh tail must remain represented for a later pass"
         );
     }
 

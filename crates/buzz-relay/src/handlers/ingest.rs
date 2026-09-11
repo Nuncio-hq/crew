@@ -5,6 +5,9 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+use std::sync::OnceLock;
+
 use chrono::Utc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -51,6 +54,41 @@ use super::event::dispatch_persistent_event;
 /// a concurrent revocation. The WebSocket handler uses this exact value to
 /// retain ownership of the originating event's `OK false` response.
 pub(crate) const RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE: &str = "invalid: you are not a relay member";
+
+/// Test-only synchronization point for the production NIP-43 leave delete.
+///
+/// The live race regression installs this hook immediately before the real
+/// `remove_relay_member` call, deletes the writer row from a second connection,
+/// and then releases the handler. That makes the test exercise the actual
+/// signed `handle_event` → `ingest_event` → writer path while deterministically
+/// selecting the `NotFound` result.
+#[cfg(test)]
+pub(crate) struct RelayLeaveTestHook {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static RELAY_LEAVE_TEST_HOOK: OnceLock<tokio::sync::Mutex<Option<Arc<RelayLeaveTestHook>>>> =
+    OnceLock::new();
+
+#[cfg(test)]
+pub(crate) async fn install_relay_leave_test_hook(hook: Option<Arc<RelayLeaveTestHook>>) {
+    let slot = RELAY_LEAVE_TEST_HOOK.get_or_init(|| tokio::sync::Mutex::new(None));
+    *slot.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn maybe_stall_relay_leave_for_test() {
+    let Some(slot) = RELAY_LEAVE_TEST_HOOK.get() else {
+        return;
+    };
+    let hook = slot.lock().await.clone();
+    if let Some(hook) = hook {
+        hook.entered.notify_one();
+        hook.release.notified().await;
+    }
+}
 
 use crate::conformance::{
     self as conf, channel_label, claimed_community_from_event, emit, msg_id_label,
@@ -2982,6 +3020,8 @@ async fn ingest_event_inner(
         let sender_hex = event.pubkey.to_hex();
 
         // remove_relay_member handles both the NotFound and IsOwner cases atomically.
+        #[cfg(test)]
+        maybe_stall_relay_leave_for_test().await;
         let remove_result = state
             .db
             .remove_relay_member(tenant.community(), &sender_hex)

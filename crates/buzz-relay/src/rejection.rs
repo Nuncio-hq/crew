@@ -63,13 +63,40 @@ pub(crate) async fn reject_revoked_connection(
     // Bare test/teardown senders are not in the manager and retain the direct
     // fallback behavior below.
     let _revocation_guard = if state.conn_manager.has_connection(conn.conn_id) {
-        state
+        match state
             .conn_manager
             .acquire_revocation_lock(conn.conn_id, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT)
             .await
+        {
+            Some(guard) => Some(guard),
+            None => {
+                // A managed connection can only hold this fence while a
+                // self-leave or another durable revocation owns its terminal
+                // path. The leave operation has its own bounded deadline that
+                // is shorter than this wait. If that contract is ever
+                // violated, do not cancel here: cancellation would race the
+                // owner's event ACK and turn a recoverable timeout into a
+                // permanently lost response. The owner remains responsible
+                // for the observable terminal close.
+                tracing::warn!(
+                    conn_id = %conn.conn_id,
+                    "revoked request observed an unfinished revocation fence; deferring cleanup to its owner"
+                );
+                return;
+            }
+        }
     } else {
         None
     };
+
+    // The fence owner queues its correlated leave ACK before cancelling the
+    // socket. A request that was waiting on the same fence can therefore wake
+    // after that terminal path has already run; the cancellation bit makes
+    // this rejection a no-op and prevents a duplicate event ACK or CLOSED
+    // frame from being appended after the policy close.
+    if conn.cancel.is_cancelled() {
+        return;
+    }
 
     let target_sub_id = match target {
         RejectionTarget::Subscription(sub_id) => Some(sub_id),

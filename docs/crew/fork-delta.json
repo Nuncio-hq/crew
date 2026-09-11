@@ -160,6 +160,12 @@
       "filesAtRecord": 1
     },
     {
+      "area": "crates/buzz-test-client/Cargo.toml",
+      "why": "Redis control-plane dependency for live membership revocation E2E coverage (#362).",
+      "resolve": "Retain the workspace Redis dependency used by the membership revocation client; keep the test client's existing dependency versions and feature choices.",
+      "filesAtRecord": 1
+    },
+    {
       "area": "crates/buzz-workflow/**",
       "why": "reply in-thread from send_message action (#6178 port).",
       "resolve": "additive.",
