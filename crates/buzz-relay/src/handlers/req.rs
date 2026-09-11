@@ -21,7 +21,8 @@ use buzz_auth::Scope;
 
 use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::RelayMessage;
-use crate::state::AppState;
+use crate::rejection::{reject_revoked_connection, RejectionTarget};
+use crate::state::{AppState, RELAY_MEMBERSHIP_REVOKED_REASON};
 
 const MAX_SUBSCRIPTIONS: usize = 1024;
 
@@ -56,7 +57,7 @@ pub async fn handle_req(
     conn: Arc<ConnectionState>,
     state: Arc<AppState>,
 ) {
-    let (conn_id, pubkey_bytes, token_channel_ids) = {
+    let (conn_id, pubkey_bytes, token_channel_ids, agent_owner_pubkey) = {
         let auth = conn.auth_state.read().await;
         match &*auth {
             AuthState::Authenticated(ctx) => {
@@ -80,7 +81,13 @@ pub async fn handle_req(
                     return;
                 }
 
-                (conn.conn_id, pk_bytes, ctx.channel_ids.clone())
+                (
+                    conn.conn_id,
+                    pk_bytes,
+                    ctx.channel_ids.clone(),
+                    ctx.agent_owner_pubkey
+                        .map(|owner| owner.to_bytes().to_vec()),
+                )
             }
             _ => {
                 conn.send(RelayMessage::notice(
@@ -94,6 +101,42 @@ pub async fn handle_req(
             }
         }
     };
+
+    // NIP-42 authenticates a connection once, but relay membership remains a
+    // live authorization boundary. Re-read the writer-backed roster before
+    // doing any query or subscription work so a delayed/lost revocation
+    // control message cannot leave this socket authorized indefinitely.
+    match crate::api::relay_members::current_relay_membership_for_auth(
+        &state,
+        conn.tenant.community(),
+        &pubkey_bytes,
+        agent_owner_pubkey.as_deref(),
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            warn!(conn_id = %conn_id, "Current relay membership check failed: {error}");
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                "error: internal server error",
+            )
+            .await;
+            return;
+        }
+    }
 
     let channel_id = extract_channel_id_from_filters(&filters);
     let requested_channel_ids = match extract_channel_ids_from_filters_limited(&filters) {
@@ -210,6 +253,49 @@ pub async fn handle_req(
         return;
     }
 
+    // A revocation can race the historical query above. Re-check the current
+    // writer-backed row immediately before mutating the live subscription
+    // registry, so a delete that commits during history delivery cannot be
+    // followed by a newly-authorized subscription.
+    match crate::api::relay_members::current_relay_membership_for_auth(
+        &state,
+        conn.tenant.community(),
+        &pubkey_bytes,
+        agent_owner_pubkey.as_deref(),
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            warn!(conn_id = %conn_id, "Current relay membership re-check failed: {error}");
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                "error: internal server error",
+            )
+            .await;
+            return;
+        }
+    }
+
+    // Do not add a new subscription after the local revocation snapshot has
+    // marked this connection, and do not let an ordinary shutdown continue
+    // doing work.
+    if conn.cancel.is_cancelled() {
+        return;
+    }
+
     if filters_are_huddle_liveness_only(&filters) {
         handle_huddle_liveness_req(
             &sub_id,
@@ -305,6 +391,19 @@ pub async fn handle_req(
             None,
         )
     };
+
+    // The revoke path removes the registry entry before cancelling the socket.
+    // If registration raced that removal, undo this newly-created entry and
+    // release its retained topics before returning. The current-membership
+    // fan-out gate is still the final defense if the race lands after this
+    // check.
+    if conn.cancel.is_cancelled() {
+        if let Some(removed) = state.sub_registry.remove_subscription(conn_id, &sub_id) {
+            release_subscription_topics(&state, &conn.tenant, &removed.scope).await;
+        }
+        conn.subscriptions.lock().await.remove(&sub_id);
+        return;
+    }
     if let Some(replaced) = replaced {
         release_subscription_topics(&state, &conn.tenant, &replaced.scope).await;
     }
@@ -1286,7 +1385,7 @@ async fn handle_huddle_liveness_req(
     conn.send(RelayMessage::eose(sub_id));
 }
 
-async fn release_subscription_topics(
+pub(crate) async fn release_subscription_topics(
     state: &AppState,
     tenant: &TenantContext,
     scope: &crate::subscription::SubscriptionScope,

@@ -2992,12 +2992,19 @@ async fn ingest_event_inner(
                 // socket first would turn a successful leave into an `OK false`
                 // response for the event that authorized it.
                 if auth.conn_id().is_none() {
-                    state.disconnect_pubkey_clusterwide(
-                        tenant,
-                        &event.pubkey.to_bytes(),
-                        &event_id_hex,
-                        "restricted: not a relay member",
-                    );
+                    state
+                        .disconnect_pubkey_clusterwide(
+                            tenant,
+                            &event.pubkey.to_bytes(),
+                            &event_id_hex,
+                            "restricted: not a relay member",
+                        )
+                        .await
+                        .map_err(|e| {
+                            IngestError::Internal(format!(
+                                "live membership revocation publish failed: {e}"
+                            ))
+                        })?;
                 }
             }
             buzz_db::relay_members::RemoveResult::NotFound => {

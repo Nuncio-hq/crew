@@ -10,6 +10,7 @@ use crate::admission::AdmissionError;
 use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::{ClientMessage, RelayMessage};
 use crate::state::AppState;
+use axum::extract::ws::Message as WsMessage;
 use buzz_auth::LimitType;
 
 /// What a rejected client frame is correlated back to.
@@ -42,6 +43,48 @@ pub(crate) fn request_rejection_message(target: RejectionTarget<'_>, reason: &st
         RejectionTarget::Event(event_id) => RelayMessage::ok(&event_id.to_hex(), false, reason),
         RejectionTarget::Connection => RelayMessage::notice(reason),
     }
+}
+
+/// Reject a request after the authenticated principal's relay membership has
+/// been revoked. The request-specific frame is queued on the priority control
+/// channel and the connection is cancelled. The connection manager records the
+/// policy close reason before cancellation so a full control channel still
+/// produces a typed policy close frame from the writer.
+pub(crate) async fn reject_revoked_connection(
+    state: &AppState,
+    conn: &ConnectionState,
+    target: RejectionTarget<'_>,
+    reason: &str,
+) {
+    let target_sub_id = match target {
+        RejectionTarget::Subscription(sub_id) => Some(sub_id),
+        RejectionTarget::Event(_) | RejectionTarget::Connection => None,
+    };
+
+    // Remove all old subscriptions before cancellation. A request may be the
+    // first frame to discover a missed Redis revocation; cleaning both maps
+    // here prevents that stale connection from continuing to receive global
+    // fan-out after its denial frame is sent.
+    let removed = state
+        .evict_connection_subscriptions(&conn.tenant, conn.conn_id)
+        .await;
+    if state.conn_manager.mark_policy_close(conn.conn_id, reason) {
+        let frame = request_rejection_message(target, reason);
+        let _ = conn.ctrl_tx.try_send(WsMessage::Text(frame.into()));
+        for subscription in removed {
+            if target_sub_id.is_some_and(|sub_id| subscription.sub_id == sub_id) {
+                continue;
+            }
+            let frame = RelayMessage::closed(&subscription.sub_id, reason);
+            let _ = conn.ctrl_tx.try_send(WsMessage::Text(frame.into()));
+        }
+    } else {
+        // Unit tests and a connection that raced deregistration may not still
+        // be present in the manager; the ConnectionState sender remains valid.
+        let frame = request_rejection_message(target, reason);
+        let _ = conn.ctrl_tx.try_send(WsMessage::Text(frame.into()));
+    }
+    conn.cancel.cancel();
 }
 
 /// Applies the WebSocket admission quotas to `msg`, returning whether it may be
@@ -163,7 +206,9 @@ mod tests {
     use nostr::{EventBuilder, Keys, Kind};
     use tokio::sync::mpsc;
 
-    use crate::connection::tests::{authenticated_state, read_frame, test_conn_with_auth};
+    use crate::connection::tests::{
+        authenticated_state, read_frame, test_conn_with_auth, test_conn_with_auth_and_ctrl,
+    };
     use crate::connection::AuthState;
 
     use super::*;
@@ -332,5 +377,29 @@ mod tests {
 
         assert_eq!(frame[0], "CLOSED");
         assert_eq!(frame[1], "history-abc");
+    }
+
+    #[tokio::test]
+    async fn revoked_request_uses_its_subscription_closed_channel_and_cancels() {
+        let state = crate::state::tests::test_state().await;
+        let (conn, _send_rx, mut ctrl_rx) = test_conn_with_auth_and_ctrl(authenticated_state());
+
+        reject_revoked_connection(
+            &state,
+            &conn,
+            RejectionTarget::Subscription("live-sub"),
+            crate::state::RELAY_MEMBERSHIP_REVOKED_REASON,
+        )
+        .await;
+
+        let frame = read_frame(&mut ctrl_rx);
+        assert_eq!(frame[0], "CLOSED");
+        assert_eq!(frame[1], "live-sub");
+        assert_eq!(
+            frame[2],
+            crate::state::RELAY_MEMBERSHIP_REVOKED_REASON,
+            "a revoked REQ must settle on CLOSED before cancellation"
+        );
+        assert!(conn.cancel.is_cancelled());
     }
 }

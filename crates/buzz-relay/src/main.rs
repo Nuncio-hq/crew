@@ -1065,13 +1065,25 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
                             pubkey,
                             event_id,
                             reason,
+                            exclude_conn_id,
                         } => {
-                            state_for_conn_ctrl.conn_manager.disconnect_pubkey(
+                            // The community id came from the server-owned
+                            // Redis channel. The host is irrelevant to topic
+                            // release; keep this synthetic context explicitly
+                            // scoped to that trusted id.
+                            let tenant = buzz_core::tenant::TenantContext::resolved(
                                 scoped.community_id,
-                                &pubkey,
-                                &event_id,
-                                &reason,
+                                "conn-control",
                             );
+                            state_for_conn_ctrl
+                                .disconnect_pubkey_local(
+                                    &tenant,
+                                    &pubkey,
+                                    &event_id,
+                                    &reason,
+                                    exclude_conn_id,
+                                )
+                                .await;
                         }
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

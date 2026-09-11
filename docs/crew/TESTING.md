@@ -117,6 +117,10 @@ NIP-42 sockets authenticated as that pubkey must receive the typed
 by another relay pod. A fresh connection must still complete the WebSocket
 handshake and then receive the same membership denial during AUTH; a relay
 restart is not required to make removal effective.
+The relay also rechecks the writer-backed membership row before each live
+`REQ`, `COUNT`, and `EVENT`, and before fan-out delivery, so a missed
+connection-control message cannot preserve query, write, or subscription
+access.
 
 ## Project Wiki read/search/source slice (#397)
 

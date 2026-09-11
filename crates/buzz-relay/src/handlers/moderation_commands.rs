@@ -193,12 +193,15 @@ async fn handle_ban(
     // other pod's via the fire-and-forget cross-pod fan-out. The paired helper
     // makes "close locally but forget the Redis publish" unrepresentable, so a
     // live ban takes effect immediately, everywhere (decision 4).
-    state.disconnect_pubkey_clusterwide(
-        tenant,
-        &target,
-        &event.id.to_hex(),
-        "blocked: you are banned from this community",
-    );
+    state
+        .disconnect_pubkey_clusterwide(
+            tenant,
+            &target,
+            &event.id.to_hex(),
+            "blocked: you are banned from this community",
+        )
+        .await
+        .map_err(|e| error(format!("live ban revocation publish failed: {e}")))?;
 
     // Notice DM: tell the banned user the terms of the restriction.
     let public_reason = reason.clone().unwrap_or_default();

@@ -66,6 +66,8 @@ struct GlobalPKindIndexKey {
 /// A removed subscription's server-resolved routing scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemovedSubscription {
+    /// Client-supplied subscription identifier.
+    pub sub_id: SubId,
     /// Server-resolved community this subscription belonged to.
     pub community_id: CommunityId,
     /// Server-resolved topics retained by the removed subscription.
@@ -261,6 +263,7 @@ impl SubscriptionRegistry {
 
         metrics::gauge!("buzz_subscriptions_active").decrement(1.0);
         Some(RemovedSubscription {
+            sub_id: sub_id.to_string(),
             community_id,
             scope,
         })
@@ -274,6 +277,7 @@ impl SubscriptionRegistry {
             for (sub_id, (filters, community_id, scope)) in &conn_subs {
                 self.remove_from_index(conn_id, sub_id, filters, *community_id, scope);
                 removed.push(RemovedSubscription {
+                    sub_id: sub_id.clone(),
                     community_id: *community_id,
                     scope: scope.clone(),
                 });

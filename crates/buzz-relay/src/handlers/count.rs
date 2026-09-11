@@ -11,7 +11,8 @@ use crate::handlers::req::{
     filter_can_match_shared_gated_kinds, result_gated_count_safe_for_pushdown,
 };
 use crate::protocol::RelayMessage;
-use crate::state::AppState;
+use crate::rejection::{reject_revoked_connection, RejectionTarget};
+use crate::state::{AppState, RELAY_MEMBERSHIP_REVOKED_REASON};
 
 /// Handle a COUNT message: require auth, enforce channel access, execute filters,
 /// and return the aggregate count.
@@ -22,12 +23,15 @@ pub async fn handle_count(
     state: Arc<AppState>,
 ) {
     // Require auth
-    let (pubkey_bytes, token_channel_ids) = {
+    let (pubkey_bytes, token_channel_ids, agent_owner_pubkey) = {
         let auth = conn.auth_state.read().await;
         match &*auth {
-            AuthState::Authenticated(ctx) => {
-                (ctx.pubkey.to_bytes().to_vec(), ctx.channel_ids.clone())
-            }
+            AuthState::Authenticated(ctx) => (
+                ctx.pubkey.to_bytes().to_vec(),
+                ctx.channel_ids.clone(),
+                ctx.agent_owner_pubkey
+                    .map(|owner| owner.to_bytes().to_vec()),
+            ),
             _ => {
                 conn.send(RelayMessage::closed(
                     &sub_id,
@@ -37,6 +41,41 @@ pub async fn handle_count(
             }
         }
     };
+
+    // NIP-42 admission is not a permanent relay-membership grant. Re-read the
+    // writer-backed roster before COUNT touches channel or global data so a
+    // delayed/lost revocation command cannot leave this socket authorized.
+    match crate::api::relay_members::current_relay_membership_for_auth(
+        &state,
+        conn.tenant.community(),
+        &pubkey_bytes,
+        agent_owner_pubkey.as_deref(),
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            warn!("Current relay membership check failed for COUNT: {error}");
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                "error: internal server error",
+            )
+            .await;
+            return;
+        }
+    }
 
     // P-gated kinds (gift wraps, member notifications, observer frames) require
     // the caller's own pubkey in the #p tag — same enforcement as WS REQ handler.
@@ -311,6 +350,41 @@ pub async fn handle_count(
                     }
                 }
             }
+        }
+    }
+
+    // Close the race where the membership row is removed while the COUNT
+    // queries are in flight. Never publish an aggregate computed for a
+    // principal that is no longer a current relay member.
+    match crate::api::relay_members::current_relay_membership_for_auth(
+        &state,
+        conn.tenant.community(),
+        &pubkey_bytes,
+        agent_owner_pubkey.as_deref(),
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            warn!("Current relay membership re-check failed for COUNT: {error}");
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Subscription(&sub_id),
+                "error: internal server error",
+            )
+            .await;
+            return;
         }
     }
     conn.send(RelayMessage::count(&sub_id, total));

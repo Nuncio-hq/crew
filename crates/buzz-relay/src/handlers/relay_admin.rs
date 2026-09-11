@@ -403,12 +403,19 @@ async fn execute_relay_admin_command(
                     // relay pod. Otherwise a NIP-42 session authenticated
                     // before removal can continue issuing REQ/COUNT/EVENT
                     // frames until it happens to reconnect.
-                    state.disconnect_pubkey_clusterwide(
-                        tenant,
-                        &target_pubkey_bytes,
-                        &event.id.to_hex(),
-                        "restricted: not a relay member",
-                    );
+                    state
+                        .disconnect_pubkey_clusterwide(
+                            tenant,
+                            &target_pubkey_bytes,
+                            &event.id.to_hex(),
+                            "restricted: not a relay member",
+                        )
+                        .await
+                        .map_err(|e| {
+                            format!(
+                                "member removed but live-session revocation publish failed: {e}"
+                            )
+                        })?;
                 }
                 RemoveResult::IsOwner => {
                     return Err("cannot remove the relay owner".to_string());

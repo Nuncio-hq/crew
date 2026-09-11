@@ -69,6 +69,11 @@ pub enum ConnControl {
         event_id: String,
         /// Human-readable close reason for the `OK` frame.
         reason: String,
+        /// Origin connection to leave open for a self-leave acknowledgement.
+        /// Remote pods normally have no matching UUID; the field is primarily
+        /// for the origin pod's own loopback publication.
+        #[serde(default)]
+        exclude_conn_id: Option<Uuid>,
     },
 }
 
@@ -224,8 +229,26 @@ mod tests {
             pubkey: vec![7u8; 32],
             event_id: "abc123".to_string(),
             reason: "blocked: you are banned from this community".to_string(),
+            exclude_conn_id: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert_eq!(serde_json::from_str::<ConnControl>(&json).unwrap(), cmd);
+    }
+
+    #[test]
+    fn disconnect_command_accepts_legacy_payload_without_exclusion() {
+        let command: ConnControl = serde_json::from_str(
+            r#"{"op":"DisconnectPubkey","pubkey":[7,7],"event_id":"abc123","reason":"blocked"}"#,
+        )
+        .expect("legacy disconnect command should remain readable");
+        assert_eq!(
+            command,
+            ConnControl::DisconnectPubkey {
+                pubkey: vec![7, 7],
+                event_id: "abc123".to_string(),
+                reason: "blocked".to_string(),
+                exclude_conn_id: None,
+            }
+        );
     }
 }

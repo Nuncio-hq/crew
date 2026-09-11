@@ -23,7 +23,8 @@ use nostr::{Event, PublicKey};
 
 use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::RelayMessage;
-use crate::state::AppState;
+use crate::rejection::{reject_revoked_connection, RejectionTarget};
+use crate::state::{AppState, RELAY_MEMBERSHIP_REVOKED_REASON};
 
 use super::ingest::{reject_with_transport, IngestAuth, IngestError};
 
@@ -99,13 +100,14 @@ where
 
 /// Drop recipients without access before fan-out on a private channel.
 ///
-/// Open and channel-less events skip membership filtering (open channel-scoped
-/// events pay one visibility lookup; see `channel_visibility_cached`). For a
-/// private channel, each recipient is kept only if its connection's
-/// authenticated pubkey is a current member; unknown/unauthenticated recipients
-/// fail closed. This is the cluster-wide backstop: even if a stale subscription
-/// survives on another node after an open->private flip, its events are not
-/// delivered here.
+/// Closed-relay events first require each recipient's authenticated principal
+/// (or verified NIP-OA owner) to remain in the current writer-backed roster.
+/// Open relays retain their existing admission semantics. For a private
+/// channel, each recipient is also kept only if its connection's authenticated
+/// pubkey is a current channel member; unknown/unauthenticated recipients fail
+/// closed. These checks are the cluster-wide backstop: even if a stale
+/// subscription survives on another node after a revocation or open->private
+/// flip, its events are not delivered here.
 ///
 /// `threaded` is an optional visibility read resolved earlier in the same
 /// request (E1 phase-2, §4.8 phase-2 addendum). It is consulted only when its
@@ -130,6 +132,49 @@ pub async fn filter_fanout_by_access(
             state.conn_manager.community_for_conn(*conn_id) == Some(community_id)
         })
         .collect();
+
+    // Relay membership is a global admission boundary, including for
+    // channel-less events. A stale subscription on a pod that missed the
+    // connection-control command must not keep receiving global fan-out. Use
+    // the writer-backed check and deduplicate identical auth identities so a
+    // user with several subscriptions costs one authorization read.
+    let matches = if state.config.require_relay_membership {
+        let mut membership_cache: HashMap<(Vec<u8>, Option<Vec<u8>>), bool> = HashMap::new();
+        let mut allowed = Vec::with_capacity(matches.len());
+        for (conn_id, sub_id) in matches {
+            let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
+                continue;
+            };
+            let owner = state.conn_manager.agent_owner_for_conn(conn_id);
+            let cache_key = (pubkey.clone(), owner.clone());
+            let is_member = if let Some(cached) = membership_cache.get(&cache_key) {
+                *cached
+            } else {
+                let current = match crate::api::relay_members::current_relay_membership_for_auth(
+                    state,
+                    community_id,
+                    &pubkey,
+                    owner.as_deref(),
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(error) => {
+                        warn!(%community_id, conn_id = %conn_id, "fan-out relay membership check failed: {error}");
+                        false
+                    }
+                };
+                membership_cache.insert(cache_key, current);
+                current
+            };
+            if is_member {
+                allowed.push((conn_id, sub_id));
+            }
+        }
+        allowed
+    } else {
+        matches
+    };
 
     // Author-only kinds (NIP-ER reminders) may only ever be delivered to the
     // event's own author. This gate lives here — the chokepoint shared by the
@@ -176,6 +221,8 @@ pub async fn filter_fanout_by_access(
     };
 
     let Some(channel_id) = stored_event.channel_id else {
+        // Relay membership and author/shared gates above already apply to
+        // channel-less events; there is no channel-membership lookup here.
         return matches;
     };
     // Fence 3 (§4.8 phase-2): the threaded value is used only when it was
@@ -632,7 +679,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     )
     .increment(1);
 
-    let (conn_id, pubkey_bytes, auth_pubkey, scopes, channel_ids) = {
+    let (conn_id, pubkey_bytes, auth_pubkey, scopes, channel_ids, agent_owner_pubkey) = {
         let auth = conn.auth_state.read().await;
         match &*auth {
             AuthState::Authenticated(ctx) => (
@@ -641,6 +688,8 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 ctx.pubkey,
                 ctx.scopes.clone(),
                 ctx.channel_ids.clone(),
+                ctx.agent_owner_pubkey
+                    .map(|owner| owner.to_bytes().to_vec()),
             ),
             _ => {
                 reject("auth");
@@ -666,6 +715,41 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             "invalid: event pubkey does not match authenticated identity",
         ));
         return;
+    }
+
+    // NIP-42 admission is a point-in-time check. Revalidate the authenticated
+    // principal before accepting any EVENT (including ephemeral events) so a
+    // delayed or lost revocation command cannot leave this socket authorized.
+    match crate::api::relay_members::current_relay_membership_for_auth(
+        &state,
+        conn.tenant.community(),
+        &pubkey_bytes,
+        agent_owner_pubkey.as_deref(),
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Event(event.id),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            warn!(conn_id = %conn_id, "Current relay membership check failed for EVENT: {error}");
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Event(event.id),
+                "error: internal server error",
+            )
+            .await;
+            return;
+        }
     }
 
     if kind_u32 == buzz_core::kind::KIND_AUTH {
@@ -776,19 +860,25 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 .record(start.elapsed().as_secs_f64());
             let response = RelayMessage::ok(&result.event_id, result.accepted, &result.message);
             if is_relay_leave && result.accepted {
-                // Queue the success on the control channel before cancelling
-                // this socket. The disconnect path drains control frames after
-                // cancellation, so the caller that authorized its own leave
-                // receives `OK true` before the membership revocation closes
-                // the session. Other live sessions receive the normal
-                // `OK false restricted` revocation frame.
-                let _ = conn.ctrl_tx.try_send(WsMessage::Text(response.into()));
-                state.disconnect_pubkey_clusterwide(
-                    &conn.tenant,
-                    &pubkey_bytes,
-                    &event_id_hex,
-                    "restricted: not a relay member",
-                );
+                // The revocation helper publishes before it cancels local
+                // sockets, then queues exactly one event-level ACK for this
+                // initiating connection. Other sessions receive correlated
+                // CLOSED frames and a policy close; the origin loopback command
+                // carries the same conn-id exclusion.
+                if let Err(error) = state
+                    .disconnect_pubkey_clusterwide_for_leave(
+                        &conn.tenant,
+                        &pubkey_bytes,
+                        &event_id_hex,
+                        "restricted: not a relay member",
+                        conn_id,
+                        &result.message,
+                    )
+                    .await
+                {
+                    reject("error");
+                    warn!(conn_id = %conn_id, event_id = %event_id_hex, "self-leave revocation publish failed: {error}");
+                }
             } else {
                 conn.send(response);
             }

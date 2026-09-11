@@ -271,9 +271,21 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
             pubkey: pubkey_bytes,
             event_id: "0".repeat(64),
             reason: "restricted: not a relay member".to_string(),
+            exclude_conn_id: None,
         };
-        if let Err(e) = pubsub.publish_conn_control(&tenant, &command).await {
-            warn!(error = %e, "member removed from DB but live-session disconnect publish failed");
+        match pubsub.publish_conn_control(&tenant, &command).await {
+            Ok(0) => {
+                eprintln!(
+                    "warning: member removed but no relay pod acknowledged the live-session disconnect"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!(
+                    "error: member removed from DB but live-session disconnect publish failed: {e}"
+                );
+                return Ok(6);
+            }
         }
     }
 

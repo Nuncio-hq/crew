@@ -138,6 +138,58 @@ pub mod relay_members {
         Ok(MembershipDecision::Denied)
     }
 
+    /// Re-check the current relay-membership row for an already authenticated
+    /// principal. Unlike the historical admission result carried in
+    /// [`crate::connection::AuthState`], this is a writer-routed read and is
+    /// therefore safe to use as the live-session backstop after a membership
+    /// mutation. Open relays retain their existing semantics and admit every
+    /// authenticated principal.
+    pub async fn current_relay_membership(
+        state: &AppState,
+        community: CommunityId,
+        pubkey_bytes: &[u8],
+    ) -> Result<bool, String> {
+        if !state.config.require_relay_membership {
+            return Ok(true);
+        }
+
+        let pubkey_hex = hex::encode(pubkey_bytes);
+        state
+            .db
+            .get_relay_member(community, &pubkey_hex)
+            .await
+            .map(|member| member.is_some())
+            .map_err(|e| format!("current relay membership check failed: {e}"))
+    }
+
+    /// Re-check relay membership for an authenticated principal, preserving
+    /// NIP-OA delegated sessions when their verified owner remains a member.
+    pub async fn current_relay_membership_for_auth(
+        state: &AppState,
+        community: CommunityId,
+        pubkey_bytes: &[u8],
+        agent_owner_pubkey: Option<&[u8]>,
+    ) -> Result<bool, String> {
+        if current_relay_membership(state, community, pubkey_bytes).await? {
+            return Ok(true);
+        }
+
+        let Some(owner_bytes) = agent_owner_pubkey else {
+            return Ok(false);
+        };
+        if owner_bytes == pubkey_bytes {
+            return Ok(false);
+        }
+
+        let owner_hex = hex::encode(owner_bytes);
+        state
+            .db
+            .get_relay_member(community, &owner_hex)
+            .await
+            .map(|member| member.is_some())
+            .map_err(|e| format!("current relay membership check (NIP-OA owner) failed: {e}"))
+    }
+
     /// Enforce relay membership for a pubkey, with NIP-OA agent delegation fallback.
     ///
     /// Returns `Ok(Some(owner_pubkey))` when the agent is not a direct member but

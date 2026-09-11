@@ -36,22 +36,31 @@ use crate::subscription::SubscriptionRegistry;
 
 pub(crate) type ScopedPubkeyKey = (CommunityId, [u8; 32]);
 
+/// Stable wire reason used when the relay-membership admission boundary is
+/// revoked for an already-authenticated connection.
+pub(crate) const RELAY_MEMBERSHIP_REVOKED_REASON: &str = "restricted: not a relay member";
+
 /// Why a community-bound socket is being asked to stop.
 ///
-/// Only deletion is externally attributed today. Ordinary lifecycle exits keep
-/// using cancellation alone and therefore retain the existing bare-close
-/// behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Ordinary lifecycle exits keep using cancellation alone and therefore retain
+/// the existing bare-close behavior. Policy actions carry their stable reason
+/// in the WebSocket close frame as a fallback when the control queue is full.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CommunityDisconnectReason {
     CommunityDeleted,
+    Policy { reason: String },
 }
 
 impl CommunityDisconnectReason {
-    pub(crate) fn close_message(self) -> WsMessage {
+    pub(crate) fn close_message(&self) -> WsMessage {
         match self {
             Self::CommunityDeleted => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
                 code: axum::extract::ws::close_code::POLICY,
                 reason: WsUtf8Bytes::from_static("community deleted"),
+            })),
+            Self::Policy { reason } => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                code: axum::extract::ws::close_code::POLICY,
+                reason: WsUtf8Bytes::from(reason.clone()),
             })),
         }
     }
@@ -76,6 +85,12 @@ impl CommunityConnectionControl {
 
     pub(crate) fn disconnect_reason(&self) -> watch::Receiver<Option<CommunityDisconnectReason>> {
         self.reason_tx.subscribe()
+    }
+
+    pub(crate) fn disconnect_reason_sender(
+        &self,
+    ) -> watch::Sender<Option<CommunityDisconnectReason>> {
+        self.reason_tx.clone()
     }
 
     fn disconnect_community(&self) {
@@ -107,6 +122,12 @@ struct ConnEntry {
     backpressure_count: Arc<AtomicU8>,
     subscriptions: ConnectionSubscriptions,
     authenticated_pubkey: Arc<std::sync::RwLock<Option<Vec<u8>>>>,
+    /// Owner pubkey for NIP-OA delegated sessions, if any.
+    authenticated_agent_owner: Arc<std::sync::RwLock<Option<Vec<u8>>>>,
+    /// Sender paired with the writer's close-reason receiver. Set immediately
+    /// after registration, before any receive task starts, so a policy action
+    /// can still produce a typed close when `ctrl_tx` is full.
+    disconnect_reason_tx: Option<watch::Sender<Option<CommunityDisconnectReason>>>,
     grace_limit: u8,
 }
 
@@ -282,6 +303,8 @@ impl ConnectionManager {
                 backpressure_count,
                 subscriptions,
                 authenticated_pubkey: Arc::new(std::sync::RwLock::new(None)),
+                authenticated_agent_owner: Arc::new(std::sync::RwLock::new(None)),
+                disconnect_reason_tx: None,
                 grace_limit,
             },
         );
@@ -306,10 +329,37 @@ impl ConnectionManager {
 
     /// Record the authenticated pubkey for a connection after NIP-42 succeeds.
     pub fn set_authenticated_pubkey(&self, conn_id: Uuid, pubkey_bytes: Vec<u8>) {
+        self.set_authenticated_identity(conn_id, pubkey_bytes, None);
+    }
+
+    /// Record the authenticated principal and its optional NIP-OA owner for a
+    /// connection after NIP-42 succeeds.
+    pub fn set_authenticated_identity(
+        &self,
+        conn_id: Uuid,
+        pubkey_bytes: Vec<u8>,
+        agent_owner_pubkey: Option<Vec<u8>>,
+    ) {
         if let Some(entry) = self.connections.get(&conn_id) {
             if let Ok(mut slot) = entry.authenticated_pubkey.write() {
                 *slot = Some(pubkey_bytes);
             }
+            if let Ok(mut slot) = entry.authenticated_agent_owner.write() {
+                *slot = agent_owner_pubkey;
+            }
+        }
+    }
+
+    /// Attach the writer's close-reason channel to a registered connection.
+    /// Registration is completed before receive tasks start, so policy close
+    /// actions cannot race an uninitialized sender in production.
+    pub(crate) fn set_disconnect_reason_sender(
+        &self,
+        conn_id: Uuid,
+        reason_tx: watch::Sender<Option<CommunityDisconnectReason>>,
+    ) {
+        if let Some(mut entry) = self.connections.get_mut(&conn_id) {
+            entry.disconnect_reason_tx = Some(reason_tx);
         }
     }
 
@@ -343,11 +393,96 @@ impl ConnectionManager {
             .collect()
     }
 
+    /// Return live connection IDs whose authenticated principal is `pubkey` or
+    /// whose verified NIP-OA owner is `pubkey` in one community. Removing a
+    /// human relay member must also close delegated agent sessions that were
+    /// admitted through that owner's membership row.
+    pub fn connection_ids_for_pubkey_or_owner_in_community(
+        &self,
+        community_id: CommunityId,
+        pubkey_bytes: &[u8],
+    ) -> Vec<Uuid> {
+        self.connections
+            .iter()
+            .filter_map(|entry| {
+                if entry.community_id != community_id {
+                    return None;
+                }
+                let direct_match = entry
+                    .authenticated_pubkey
+                    .read()
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .as_ref()
+                            .map(|stored| stored.as_slice() == pubkey_bytes)
+                    })
+                    .unwrap_or(false);
+                let owner_match = entry
+                    .authenticated_agent_owner
+                    .read()
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .as_ref()
+                            .map(|stored| stored.as_slice() == pubkey_bytes)
+                    })
+                    .unwrap_or(false);
+                (direct_match || owner_match).then_some(*entry.key())
+            })
+            .collect()
+    }
+
     /// Return the authenticated pubkey recorded for a connection, if any.
     pub fn pubkey_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
         self.connections
             .get(&conn_id)
             .and_then(|entry| entry.authenticated_pubkey.read().ok()?.clone())
+    }
+
+    /// Return the NIP-OA owner pubkey recorded for a connection, if any.
+    pub fn agent_owner_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
+        self.connections
+            .get(&conn_id)
+            .and_then(|entry| entry.authenticated_agent_owner.read().ok()?.clone())
+    }
+
+    /// Queue a control frame without applying data-buffer backpressure.
+    pub(crate) fn send_control(&self, conn_id: Uuid, msg: WsMessage) -> bool {
+        self.connections
+            .get(&conn_id)
+            .is_some_and(|entry| entry.ctrl_tx.try_send(msg).is_ok())
+    }
+
+    /// Set a policy close reason without cancelling the connection yet.
+    /// Callers that need to remove subscriptions first use this as the first
+    /// step, then call [`Self::cancel_connection`] after all final frames are
+    /// queued.
+    pub(crate) fn mark_policy_close(&self, conn_id: Uuid, reason: &str) -> bool {
+        let Some(entry) = self.connections.get(&conn_id) else {
+            return false;
+        };
+        if let Some(reason_tx) = &entry.disconnect_reason_tx {
+            reason_tx.send_replace(Some(CommunityDisconnectReason::Policy {
+                reason: reason.to_owned(),
+            }));
+        }
+        true
+    }
+
+    /// Mark an already-authenticated connection as revoked from the relay
+    /// roster. The caller owns cancellation ordering so it can first evict all
+    /// subscriptions and queue their correlated `CLOSED` frames.
+    pub(crate) fn mark_relay_membership_revoked(&self, conn_id: Uuid) -> bool {
+        self.mark_policy_close(conn_id, RELAY_MEMBERSHIP_REVOKED_REASON)
+    }
+
+    /// Cancel one live connection after its final control frames are queued.
+    pub(crate) fn cancel_connection(&self, conn_id: Uuid) -> bool {
+        self.connections.get(&conn_id).is_some_and(|entry| {
+            entry.cancel.cancel();
+            true
+        })
     }
 
     /// Disconnect every live connection authenticated as `pubkey` **in
@@ -382,8 +517,14 @@ impl ConnectionManager {
                 if entry.community_id != community {
                     continue;
                 }
-                // Best-effort delivery: a full control buffer still gets the
-                // close via cancel below, just without the reason frame.
+                // Set the policy close reason before cancellation. A full
+                // control buffer still gets a typed policy close from the
+                // writer instead of degrading to Close(None).
+                if let Some(reason_tx) = &entry.disconnect_reason_tx {
+                    reason_tx.send_replace(Some(CommunityDisconnectReason::Policy {
+                        reason: reason.to_owned(),
+                    }));
+                }
                 let _ = entry
                     .ctrl_tx
                     .try_send(WsMessage::Text(frame.clone().into()));
@@ -623,6 +764,16 @@ impl Default for ConnectionManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Work captured while a relay-membership revocation is between its durable
+/// delete and its cross-pod publish. Subscriptions are removed before the
+/// publish so no new fan-out match can be created while propagation is in
+/// flight; final control frames and cancellation are applied afterwards.
+struct PendingPubkeyRevocation {
+    conn_id: Uuid,
+    excluded: bool,
+    removed: Vec<crate::subscription::RemovedSubscription>,
 }
 
 /// Shared application state, cloned cheaply via inner `Arc` fields.
@@ -1173,57 +1324,211 @@ impl AppState {
         }
     }
 
-    /// Enforce a live ban or relay-membership revocation cluster-wide: close
-    /// this pod's sockets for `pubkey` now (fenced to `tenant`'s community) and
-    /// fan the same disconnect out to every other pod over the conn-control
-    /// Redis channel.
-    ///
-    /// This is the single entry point for live authorization revocation (a ban
-    /// or membership removal takes effect immediately, everywhere, including
-    /// live sessions).
-    /// Callers must not invoke the pod-local `conn_manager.disconnect_pubkey`
-    /// directly — doing so closes sockets only on the pod that processed the
-    /// ban and silently drops the cluster-wide half. Pairing both halves here
-    /// makes that mistake unrepresentable.
-    ///
-    /// Returns the number of sockets closed on *this* pod only — remote pods
-    /// close asynchronously and do not report back, so callers must not treat
-    /// the count as cluster-wide truth. The cross-pod publish is fire-and-forget
-    /// (mirrors [`Self::spawn_cache_invalidation`]): the durable authorization
-    /// row is the backstop, so a dropped publish still refuses the revoked
-    /// principal's next auth.
-    pub fn disconnect_pubkey_clusterwide(
+    /// Remove every subscription held by one connection, release its retained
+    /// Redis topics, and clear the connection-local subscription map. The
+    /// registry removal happens before any revocation publication so both
+    /// local fan-out and a raced REQ see an empty live subscription set.
+    pub(crate) async fn evict_connection_subscriptions(
+        &self,
+        tenant: &TenantContext,
+        conn_id: Uuid,
+    ) -> Vec<crate::subscription::RemovedSubscription> {
+        let removed = self.sub_registry.remove_connection(conn_id);
+        if let Some(subscriptions) = self.conn_manager.subscriptions_for(conn_id) {
+            subscriptions.lock().await.clear();
+        }
+
+        for subscription in &removed {
+            if subscription.scope.is_global() {
+                self.pubsub
+                    .release_topic(tenant, buzz_pubsub::EventTopic::Global)
+                    .await;
+            }
+            for &channel_id in subscription.scope.channel_ids() {
+                self.pubsub
+                    .release_topic(tenant, buzz_pubsub::EventTopic::Channel(channel_id))
+                    .await;
+            }
+        }
+        removed
+    }
+
+    /// Snapshot and evict all local connections for a tenant-scoped pubkey.
+    /// Policy close reasons are marked before the snapshot is released, while
+    /// cancellation is deliberately deferred until final `CLOSED` frames have
+    /// been queued.
+    async fn prepare_pubkey_revocation(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        reason: &str,
+        excluded_conn_id: Option<Uuid>,
+        skip_excluded: bool,
+    ) -> Vec<PendingPubkeyRevocation> {
+        let mut pending = Vec::new();
+        for conn_id in self
+            .conn_manager
+            .connection_ids_for_pubkey_or_owner_in_community(tenant.community(), pubkey)
+        {
+            if skip_excluded && excluded_conn_id == Some(conn_id) {
+                continue;
+            }
+            let marked = if reason == RELAY_MEMBERSHIP_REVOKED_REASON {
+                self.conn_manager.mark_relay_membership_revoked(conn_id)
+            } else {
+                self.conn_manager.mark_policy_close(conn_id, reason)
+            };
+            if !marked {
+                continue;
+            }
+            let removed = self.evict_connection_subscriptions(tenant, conn_id).await;
+            pending.push(PendingPubkeyRevocation {
+                conn_id,
+                excluded: excluded_conn_id == Some(conn_id),
+                removed,
+            });
+        }
+        pending
+    }
+
+    /// Queue final subscription closures and cancel the pending connections.
+    /// A full control queue is safe because `mark_policy_close` has already
+    /// installed the policy close fallback consumed by the writer.
+    fn finish_pubkey_revocation(
+        &self,
+        pending: Vec<PendingPubkeyRevocation>,
+        event_id: &str,
+        reason: &str,
+        ack: Option<(Uuid, WsMessage)>,
+    ) -> usize {
+        let mut closed = 0;
+        for entry in pending {
+            let ack_frame = ack.as_ref().and_then(|(ack_conn_id, frame)| {
+                (entry.excluded && *ack_conn_id == entry.conn_id).then_some(frame)
+            });
+            if let Some(frame) = ack_frame {
+                let _ = self.conn_manager.send_control(entry.conn_id, frame.clone());
+            } else {
+                let frame = crate::protocol::RelayMessage::ok(event_id, false, reason);
+                let _ = self
+                    .conn_manager
+                    .send_control(entry.conn_id, WsMessage::Text(frame.into()));
+            }
+            for subscription in entry.removed {
+                // A self-leave response is an event-level ACK. Existing query
+                // subscriptions still receive their own correlated CLOSED.
+                let frame = crate::protocol::RelayMessage::closed(&subscription.sub_id, reason);
+                let _ = self
+                    .conn_manager
+                    .send_control(entry.conn_id, WsMessage::Text(frame.into()));
+            }
+            self.conn_manager.cancel_connection(entry.conn_id);
+            closed += 1;
+        }
+        closed
+    }
+
+    /// Disconnect a tenant-scoped pubkey on this pod only. Used by the Redis
+    /// consumer after a command has already been published by another pod.
+    /// The local eviction is idempotent, so a command may safely be delivered
+    /// more than once or after the origin pod already closed its sockets.
+    pub(crate) async fn disconnect_pubkey_local(
         &self,
         tenant: &TenantContext,
         pubkey: &[u8],
         event_id: &str,
         reason: &str,
+        excluded_conn_id: Option<Uuid>,
     ) -> usize {
-        let closed =
-            self.conn_manager
-                .disconnect_pubkey(tenant.community(), pubkey, event_id, reason);
+        let pending = self
+            .prepare_pubkey_revocation(tenant, pubkey, reason, excluded_conn_id, true)
+            .await;
+        self.finish_pubkey_revocation(pending, event_id, reason, None)
+    }
 
-        // The banning pod re-receives its own publish through the subscriber and
-        // no-ops (its local sockets are already closed above) — intentional; do
-        // not add origin-suppression, it buys nothing.
-        let pubsub = Arc::clone(&self.pubsub);
-        let tenant = tenant.clone();
+    /// Enforce a live ban or relay-membership revocation cluster-wide. The
+    /// durable delete occurs before this call; local subscriptions are evicted
+    /// first, then the tenant-scoped connection-control publication is awaited,
+    /// and only then are affected sockets cancelled. Current writer-backed
+    /// membership gates remain the backstop for offline or lagged subscribers.
+    ///
+    /// A zero Redis subscriber count is accepted: a single-pod deployment may
+    /// have no remote subscriber, and the durable current-membership gate still
+    /// denies any later request. Actual Redis errors are returned to the caller
+    /// so the mutation surface cannot report propagation success.
+    pub async fn disconnect_pubkey_clusterwide(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        event_id: &str,
+        reason: &str,
+    ) -> Result<usize, buzz_pubsub::PubSubError> {
+        self.disconnect_pubkey_clusterwide_inner(tenant, pubkey, event_id, reason, None, None)
+            .await
+    }
+
+    /// Variant used by a WebSocket NIP-43 self-leave. The initiating socket is
+    /// excluded from the remote-style `OK false` path and receives exactly one
+    /// event-level response before its policy close: `OK true` when Redis
+    /// publication succeeded, `OK false` when it failed.
+    pub async fn disconnect_pubkey_clusterwide_for_leave(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        event_id: &str,
+        reason: &str,
+        conn_id: Uuid,
+        success_message: &str,
+    ) -> Result<usize, buzz_pubsub::PubSubError> {
+        self.disconnect_pubkey_clusterwide_inner(
+            tenant,
+            pubkey,
+            event_id,
+            reason,
+            Some(conn_id),
+            Some(success_message.to_owned()),
+        )
+        .await
+    }
+
+    async fn disconnect_pubkey_clusterwide_inner(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        event_id: &str,
+        reason: &str,
+        excluded_conn_id: Option<Uuid>,
+        leave_success_message: Option<String>,
+    ) -> Result<usize, buzz_pubsub::PubSubError> {
+        let pending = self
+            .prepare_pubkey_revocation(tenant, pubkey, reason, excluded_conn_id, false)
+            .await;
+
         let command = ConnControl::DisconnectPubkey {
             pubkey: pubkey.to_vec(),
-            event_id: event_id.to_string(),
-            reason: reason.to_string(),
+            event_id: event_id.to_owned(),
+            reason: reason.to_owned(),
+            exclude_conn_id: excluded_conn_id,
         };
-        // This pre-existing ban path may remain fire-and-forget because the
-        // durable ban row rejects the member again at auth. Community archival
-        // is different: its API awaits publication and live sockets also have a
-        // periodic durable-state revalidation backstop below.
-        tokio::spawn(async move {
-            if let Err(e) = pubsub.publish_conn_control(&tenant, &command).await {
-                tracing::warn!("Failed to publish conn-control disconnect: {e}");
-            }
-        });
+        let publish_result = self.pubsub.publish_conn_control(tenant, &command).await;
 
-        closed
+        let ack = match (leave_success_message, excluded_conn_id) {
+            (Some(success), Some(conn_id)) => {
+                let frame = match &publish_result {
+                    Ok(_) => crate::protocol::RelayMessage::ok(event_id, true, &success),
+                    Err(_) => crate::protocol::RelayMessage::ok(
+                        event_id,
+                        false,
+                        "error: live membership revocation propagation failed",
+                    ),
+                };
+                Some((conn_id, frame.into()))
+            }
+            _ => None,
+        };
+        let closed = self.finish_pubkey_revocation(pending, event_id, reason, ack);
+
+        publish_result.map(|_| closed)
     }
 
     /// Disconnect a community locally and publish the command to every relay pod.
@@ -1931,14 +2236,14 @@ pub(crate) mod tests {
         assert!(audio_a.is_cancelled());
         assert!(!ordinary_b.is_cancelled());
         assert_eq!(
-            *ordinary_a_reason.borrow(),
+            (*ordinary_a_reason.borrow()).clone(),
             Some(CommunityDisconnectReason::CommunityDeleted)
         );
         assert_eq!(
-            *audio_a_reason.borrow(),
+            (*audio_a_reason.borrow()).clone(),
             Some(CommunityDisconnectReason::CommunityDeleted)
         );
-        assert_eq!(*ordinary_b_reason.borrow(), None);
+        assert_eq!((*ordinary_b_reason.borrow()).clone(), None);
     }
 
     #[tokio::test]
@@ -2094,6 +2399,147 @@ pub(crate) mod tests {
             }
             other => panic!("expected text frame, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn disconnect_pubkey_marks_a_policy_close_for_the_writer_fallback() {
+        let mgr = ConnectionManager::new();
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        let control = CommunityConnectionControl::new(cancel.clone());
+        let mut reason_rx = control.disconnect_reason();
+        mgr.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel.clone(),
+            CommunityId::from_uuid(Uuid::nil()),
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        mgr.set_disconnect_reason_sender(conn_id, control.disconnect_reason_sender());
+        let pubkey = vec![9u8; 32];
+        mgr.set_authenticated_pubkey(conn_id, pubkey.clone());
+
+        assert_eq!(
+            mgr.disconnect_pubkey(
+                CommunityId::from_uuid(Uuid::nil()),
+                &pubkey,
+                &"0".repeat(64),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            ),
+            1
+        );
+        assert!(cancel.is_cancelled());
+        assert_eq!(
+            (*reason_rx.borrow_and_update()).clone(),
+            Some(CommunityDisconnectReason::Policy {
+                reason: RELAY_MEMBERSHIP_REVOKED_REASON.to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn owner_revocation_selection_includes_nip_oa_agent_sessions() {
+        let mgr = ConnectionManager::new();
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        let community = CommunityId::from_uuid(Uuid::nil());
+        mgr.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel,
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let owner = vec![4u8; 32];
+        mgr.set_authenticated_identity(conn_id, vec![5u8; 32], Some(owner.clone()));
+
+        assert_eq!(
+            mgr.connection_ids_for_pubkey_or_owner_in_community(community, &owner),
+            vec![conn_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_pubkey_revocation_gives_self_leave_one_success_and_others_failure() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let event_id = "1".repeat(64);
+        let reason = RELAY_MEMBERSHIP_REVOKED_REASON;
+
+        let register = |state: &AppState| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(8);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            (conn_id, ctrl_rx, cancel)
+        };
+
+        let (self_conn, mut self_ctrl, self_cancel) = register(&state);
+        let (other_conn, mut other_ctrl, other_cancel) = register(&state);
+        let pending = vec![
+            PendingPubkeyRevocation {
+                conn_id: self_conn,
+                excluded: true,
+                removed: vec![crate::subscription::RemovedSubscription {
+                    sub_id: "self-sub".to_owned(),
+                    community_id: community,
+                    scope: crate::subscription::SubscriptionScope::Global,
+                }],
+            },
+            PendingPubkeyRevocation {
+                conn_id: other_conn,
+                excluded: false,
+                removed: Vec::new(),
+            },
+        ];
+        let success = crate::protocol::RelayMessage::ok(event_id.as_str(), true, "you left");
+        assert_eq!(
+            state.finish_pubkey_revocation(
+                pending,
+                event_id.as_str(),
+                reason,
+                Some((self_conn, WsMessage::Text(success.into()))),
+            ),
+            2
+        );
+
+        let self_ack = self_ctrl.try_recv().expect("self ACK is queued");
+        assert!(matches!(self_ack, WsMessage::Text(ref text) if text.as_str().contains("true")));
+        let self_closed = self_ctrl.try_recv().expect("self subscription is closed");
+        assert!(
+            matches!(self_closed, WsMessage::Text(ref text) if text.as_str().contains("CLOSED") && text.as_str().contains("self-sub"))
+        );
+        let other_ack = other_ctrl
+            .try_recv()
+            .expect("other session gets a failure ACK");
+        assert!(
+            matches!(other_ack, WsMessage::Text(ref text) if text.as_str().contains("false") && text.as_str().contains(reason))
+        );
+        assert!(self_cancel.is_cancelled());
+        assert!(other_cancel.is_cancelled());
     }
 
     #[tokio::test]

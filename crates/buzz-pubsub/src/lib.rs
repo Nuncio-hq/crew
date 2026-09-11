@@ -284,11 +284,11 @@ impl PubSubManager {
         Ok(subscriber_count)
     }
 
-    /// Publish a connection-control command to all pods. Used for live ban
-    /// enforcement: the banning pod disconnects any local sockets synchronously
-    /// and calls this to reach the banned member's sockets on other pods. The DB
-    /// ban row is the durable backstop, so a dropped publish still refuses the
-    /// next auth attempt; callers may spawn this without awaiting delivery.
+    /// Publish a connection-control command to all pods. Used for live ban and
+    /// relay-membership enforcement: the origin pod disconnects local sockets
+    /// and calls this to reach matching sockets on other pods. The durable
+    /// authorization row is the backstop for missed delivery; mutation callers
+    /// should await and handle the returned publication error.
     pub async fn publish_conn_control(
         &self,
         ctx: &TenantContext,
