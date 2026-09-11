@@ -476,13 +476,20 @@ discovery remains `hermes-acp` first. Other candidates use the existing
 `underlying_cli` metadata. The native
 CLI candidate and its model/profile selection contract are inventory, not proof
 of one-shot support. `classify_recap` currently returns only failure states;
-there is no positive capability cache, generation command, or runnable recap UI.
+the five registered recap commands expose a typed settings/cache/generation
+boundary, but remain fail-closed until the ownership loader supplies a
+separately bound runtime-ready grant and an authenticated thread-source adapter.
 [#356](https://github.com/Nuncio-hq/crew/issues/356) remains dependent on a proven
 runtime combination. Ordinary agent/ACP readiness is a separate contract.
 
 The default-off source slice contains a fixed Claude candidate argv/parser,
-private disposable-state ownership, and the existing bounded discovery process
-helper extended with caller-owned stdin, cancellation and per-stream budgets.
+private disposable-state ownership, a native-only runtime-ready grant loader,
+and the existing bounded discovery process helper extended with caller-owned
+stdin, cancellation and per-stream budgets. The registered recap service binds
+those pieces at one production seam, persists one owner-local settings snapshot,
+loads bounded recap cache entries, and keeps generation unavailable until both
+the grant and authenticated source adapter exist. It never fabricates a recap
+when either prerequisite is absent.
 The Claude recipe remains unapproved for generation. Its native `--tools ''`
 flag is not sufficient to establish that all hooks are disabled. A Unix process
 group bounds ordinary descendants but does not contain a `setsid` escape;
@@ -520,8 +527,8 @@ These observations describe the installed artifacts statically revalidated for
 #351 at Crew HEAD `a179fc99e0558eda2b1ad35eab54b2d26c335336`, not permanent
 limitations of the products. Earlier executed evidence is called out in the
 rows; none is a successful recap generation. The #375 foundation is unchanged:
-`classify_recap` returns failure states only; there is no positive capability
-cache or recap executor.
+`classify_recap` returns failure states only; the native executor is present but
+cannot admit a run without the separately bound runtime-ready grant.
 
 | Candidate inspected | Static identity and evidence scope | Current blocker / execution status |
 | --- | --- | --- |

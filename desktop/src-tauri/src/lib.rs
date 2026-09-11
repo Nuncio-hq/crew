@@ -290,6 +290,12 @@ pub fn run() {
                 return Ok(());
             }
 
+            // Recover only native-owned disposable recap generations after the
+            // boot reset has completed. Ordinary builds have no staging
+            // ownership receipt, so this is a quiet no-op; a present receipt
+            // gets a bounded sweep before any renderer can request a recap.
+            managed_agents::recap_service::recover_recap_runs_at_boot(&app_handle);
+
             // Run all pre-identity data migrations before state loads from disk.
             if reset_outcome.completed {
                 migration::run_boot_migrations_after_reset(&app_handle);

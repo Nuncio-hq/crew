@@ -377,3 +377,14 @@ exact current generation. Browser/simulator activation is explicit and existing
 governor hide/idle cleanup remains. Channel-mode compatibility and Workbench
 redirects stay unchanged. This records implementation discretion, not a new
 founder approval or proof that #354 is implemented.
+
+Thread recap is a separate owner-local reading aid in Context. It is Off by
+default and, when a certified runtime is available, runs only after the founder
+clicks Generate or Regenerate. It shows the source messages, omission range and
+runtime/model provenance; it never posts to a channel, changes an employee
+session or model, or establishes a plan, accepted result or completion claim.
+Unavailable, stale, failed and cancelled states remain visible, and source
+changes require an explicit regeneration. Runtime readiness and one real
+staging generation remain delivery gates tracked by [#351](https://github.com/Nuncio-hq/crew/issues/351)
+and [#356](https://github.com/Nuncio-hq/crew/issues/356); the current desktop
+command seam stays fail-closed until those gates are met.

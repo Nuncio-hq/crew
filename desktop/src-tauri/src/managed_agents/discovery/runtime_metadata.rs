@@ -171,7 +171,7 @@ pub(crate) struct KnownAcpRuntime {
 impl KnownAcpRuntime {
     /// Recap inventory uses this catalog's native CLI and profile metadata.
     /// This is a candidate only: ACP availability never proves one-shot safety.
-    #[allow(dead_code)] // Default-off recap source proof; no generation command is registered.
+    #[allow(dead_code)] // Inventory only; native execution still requires a separately issued grant.
     pub(crate) fn recap_contract(&self) -> super::super::recap_capability::RecapRuntimeContract {
         use super::super::recap_capability::{RecapRuntimeContract, RecapSelectionContract};
         RecapRuntimeContract {

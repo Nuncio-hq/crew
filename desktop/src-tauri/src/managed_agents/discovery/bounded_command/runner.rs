@@ -9,9 +9,23 @@ use super::*;
 
 /// Run with configured stdin, fixed polling, cancellation and bounded capture.
 pub(crate) fn output_with_policy(
+    command: Command,
+    policy: BoundedPolicy,
+    cancelled: &AtomicBool,
+) -> Result<BoundedOutcome, BoundedFailure> {
+    output_with_policy_and_spawn_hook(command, policy, cancelled, |_| Ok(()))
+}
+
+/// Run a bounded child and invoke `on_spawn` after tree ownership is secured.
+///
+/// The hook is used by durable callers to persist the owned child identity
+/// before any output is consumed. A hook failure tears down the owned tree and
+/// returns `Cleanup`; callers retain their pre-spawn durable retry record.
+pub(crate) fn output_with_policy_and_spawn_hook(
     mut command: Command,
     policy: BoundedPolicy,
     cancelled: &AtomicBool,
+    on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
 ) -> Result<BoundedOutcome, BoundedFailure> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(BoundedFailure::Cancelled);
@@ -32,6 +46,12 @@ pub(crate) fn output_with_policy(
     }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = BoundedChild::spawn(command).ok_or(BoundedFailure::ProcessOwnership)?;
+    if on_spawn(child.id()).is_err() {
+        let killed = child.kill_tree();
+        let reaped = child.reap_until(Instant::now() + CLEANUP_BUDGET);
+        let _ = killed.and(reaped);
+        return Err(BoundedFailure::Cleanup);
+    }
     let stdout_pipe = child.take_stdout();
     let stderr_pipe = child.take_stderr();
     let pipes_valid = stdout_pipe.is_some() && stderr_pipe.is_some();

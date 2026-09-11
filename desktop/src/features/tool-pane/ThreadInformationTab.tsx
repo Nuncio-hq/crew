@@ -8,6 +8,14 @@ import { ThreadActivityRunControls } from "./ThreadActivityRunControls";
 
 const EMPTY_MESSAGES: TimelineMessage[] = [];
 
+// Keep the existing Activity/Plans test seams and first paint independent of
+// the optional recap feature. Context loads the feature only when selected.
+const ThreadRecapPanel = React.lazy(() =>
+  import("@/features/recap/ui/ThreadRecapPanel").then((module) => ({
+    default: module.ThreadRecapPanel,
+  })),
+);
+
 /** Read-only lenses over the current conversation and existing D-056 projection. */
 export function ThreadInformationTab({
   channelId,
@@ -39,9 +47,30 @@ export function ThreadInformationTab({
         <p className="text-sm whitespace-pre-wrap">
           {matched.messages[0]?.body}
         </p>
-        <p className="text-xs text-muted-foreground">
-          Recap: Off — unavailable.
-        </p>
+        {matched.rootEventId ? (
+          <React.Suspense
+            fallback={
+              <p className="text-xs text-muted-foreground" role="status">
+                Recap: Off — unavailable.
+              </p>
+            }
+          >
+            <ThreadRecapPanel
+              channelId={channelId}
+              rootEventId={matched.rootEventId}
+              sourceRevision={matched.messages
+                .map((message) =>
+                  [
+                    message.id,
+                    message.createdAt,
+                    message.edited ? "edited" : "original",
+                    message.body,
+                  ].join(":"),
+                )
+                .join("\u0000")}
+            />
+          </React.Suspense>
+        ) : null}
       </section>
     );
   }

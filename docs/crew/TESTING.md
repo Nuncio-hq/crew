@@ -717,10 +717,14 @@ exact-head review and installed release acceptance remain separate gates.
 ## Recap capability source proof (#351)
 
 The default-off native recap slice is tested through its production modules:
-`recap_capability`, `recap_adapter`, `recap_state`, `recap_ownership`, and
-`discovery::bounded_command`. The native `AppHandle` loader belongs to the full
-Tauri build gate; a small exact-module Cargo harness alone does not certify that
-integration. Run `just ci` before the PR and require the immutable head's
+`recap_capability`, `recap_adapter`, `recap_state`, `recap_ownership`,
+`recap_service`, and `discovery::bounded_command`. The native `AppHandle` loader
+and all five registered Tauri commands belong to the full Tauri build gate; a
+small exact-module Cargo harness alone does not certify that integration. The
+focused `recap_service` suite covers default-Off atomic settings persistence,
+unsupported selections, three-part generation/cancel fencing, command
+registration, private execution cleanup and executable replacement rejection.
+Run `just ci` before the PR and require the immutable head's
 NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-10)
 for the current unsupported inventory.
 
@@ -728,7 +732,10 @@ Test boundaries include explicit model/profile admission, identity invalidation,
 fixed argv with a fake tool sentinel, native final-result/model parsing, private
 unlinked stdin and size limits, durable process-pending state, copied/symlinked
 ownership records, root-generation replacement, UID/build/profile/exclusion
-mismatch, and rejection of generation/auth claims in an ownership-only manifest.
+mismatch, rejection of generation/auth claims in an ownership-only manifest,
+and production-seam execution with a fake native executable, private stdin and
+finished-run cleanup. The ownership loader also binds a future runtime-ready
+grant to the exact ownership receipt bytes and executable fingerprint.
 The bounded process tests cover aggregate discovery versus independent recap
 budgets, cancellation before and after spawn, zero deadlines, EPERM retry only
 after observed root reap, and cleanup failures. The existing escaped-descendant

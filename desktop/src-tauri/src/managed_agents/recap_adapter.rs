@@ -49,6 +49,22 @@ impl RecapLaunchPlan {
         command
     }
 
+    /// Return the exact executable path captured in this immutable plan.
+    pub(crate) fn executable_path(&self) -> &Path {
+        &self.executable
+    }
+
+    /// Ensure a plan still names the exact admitted executable and model.
+    /// Plans are built by the native service; this check keeps a future caller
+    /// from pairing a valid proof with a different command recipe.
+    pub(crate) fn matches_admission(
+        &self,
+        admission: &super::recap_capability::RecapAdmission,
+    ) -> bool {
+        self.executable == admission.executable.resolved_path
+            && self.requested_model == admission.selection.model
+    }
+
     /// Validate a native final result without retaining raw output on error.
     pub(crate) fn parse_output(
         &self,
