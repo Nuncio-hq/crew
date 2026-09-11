@@ -626,9 +626,7 @@ async fn capture_owner_scope<R: tauri::Runtime>(
 }
 
 fn runtime_inventory<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<RecapRuntimeOption> {
-    let proof = super::recap_ownership::VerifiedStagingOwnership::load(app)
-        .ok()
-        .and_then(|ownership| ownership.runtime_ready_proof().ok());
+    let proof = super::recap_ownership::runtime_ready_proof_for_app(app).ok();
 
     KNOWN_ACP_RUNTIMES
         .iter()

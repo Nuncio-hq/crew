@@ -46,7 +46,8 @@ mod process_lifecycle;
 pub(crate) mod readiness;
 // Default-off source proof: the catalog contains inventory and the native
 // command seam is registered, but no positive capability exists without a
-// separately issued runtime-ready grant.
+// completed bounded probe, native grant projection, and matching scoped
+// retention row.
 #[allow(dead_code)]
 pub(crate) mod recap_adapter;
 #[allow(dead_code)]

@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use super::recap_adapter::{RecapAdapterObservation, RECAP_OUTPUT_LIMIT};
+
 /// Runtime-owned selection contract, separate from employee session settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecapSelectionContract {
@@ -42,6 +44,66 @@ pub(crate) struct RecapSelection {
     pub auth_available: bool,
 }
 
+/// Native keyring binding carried by a probe. The reference is opaque and
+/// never contains the credential itself; the native owner checks the service
+/// name before issuing a runtime grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapAuthBinding {
+    pub(crate) service: String,
+    pub(crate) reference: String,
+}
+
+/// Evidence that a hostile native-tool attempt was observed and denied.
+///
+/// The adapter must populate this from its actual bounded probe trace. The
+/// certification path does not infer tool isolation from an empty tool list,
+/// a prompt, `--safe-mode`, or an ACP read-only flag. The sentinel digests are
+/// the controlled before/after state around the attempted tool effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapToolProbeEvidence {
+    pub(crate) probe_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) request_observed: bool,
+    pub(crate) denied_before_effect: bool,
+    pub(crate) sentinel_before: String,
+    pub(crate) sentinel_after: String,
+}
+
+/// Evidence returned by one bounded native adapter probe.
+///
+/// This is deliberately not a capability. A caller must pass it through
+/// [`RecapRuntimeCertification::from_probe`] before it can be persisted or
+/// used for admission. Raw output is consumed and reduced to a digest by the
+/// certification constructor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapProbeAttestation {
+    runtime_id: String,
+    executable: RecapExecutableIdentity,
+    selection: RecapSelection,
+    auth: RecapAuthBinding,
+    adapter: RecapAdapterObservation,
+    state: RecapStateObservation,
+    process: RecapProcessObservation,
+}
+
+/// State observation produced by the adapter's before/after sentinel check.
+/// The producer accepts only the positive observation; a changed or missing
+/// snapshot is a typed negative result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecapStateObservation {
+    Unchanged,
+    Changed,
+}
+
+/// Process observation produced after the bounded owner has completed cleanup.
+/// Unix group escape remains an explicit negative outcome until a stronger
+/// containment boundary is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecapProcessObservation {
+    ReapedAndContained,
+    EscapedOrUnknown,
+}
+
 /// Capabilities that must be attested by the separately reviewed runtime
 /// acceptance. A catalog entry or a successful discovery probe cannot create
 /// this value.
@@ -65,6 +127,50 @@ pub(crate) struct RecapRuntimeReadyProof {
     selection: RecapSelection,
     auth_reference: String,
     guarantees: RecapGuarantees,
+    auth_service: String,
+}
+
+/// Opaque positive certification created only from a completed bounded probe.
+///
+/// The type intentionally has no public field access and contains no provider
+/// output. It is the only value accepted by the native grant producer; catalog
+/// discovery, profile config reads, or an ownership receipt cannot construct a
+/// positive result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapRuntimeCertification {
+    runtime_id: String,
+    executable: RecapExecutableIdentity,
+    selection: RecapSelection,
+    auth: RecapAuthBinding,
+    guarantees: RecapGuarantees,
+    effective_model: String,
+    output_digest: String,
+    tool_probe_digest: String,
+}
+
+/// Fields projected into the existing native grant and retention row after a
+/// certification has passed all checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapCertificationParts {
+    pub(crate) runtime_id: String,
+    pub(crate) executable: RecapExecutableIdentity,
+    pub(crate) selection: RecapSelection,
+    pub(crate) auth: RecapAuthBinding,
+    pub(crate) guarantees: RecapGuarantees,
+    pub(crate) effective_model: String,
+    pub(crate) output_digest: String,
+    pub(crate) tool_probe_digest: String,
+}
+
+/// Native identity and selection supplied alongside one adapter observation.
+/// This is request context, not a capability or a positive result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapProbeTarget {
+    pub(crate) contract: RecapRuntimeContract,
+    pub(crate) runtime_id: String,
+    pub(crate) executable: RecapExecutableIdentity,
+    pub(crate) selection: RecapSelection,
+    pub(crate) auth: RecapAuthBinding,
 }
 
 /// The exact runtime and selection admitted for one recap invocation.
@@ -91,6 +197,14 @@ pub(crate) enum RecapFailure {
     UnsupportedStateIsolation,
     UnsupportedProcessContainment,
     UnverifiedCapability,
+    InvalidAuthBinding,
+    EmptyProbeOutput,
+    ProbeOutputLimit,
+    InvalidProbeOutput,
+    EffectiveModelMismatch,
+    InvalidToolProbeEvidence,
+    ProbeStateChanged,
+    ProbeProcessNotReaped,
 }
 
 /// Bounded admission result. There is deliberately no synthetic supported row.
@@ -122,6 +236,7 @@ impl RecapRuntimeReadyProof {
         runtime_id: String,
         executable: RecapExecutableIdentity,
         selection: RecapSelection,
+        auth_service: String,
         auth_reference: String,
         guarantees: RecapGuarantees,
     ) -> Result<Self, RecapFailure> {
@@ -140,6 +255,9 @@ impl RecapRuntimeReadyProof {
         if !valid_auth_reference(&auth_reference) {
             return Err(RecapFailure::AuthRequired);
         }
+        if !valid_auth_service(&auth_service) {
+            return Err(RecapFailure::InvalidAuthBinding);
+        }
         if selection.auth_available {
             Ok(Self {
                 runtime_id,
@@ -147,6 +265,7 @@ impl RecapRuntimeReadyProof {
                 selection,
                 auth_reference,
                 guarantees,
+                auth_service,
             })
         } else {
             Err(RecapFailure::AuthRequired)
@@ -158,6 +277,13 @@ impl RecapRuntimeReadyProof {
     /// state from the renderer.
     pub(super) fn selection_for_service(&self) -> RecapSelection {
         self.selection.clone()
+    }
+
+    pub(super) fn auth_binding_for_service(&self) -> RecapAuthBinding {
+        RecapAuthBinding {
+            service: self.auth_service.clone(),
+            reference: self.auth_reference.clone(),
+        }
     }
 
     #[cfg(test)]
@@ -173,12 +299,139 @@ impl RecapRuntimeReadyProof {
             selection,
             auth_reference: "test-auth-reference".to_string(),
             guarantees,
+            auth_service: "test-keyring-service".to_string(),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn guarantees_for_test(&self) -> RecapGuarantees {
         self.guarantees
+    }
+}
+
+impl RecapRuntimeCertification {
+    /// Build the attestation at the adapter boundary. The adapter observation
+    /// must have come from [`super::recap_adapter::RecapLaunchPlan::parse_probe_output`];
+    /// callers do not provide individual output/model/tool booleans.
+    pub(crate) fn from_adapter_observation(
+        target: RecapProbeTarget,
+        adapter: RecapAdapterObservation,
+        state: RecapStateObservation,
+        process: RecapProcessObservation,
+    ) -> Result<Self, RecapFailure> {
+        Self::from_probe(
+            target.contract,
+            RecapProbeAttestation {
+                runtime_id: target.runtime_id,
+                executable: target.executable,
+                selection: target.selection,
+                auth: target.auth,
+                adapter,
+                state,
+                process,
+            },
+        )
+    }
+
+    /// Consume one adapter probe and create the sole positive certification
+    /// value. Every positive property is supplied as explicit evidence; this
+    /// function never infers tool, state, or process guarantees from flags.
+    fn from_probe(
+        contract: RecapRuntimeContract,
+        probe: RecapProbeAttestation,
+    ) -> Result<Self, RecapFailure> {
+        let Some(runtime) = super::known_acp_runtime_exact(&probe.runtime_id) else {
+            return Err(RecapFailure::RuntimeMismatch);
+        };
+        if runtime.recap_contract() != contract || contract.command.is_none() {
+            return Err(RecapFailure::UnsupportedOneShot);
+        }
+        if !valid_identity(&probe.executable) {
+            return Err(RecapFailure::InvalidExecutableIdentity);
+        }
+        if probe.executable.platform != current_platform() {
+            return Err(RecapFailure::InvalidExecutableIdentity);
+        }
+        if !valid_recap_model(&probe.selection.model) {
+            return Err(RecapFailure::InvalidModelSelection);
+        }
+        if !probe.selection.auth_available {
+            return Err(RecapFailure::AuthRequired);
+        }
+        if !valid_auth_service(&probe.auth.service) || !valid_auth_reference(&probe.auth.reference)
+        {
+            return Err(RecapFailure::InvalidAuthBinding);
+        }
+        match contract.selection {
+            RecapSelectionContract::ExplicitModel if probe.selection.profile.is_some() => {
+                return Err(RecapFailure::ProfileMismatch);
+            }
+            RecapSelectionContract::StagingProfile
+                if !probe
+                    .selection
+                    .profile
+                    .as_deref()
+                    .is_some_and(Path::is_absolute) =>
+            {
+                return Err(RecapFailure::MissingProfile);
+            }
+            _ => {}
+        }
+        if probe.adapter.output().is_empty() {
+            return Err(RecapFailure::EmptyProbeOutput);
+        }
+        if probe.adapter.output().len() > RECAP_OUTPUT_LIMIT {
+            return Err(RecapFailure::ProbeOutputLimit);
+        }
+        if probe.adapter.output().contains(&0) {
+            return Err(RecapFailure::InvalidProbeOutput);
+        }
+        if !valid_recap_model(probe.adapter.effective_model()) {
+            return Err(RecapFailure::EffectiveModelMismatch);
+        }
+        if probe.adapter.effective_model() != probe.selection.model {
+            return Err(RecapFailure::EffectiveModelMismatch);
+        }
+        if !probe.adapter.one_shot_completed() {
+            return Err(RecapFailure::UnsupportedOneShot);
+        }
+        if !valid_tool_probe_evidence(probe.adapter.tool_probe()) {
+            return Err(RecapFailure::InvalidToolProbeEvidence);
+        }
+        if probe.state != RecapStateObservation::Unchanged {
+            return Err(RecapFailure::ProbeStateChanged);
+        }
+        if probe.process != RecapProcessObservation::ReapedAndContained {
+            return Err(RecapFailure::ProbeProcessNotReaped);
+        }
+        Ok(Self {
+            runtime_id: probe.runtime_id,
+            executable: probe.executable,
+            selection: probe.selection,
+            auth: probe.auth,
+            guarantees: RecapGuarantees {
+                one_shot: true,
+                tool_isolation: true,
+                state_isolation: true,
+                process_containment: true,
+            },
+            effective_model: probe.adapter.effective_model().to_owned(),
+            output_digest: hex::encode(Sha256::digest(probe.adapter.output())),
+            tool_probe_digest: tool_probe_digest(probe.adapter.tool_probe()),
+        })
+    }
+
+    pub(crate) fn parts(&self) -> RecapCertificationParts {
+        RecapCertificationParts {
+            runtime_id: self.runtime_id.clone(),
+            executable: self.executable.clone(),
+            selection: self.selection.clone(),
+            auth: self.auth.clone(),
+            guarantees: self.guarantees,
+            effective_model: self.effective_model.clone(),
+            output_digest: self.output_digest.clone(),
+            tool_probe_digest: self.tool_probe_digest.clone(),
+        }
     }
 }
 
@@ -316,6 +569,45 @@ fn valid_auth_reference(reference: &str) -> bool {
         && reference == reference.trim()
         && reference.len() <= 256
         && !reference.chars().any(char::is_control)
+}
+
+fn valid_auth_service(service: &str) -> bool {
+    !service.is_empty()
+        && service == service.trim()
+        && service.len() <= 256
+        && !service.chars().any(char::is_control)
+}
+
+/// Stable identifier for the hostile-tool probe evidence contract.
+pub(crate) const RECAP_TOOL_PROBE_ID: &str = "crew-recap-hostile-tool-v1";
+
+fn valid_tool_probe_evidence(evidence: &RecapToolProbeEvidence) -> bool {
+    evidence.probe_id == RECAP_TOOL_PROBE_ID
+        && !evidence.tool_name.is_empty()
+        && evidence.tool_name == evidence.tool_name.trim()
+        && evidence.tool_name.len() <= 128
+        && !evidence.tool_name.chars().any(char::is_control)
+        && evidence.request_observed
+        && evidence.denied_before_effect
+        && is_sha256(&evidence.sentinel_before)
+        && evidence.sentinel_before == evidence.sentinel_after
+}
+
+fn tool_probe_digest(evidence: &RecapToolProbeEvidence) -> String {
+    let preimage = format!(
+        "{}\0{}\0{}\0{}\0{}\0{}",
+        evidence.probe_id,
+        evidence.tool_name,
+        evidence.request_observed,
+        evidence.denied_before_effect,
+        evidence.sentinel_before,
+        evidence.sentinel_after,
+    );
+    hex::encode(Sha256::digest(preimage.as_bytes()))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Recheck the retained executable fingerprint immediately before launch.

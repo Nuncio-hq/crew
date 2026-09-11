@@ -985,11 +985,14 @@ no-tool Claude/Hermes recipe arguments, prompt cap, pending-process cleanup
 guard, source overflow watermark, or EPERM reap condition must fail the
 corresponding production-seam regression. Synthetic
 argv/output tests and authorized design reviews do not establish provider auth,
-effective generation model, native tool isolation or a working recap. Real
-staging generation remains blocked until one exact runtime combination proves
-all those properties and #348 supplies a separate runtime-ready grant. Evidence
-screenshots must label a source/tooling summary as such; they cannot substitute
-for the designated staging runtime acceptance required by #351/#356.
+effective generation model, native tool isolation or a working recap. The
+native producer now accepts only a typed bounded-probe attestation, including
+hostile-tool denial and unchanged sentinels, then records its redacted evidence
+in the existing scoped retention DB before atomically projecting the grant.
+Real staging generation remains blocked until one exact runtime combination
+proves all those properties and #348 supplies the native auth/profile binding.
+Evidence screenshots must label a source/tooling summary as such; they cannot
+substitute for the designated staging runtime acceptance required by #351/#356.
 
 The historical 2026-09-09 executed inventory used resolved native executables,
 not the user's updating wrapper. The Claude image matches the current

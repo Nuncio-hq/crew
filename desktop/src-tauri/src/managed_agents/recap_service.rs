@@ -215,6 +215,20 @@ fn error_code(error: RecapServiceFailure) -> &'static str {
         RecapServiceFailure::Admission(RecapFailure::UnverifiedCapability) => {
             "unverified_capability"
         }
+        RecapServiceFailure::Admission(RecapFailure::InvalidAuthBinding) => "invalid_auth_binding",
+        RecapServiceFailure::Admission(RecapFailure::EmptyProbeOutput) => "empty_probe_output",
+        RecapServiceFailure::Admission(RecapFailure::ProbeOutputLimit) => "probe_output_limit",
+        RecapServiceFailure::Admission(RecapFailure::InvalidProbeOutput) => "invalid_probe_output",
+        RecapServiceFailure::Admission(RecapFailure::EffectiveModelMismatch) => {
+            "effective_model_mismatch"
+        }
+        RecapServiceFailure::Admission(RecapFailure::InvalidToolProbeEvidence) => {
+            "invalid_tool_probe_evidence"
+        }
+        RecapServiceFailure::Admission(RecapFailure::ProbeStateChanged) => "probe_state_changed",
+        RecapServiceFailure::Admission(RecapFailure::ProbeProcessNotReaped) => {
+            "probe_process_not_reaped"
+        }
         RecapServiceFailure::State(RecapStateFailure::RuntimeNotReady) => "runtime_not_ready",
         RecapServiceFailure::State(RecapStateFailure::Io) => "state_io",
         RecapServiceFailure::State(RecapStateFailure::InputLimit) => "input_limit",
@@ -307,8 +321,7 @@ pub(crate) fn run_recap_sync_with_cancel(
     }
     let ownership = VerifiedStagingOwnership::load(&app)
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
-    let proof = ownership
-        .runtime_ready_proof()
+    let proof = super::recap_ownership::runtime_ready_proof_for_ownership(&app, &ownership)
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
     let contract = contract_for_runtime(&request.runtime_id).ok_or_else(|| {
         error_code(RecapServiceFailure::Admission(

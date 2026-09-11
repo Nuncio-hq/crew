@@ -520,22 +520,29 @@ uses an explicit `recap_native_command` catalog value because ordinary ACP
 discovery remains `hermes-acp` first. Other candidates use the existing
 `underlying_cli` metadata. The native
 CLI candidate and its model/profile selection contract are inventory, not proof
-of one-shot support. `classify_recap` currently returns only failure states;
-there is no positive capability cache or runnable recap UI. A registered native
-command remains fail-closed until the ownership loader supplies a separately
-bound runtime-ready grant.
+of one-shot support. `classify_recap` still returns only failure states;
+discovery cannot create a positive capability. A typed bounded-probe
+certification is the only input to the native producer, which persists a
+redacted row in the existing scoped managed-agent retention DB (keyed by
+runtime, executable fingerprint/version/platform) and atomically projects the
+strict runtime-ready grant. Production consumers require both the grant and
+its matching retention row, so the registered command remains fail-closed
+until an actual native probe and auth binding exist.
 [#356](https://github.com/Nuncio-hq/crew/issues/356) remains dependent on a proven
 runtime combination. Ordinary agent/ACP readiness is a separate contract.
 
 The default-off source slice contains fixed Claude and Hermes candidate
 argv/parsers, private disposable-state ownership, a native-only runtime-ready
-grant loader, and the existing bounded discovery process helper extended with
-caller-owned stdin, cancellation and per-stream budgets. The registered recap
-service binds those pieces at one production seam and keeps its command
-unavailable without the grant.
+grant loader/producer, and the existing bounded discovery process helper
+extended with caller-owned stdin, cancellation and per-stream budgets. The
+registered recap service binds those pieces at one production seam and keeps
+its command unavailable without the grant and matching retention row.
 Hermes copies the selected profile into the disposable run, disables its
 configured MCP path and rule injection, binds a one-shot prompt, and checks the
-written usage model before accepting output. On macOS its plan is launched
+written usage model before accepting output. Empty toolsets, `--safe-mode`, or
+an ACP read-only session do not certify tool isolation: the producer requires
+typed hostile-tool evidence showing an observed request was denied before
+effect and a controlled sentinel was unchanged. On macOS its plan is launched
 through the fixed `sandbox-exec` process-fork denial policy; the ordinary Unix
 process-group limitation and any escaped-descendant caveat still apply to the
 bounded owner. Neither recipe has a positive staging grant in the current
@@ -549,7 +556,8 @@ roots must already exist; reading this receipt does not create them. A receipt
 is tied to the root inode/device generations and revalidates before projecting
 the recap state parent. A manifest claiming generation permission or containing
 auth references is rejected. Ownership does not imply authentication readiness;
-a future, separately reviewed runtime-ready grant is still required.
+the producer still requires a native keyring binding, a completed bounded
+probe, and the matching scoped retention row before it can project a grant.
 
 The derived `agents` base must be canonical and owned before any run-directory
 creation or recovery; an intermediate symlink is rejected, and active runs fence
