@@ -47,6 +47,7 @@ import {
   handleWikiCommand,
   isWikiCommand,
   isWikiKind,
+  readE2eWikiSnapshot,
   resetE2eWiki,
   seedGeneratedWiki,
   seedCompanyWiki,
@@ -13137,6 +13138,62 @@ export function maybeInstallE2eTauriMocks() {
     }
 
     switch (command) {
+      case "owner_operation_scope": {
+        const activeIdentity = identity ?? DEFAULT_MOCK_IDENTITY;
+        return {
+          scope: {
+            owner: activeIdentity.pubkey,
+            community: new URL(
+              activeConfig?.relayHttpUrl ?? DEFAULT_RELAY_HTTP_URL,
+            ).origin,
+          },
+          workspace_generation: 0,
+          identity_generation: 0,
+        };
+      }
+      case "wiki_snapshot_read": {
+        const input = payload as {
+          expected?: {
+            scope?: { owner?: string };
+            workspace_generation?: number;
+            identity_generation?: number;
+          };
+          coordinate?: string;
+        };
+        const coordinate = input.coordinate ?? "";
+        const [, owner = "", repoD = ""] = coordinate.split(":");
+        if (!owner || !repoD) throw new Error("Invalid Wiki coordinate.");
+        const expected = input.expected;
+        if (!expected) throw new Error("Missing Wiki scope.");
+        const snapshot = readE2eWikiSnapshot(owner, repoD);
+        // Keep Wiki content and repository freshness independent. The project
+        // event store is the separate NIP-34 repo-state fixture used by the
+        // card's cadence comparison; never derive it from the Wiki snapshot.
+        const repoState = getMockProjectEventStore().find(
+          (event) =>
+            event.kind === KIND_REPO_STATE &&
+            event.tags.some((tag) => tag[0] === "d" && tag[1] === repoD) &&
+            (event.pubkey.toLowerCase() === owner.toLowerCase() ||
+              event.tags.some(
+                (tag) =>
+                  tag[0] === "a" &&
+                  tag[1] === `30617:${owner.toLowerCase()}:${repoD}`,
+              )),
+        );
+        if (repoState) snapshot.repo_state = repoState;
+        return { token: expected, value: snapshot };
+      }
+      case "wiki_publication_list": {
+        const input = payload as {
+          expected?: {
+            scope?: { owner?: string };
+            workspace_generation?: number;
+            identity_generation?: number;
+          };
+        };
+        if (!input.expected) throw new Error("Missing Wiki scope.");
+        return { token: input.expected, value: [] };
+      }
       case "get_huddle_state": {
         const snapshot = mockHuddle ? structuredClone(mockHuddle.state) : null;
         const delayMs = activeConfig?.mock?.huddleStateReadDelayMs ?? 0;
