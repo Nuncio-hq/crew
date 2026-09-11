@@ -855,7 +855,7 @@ async fn conditional_publication_reserved_quota_enforces_jsonb_bytes_below_row_c
         let content = candidate.content.clone();
         assert!(signed_bytes <= MAX_SIGNED_EVENT_BYTES);
         assert!(candidate_bytes <= MAX_SIGNED_EVENT_BYTES);
-        assert!(candidate_bytes > content.as_bytes().len() as i64);
+        assert!(candidate_bytes > content.len() as i64);
         assert!(before.1 + candidate_bytes > MAX_WIKI_LIVE_BYTES);
 
         assert!(matches!(

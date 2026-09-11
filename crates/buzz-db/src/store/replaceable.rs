@@ -9,6 +9,8 @@ use uuid::Uuid;
 use crate::observability::{self, LockType, TransactionOperation};
 use crate::{Db, DbError, Result};
 
+type ExistingReplaceableRow = (DateTime<Utc>, Vec<u8>, bool, bool, bool, i64);
+
 #[path = "replaceable_conditions.rs"]
 mod conditions;
 pub use conditions::{ParameterizedReplacePrecondition, ParameterizedReplaceStatus};
@@ -225,7 +227,7 @@ async fn replace_parameterized_event_in_transaction_impl(
         }
         _ => (None, None),
     };
-    let existing_row: Option<(DateTime<Utc>, Vec<u8>, bool, bool, bool, i64)> = sqlx::query_as(
+    let existing_row: Option<ExistingReplaceableRow> = sqlx::query_as(
         "SELECT created_at, id, \
                 EXISTS(SELECT 1 FROM jsonb_array_elements(tags) tag WHERE tag->>0=$5 AND tag->>1=$6), \
                 (kind = 30623 AND EXISTS(SELECT 1 FROM jsonb_array_elements(tags) tag WHERE tag->>0='wiki-version' AND tag->>1='1')), \
@@ -265,7 +267,7 @@ async fn replace_parameterized_event_in_transaction_impl(
         .unwrap_or_default();
     let existing = existing_row
         .as_ref()
-        .map(|(created_at, id, _, _, _, _)| (created_at.clone(), id.clone()));
+        .map(|(created_at, id, _, _, _, _)| (*created_at, id.clone()));
     let watermark: Option<(DateTime<Utc>, Vec<u8>)> = if is_nip_rs {
         sqlx::query_as(
             "SELECT created_at, event_id FROM parameterized_event_watermarks \
