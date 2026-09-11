@@ -718,6 +718,11 @@ jobs:
             -E 'package(buzz-relay) and test(/api::relay_members::postgres_tests::current_relay_membership_for_auth_tracks_writer_roster_changes/)' \
             --run-ignored ignored-only \
             --no-tests fail
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'package(buzz-relay) and test(/handlers::event::tests::fanout_access::self_leave_not_found_ack_wins_over_a_concurrent_revoked_event/)' \
+            --run-ignored ignored-only \
+            --no-tests fail
         env:
           BUZZ_TEST_DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
           BUZZ_TEST_REDIS_URL: redis://localhost:6379

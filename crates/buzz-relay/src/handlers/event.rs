@@ -667,8 +667,9 @@ enum RelayLeavePreparation {
 
 /// Handle an EVENT message from a WebSocket connection.
 ///
-/// Extracts auth from the WS connection, dispatches ephemeral events locally,
-/// and delegates persistent events to [`super::ingest::ingest_event`].
+/// Extracts auth from the WS connection, dispatches ordinary ephemeral
+/// events locally, and delegates persistent events plus the NIP-43 leave
+/// command to [`super::ingest::ingest_event`].
 #[tracing::instrument(skip_all, fields(event_id, kind))]
 pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<AppState>) {
     let start = std::time::Instant::now();
@@ -722,8 +723,13 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
 
     // Must run before both ephemeral and persistent branches. Persistent
     // events get a second check inside ingest_event() (step 3), but
-    // ephemeral events bypass the pipeline entirely.
+    // ordinary ephemeral events bypass the pipeline entirely.
     let is_gift_wrap = kind_u32 == KIND_GIFT_WRAP;
+    // NIP-43 leave requests use an ephemeral-range kind, but they are a
+    // durable membership command handled by ingest_event rather than a live
+    // fan-out event. Keep this classification available before the generic
+    // ephemeral dispatch below.
+    let is_relay_leave = kind_u32 == KIND_NIP43_LEAVE_REQUEST;
     if event.pubkey != auth_pubkey && !is_gift_wrap {
         reject("invalid");
         conn.send(RelayMessage::ok(
@@ -793,11 +799,12 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
         return;
     }
 
-    // Scope enforcement for ephemeral kinds: require MessagesWrite.
+    // Scope enforcement for ordinary ephemeral kinds: require MessagesWrite.
     // Persistent events skip this gate and rely on
     // ingest_event()'s per-kind scope allowlist instead, so a token with
-    // only ChannelsWrite can still submit kind:9002 via WS.
-    if is_ephemeral(kind_u32) {
+    // only ChannelsWrite can still submit kind:9002 via WS. NIP-43 leave is
+    // in the ephemeral numeric range but is routed to ingest_event below.
+    if is_ephemeral(kind_u32) && !is_relay_leave {
         if !scopes.is_empty() && !scopes.contains(&buzz_auth::Scope::MessagesWrite) {
             reject("scope");
             conn.send(RelayMessage::ok(
@@ -860,7 +867,6 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
         conn_id,
     };
 
-    let is_relay_leave = kind_u32 == KIND_NIP43_LEAVE_REQUEST;
     // Claim the same per-connection fence used by live revocation and the
     // durable sweep before ingest can delete the sender's membership row. A
     // second membership read after the bounded wait closes the race where a
