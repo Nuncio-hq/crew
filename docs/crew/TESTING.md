@@ -721,7 +721,7 @@ The default-off native recap slice is tested through its production modules:
 `discovery::bounded_command`. The native `AppHandle` loader belongs to the full
 Tauri build gate; a small exact-module Cargo harness alone does not certify that
 integration. Run `just ci` before the PR and require the immutable head's
-NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-09)
+NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-10)
 for the current unsupported inventory.
 
 Test boundaries include explicit model/profile admission, identity invalidation,
@@ -745,9 +745,12 @@ all those properties and #348 supplies a separate runtime-ready grant. Evidence
 screenshots must label a source/tooling summary as such; they cannot substitute
 for the designated staging runtime acceptance required by #351/#356.
 
-The 2026-09-09 inventory used resolved native executables identified by the
-Architecture table's hashes, not the user's updating wrapper. Recorded arguments
-(excluding that executable) were:
+The historical 2026-09-09 executed inventory used resolved native executables,
+not the user's updating wrapper. The Claude image matches the current
+Architecture row; the historical Codex 0.153.4 image used SHA-256
+`b973d440acac501fd2594a43e7ca9ce41e0a65b9dfb28d0d7a7837c99e1261e3`, which
+differs from the current static row and is not current certification. Recorded
+arguments (excluding that executable) were:
 
 - Claude: `["--version"]` and `["--safe-mode", "--setting-sources", "", "--help"]`.
   Cleared environment allowlist: `HOME`, `PATH`, `TMPDIR`, `CLAUDE_CONFIG_DIR`,
