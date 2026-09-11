@@ -160,14 +160,6 @@ impl RecapRuntimeReadyProof {
         self.selection.clone()
     }
 
-    pub(super) fn runtime_id(&self) -> &str {
-        &self.runtime_id
-    }
-
-    pub(super) fn executable_fingerprint(&self) -> &str {
-        &self.executable.fingerprint
-    }
-
     #[cfg(test)]
     pub(crate) fn for_test(
         runtime_id: &str,

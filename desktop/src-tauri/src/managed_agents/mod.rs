@@ -51,6 +51,7 @@ pub(crate) mod readiness;
 pub(crate) mod recap_adapter;
 #[allow(dead_code)]
 pub(crate) mod recap_capability;
+pub(crate) mod recap_commands;
 #[allow(dead_code)]
 pub(crate) mod recap_ownership;
 #[allow(dead_code)]
