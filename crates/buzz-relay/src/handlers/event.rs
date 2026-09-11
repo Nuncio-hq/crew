@@ -2364,12 +2364,31 @@ mod tests {
             .expect("insert relay member");
 
             let tenant = TenantContext::resolved(community, &host);
+            let (sweep_conn, _sweep_rx, mut sweep_ctrl) =
+                authenticated_conn(&state, &tenant, &keys).await;
+            assert_eq!(
+                state.revalidate_live_relay_memberships().await,
+                0,
+                "a current writer membership must keep the idle socket open"
+            );
             sqlx::query("DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2")
                 .bind(community_uuid)
                 .bind(&pubkey_hex)
                 .execute(&pool)
                 .await
                 .expect("remove relay member");
+            assert_eq!(
+                state.revalidate_live_relay_memberships().await,
+                1,
+                "the writer-backed sweep must close an idle revoked socket"
+            );
+            assert!(sweep_conn.cancel.is_cancelled());
+            assert!(matches!(
+                sweep_ctrl.try_recv(),
+                Ok(axum::extract::ws::Message::Text(text))
+                    if text.contains("OK") && text.contains("false")
+            ));
+            state.conn_manager.deregister(sweep_conn.conn_id);
 
             let (req_conn, _req_rx, mut req_ctrl) =
                 authenticated_conn(&state, &tenant, &keys).await;
