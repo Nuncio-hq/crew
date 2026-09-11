@@ -33,6 +33,12 @@ export function ChannelRolesDialog({
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
   const [focusId, setFocusId] = React.useState<string | null>(null);
   const frozen = editor.busy || !!editor.operation;
+  // Initial reads have no draft to protect. Keep the normal dialog escape
+  // routes available so an unresolved relay/native read cannot strand the
+  // user in an empty Loading state. Once a draft exists, busy still fences
+  // Save/retry/read-review operations as before.
+  const initialLoading = editor.busy && !draft;
+  const canDismiss = !editor.busy || initialLoading;
   const invalid = draft ? roleDraftError(draft) : null;
   const contactUnknown =
     !!draft?.contact &&
@@ -46,12 +52,12 @@ export function ChannelRolesDialog({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !editor.busy) onClose();
+        if (!open && canDismiss) onClose();
       }}
     >
       <DialogContent
         className="max-w-3xl overflow-y-auto"
-        showCloseButton={!editor.busy}
+        showCloseButton={canDismiss}
         data-testid="channel-roles-dialog"
       >
         <DialogHeader>
@@ -387,7 +393,7 @@ export function ChannelRolesDialog({
           <Button
             type="button"
             variant="outline"
-            disabled={editor.busy}
+            disabled={!canDismiss}
             onClick={onClose}
           >
             {editor.operation ? "Close" : "Cancel"}
