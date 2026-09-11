@@ -4,6 +4,24 @@ import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { expectCornerRadiusPx, expectSmoothCorners } from "../helpers/css";
 import { openSettings } from "../helpers/settings";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
+
+// Navigation-guard cases must perform the same workspace-browser action as a
+// successful switch without waiting for the route to change after the guard
+// rejects it.
+async function attemptWorkspaceChannelNavigation(
+  page: import("@playwright/test").Page,
+  channelName: string,
+) {
+  await page.getByTestId("workspace-menu-trigger").click();
+  await page.getByTestId("workspace-browse-channels").click();
+  await expect(page.getByTestId("channel-browser-dialog")).toBeVisible();
+  await page
+    .getByTestId(`browse-channel-${channelName}`)
+    .getByRole("button")
+    .first()
+    .click();
+}
 
 async function waitForReadyComposerSnapshots(
   page: import("@playwright/test").Page,
@@ -360,7 +378,7 @@ test.beforeEach(async ({ page }, testInfo) => {
 
 test("agent owner label identifies the agent and owner", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
 
   const aliceMessage = page
     .getByTestId("message-row")
@@ -382,7 +400,7 @@ test("send a message and see it in timeline", async ({ page }) => {
   const message = `Hello timeline ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await page.getByTestId("message-input").fill(message);
@@ -398,7 +416,7 @@ test("long autolink wraps without widening the timeline", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 600 });
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const longUrl = `https://blocked.teams.cloudflare.com/?${"dependencyconfusionnpm".repeat(18)}`;
@@ -439,7 +457,7 @@ test("markdown tables wrap long prose and fill the message when narrow", async (
 }) => {
   await page.setViewportSize({ width: 900, height: 600 });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.waitForFunction(
     () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
@@ -514,7 +532,7 @@ test("sent link preview media uses the authenticated proxy in compact and rich c
   );
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(previewUrl);
   await waitForReadyComposerSnapshots(page);
   await page.getByTestId("send-message").click();
@@ -566,7 +584,7 @@ test("link preview style defaults to compact and Rich unfurls descriptions", asy
   const previewUrl = "https://github.com/block/buzz/pull/3246?inline=1";
   await page.setViewportSize({ width: 800, height: 900 });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(previewUrl);
   const composerPreview = page
     .locator("[data-composer-link-previews]")
@@ -676,7 +694,7 @@ for (const [pasteShape, wrapUrl] of [
   }) => {
     const previewUrl = `https://github.com/block/buzz/pull/3246?paste=${pasteShape}`;
     await page.goto("/");
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     const input = page.getByTestId("message-input");
     await input.focus();
 
@@ -722,7 +740,7 @@ test("display-text link preview produces and sends its preview", async ({
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?display=text";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
 
   const input = page.getByTestId("message-input");
   await input.click();
@@ -764,7 +782,7 @@ test("rich link preview preserves description newlines after sending", async ({
     localStorage.setItem("buzz.appearance.linkPreviewStyle", "rich"),
   );
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(previewUrl);
   await waitForReadyComposerSnapshots(page);
   await page.getByTestId("send-message").click();
@@ -798,7 +816,7 @@ test("completed link previews normalize a trailing-fragment URL and still send",
   ];
   const pastedText = previewUrls.join("\n");
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.focus();
   await input.evaluate((element, text) => {
@@ -844,7 +862,7 @@ test("unresolvable preview disappears after the terminal miss", async ({
 }) => {
   const previewUrl = "https://x.com/tellaho/status";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(previewUrl);
 
   const composerPreviews = page.locator("[data-composer-link-previews]");
@@ -865,7 +883,7 @@ test("a pending link preview can be skipped after Send clears the composer", asy
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?send=pending";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
   const composerPreviews = page.locator("[data-composer-link-previews]");
@@ -916,14 +934,14 @@ test("an accepted link preview survives channel navigation and sends to its orig
   const previewUrl = "https://github.com/block/buzz/pull/3246?navigation=send";
   const channelId = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(previewUrl);
   await page.getByTestId("message-input").press("Enter");
   await expect(page.getByTestId("message-input")).toHaveText("");
   await expect(page.getByTestId("composer-upload-phase")).toHaveText(
     "Preparing link preview",
   );
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("message-input")).toHaveText("");
   await expect(page.getByTestId("composer-upload-phase")).toHaveText(
     "Preparing link preview",
@@ -948,7 +966,7 @@ test("an accepted link preview survives channel navigation and sends to its orig
   await expect(
     page.getByTestId("message-row").filter({ hasText: previewUrl }),
   ).toHaveCount(0);
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(
     page.getByTestId("message-row").filter({ hasText: previewUrl }),
   ).toHaveCount(1);
@@ -959,7 +977,7 @@ test("Enter during an in-flight snapshot upload cannot ship a bare link", async 
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
 
@@ -1112,7 +1130,7 @@ test("rapid Enter presses on a ready link preview send exactly once", async ({
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?rapid=1";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
 
@@ -1149,7 +1167,7 @@ test("pasting a link preview and immediately pressing Enter waits for resolution
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?fast=send";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
 
   // The fixture delays metadata, so Enter occurs before any snapshot exists.
@@ -1198,7 +1216,7 @@ test("a snapshot thumbnail upload failure preserves one metadata-only preview", 
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?upload=fail";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
 
@@ -1242,7 +1260,7 @@ test("editing a message excludes link previews entirely", async ({ page }) => {
   const message = `Edit-me ${Date.now()}`;
   const previewUrl = "https://github.com/block/buzz/pull/3246?edit=1";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
 
   // Send a plain message with no link, then edit it to add a supported URL.
@@ -1282,7 +1300,7 @@ test("hiding composer link previews suppresses the whole draft and emits the bla
   const firstUrl = "https://github.com/block/buzz/pull/3246?hide=all";
   const secondUrl = "https://linear.app/acme/issue/ABC-123/hidden-too";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(firstUrl);
   await expect(page.locator("[data-composer-link-previews]")).toBeVisible();
   await waitForReadyComposerSnapshots(page);
@@ -1319,7 +1337,7 @@ test("composer link preview embeds stay attachment-sized while loading and ready
   for (const width of [800, 420]) {
     await page.setViewportSize({ width: 800, height: 700 });
     await page.goto("/");
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await page.setViewportSize({ width, height: 700 });
     await page
       .getByTestId("message-input")
@@ -1382,7 +1400,7 @@ test("composer no-image link embeds keep the attachment footprint", async ({
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?inline=none";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(previewUrl);
   const card = page
     .locator("[data-composer-link-previews]")
@@ -1401,7 +1419,7 @@ test("mixed link preview image outcomes keep Compact and Rich fallbacks stable",
   const loadedUrl = "https://github.com/block/buzz/pull/4001";
   const rateLimitedUrl = "https://github.com/block/buzz/pull/4002";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page
     .getByTestId("message-input")
     .fill(`${loadedUrl}\n${rateLimitedUrl}`);
@@ -1449,7 +1467,7 @@ test("fragment link previews render a card per canonical URL", async ({
   const fragmentUrlB = "https://github.com/block/buzz/pull/3767#issuecomment-1";
   const plainUrl = "https://github.com/block/buzz/pull/3867";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page
     .getByTestId("message-input")
     .fill(`${fragmentUrlA}\n${fragmentUrlB}\n${plainUrl}`);
@@ -1478,7 +1496,7 @@ test("link preview browser image errors render a fallback", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page
     .getByTestId("message-input")
     .fill("https://github.com/block/buzz/pull/4003");
@@ -1510,7 +1528,7 @@ test("supported Compact link previews keep the message link visible with square 
   const previewUrl = "https://github.com/block/sprout/pull/1334";
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await page.getByTestId("message-input").fill(previewUrl);
@@ -1537,7 +1555,7 @@ test("send multiple messages in sequence", async ({ page }) => {
   const sendButton = page.getByTestId("send-message");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   for (const message of messages) {
@@ -1562,7 +1580,7 @@ test("copy a rendered code block and paste it back as code", async ({
   const code = "# not a heading\nconst answer = 42;\n  indented();";
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const input = page.getByTestId("message-input");
@@ -1608,7 +1626,7 @@ test("pasting a long copied code block scrolls composer to cursor", async ({
   ).join("\n");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const input = page.getByTestId("message-input");
@@ -1647,7 +1665,7 @@ test("code block shows language label when language is specified", async ({
   });
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const input = page.getByTestId("message-input");
@@ -1669,7 +1687,7 @@ test("typing triple backticks and Enter creates a code block in composer", async
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const input = page.getByTestId("message-input");
@@ -1690,7 +1708,7 @@ test("message input clears after send", async ({ page }) => {
   const input = page.getByTestId("message-input");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await input.fill(message);
@@ -1705,7 +1723,7 @@ test("emoji picker inserts emoji into the draft and keeps focus in the composer"
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const input = page.getByTestId("message-input");
@@ -1736,7 +1754,7 @@ test("relay GIF capability gates the composer picker", async ({ page }) => {
   );
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const pickerButton = page.getByTestId("composer-emoji-button");
   await expect(pickerButton).toHaveAccessibleName("Insert emoji");
   await pickerButton.click();
@@ -1812,7 +1830,7 @@ test("relay GIF search selects content-only media and reports the share", async 
   );
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const pickerButton = page.getByTestId("composer-emoji-button");
   await expect(pickerButton).toHaveAccessibleName("Insert emoji or GIF");
   await pickerButton.click();
@@ -1950,7 +1968,7 @@ async function routeGifMocks(page: import("@playwright/test").Page) {
 
 async function openGifGrid(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("composer-emoji-button").click();
   await page.getByRole("tab", { name: "GIFs" }).click();
   await expect(page.getByTestId("klipy-gif-grid")).toBeVisible();
@@ -2077,7 +2095,7 @@ test("selected GIFs keep distinct accessible names in the composer and lightbox"
 }) => {
   const gifs = await routeGifMocks(page);
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
 
   // Select two differently titled GIFs.
   for (const gif of gifs) {
@@ -2117,7 +2135,7 @@ test("selected GIFs keep distinct accessible names in the composer and lightbox"
 
 test("empty message cannot be sent", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const sendButton = page.getByTestId("send-message");
@@ -2129,7 +2147,7 @@ test("send message with Enter key", async ({ page }) => {
   const input = page.getByTestId("message-input");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await input.fill(message);
@@ -2142,17 +2160,17 @@ test("messages persist across channel switches", async ({ page }) => {
   const message = `Persist across switch ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await page.getByTestId("message-input").fill(message);
   await page.getByTestId("send-message").click();
   await expect(page.getByTestId("message-timeline")).toContainText(message);
 
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("message-timeline")).toContainText(message);
 });
@@ -2162,7 +2180,7 @@ test("draft is preserved when switching channels", async ({ page }) => {
   const input = page.getByTestId("message-input");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   // Type a draft but do not send it
@@ -2170,12 +2188,12 @@ test("draft is preserved when switching channels", async ({ page }) => {
   await expect(input).toHaveText(draft);
 
   // Switch to another channel — composer should be empty
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
   await expect(input).toHaveText("");
 
   // Switch back — the draft should still be there
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(input).toHaveText(draft);
 });
@@ -2185,7 +2203,7 @@ test("sending a message clears the draft", async ({ page }) => {
   const input = page.getByTestId("message-input");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   // Type and send a message
@@ -2194,9 +2212,9 @@ test("sending a message clears the draft", async ({ page }) => {
   await expect(page.getByTestId("message-timeline")).toContainText(message);
 
   // Switch away and back — composer should be empty, not restored from draft
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(input).toHaveText("");
 });
@@ -2207,7 +2225,7 @@ test("different channels have independent messages", async ({ page }) => {
   const randomMessage = `Random only ${ts}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.getByTestId("message-input").fill(generalMessage);
   await page.getByTestId("send-message").click();
@@ -2215,7 +2233,7 @@ test("different channels have independent messages", async ({ page }) => {
     generalMessage,
   );
 
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
   await expect(page.getByTestId("message-timeline")).not.toContainText(
     generalMessage,
@@ -2227,7 +2245,7 @@ test("different channels have independent messages", async ({ page }) => {
     randomMessage,
   );
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("message-timeline")).toContainText(
     generalMessage,
@@ -2239,7 +2257,7 @@ test("different channels have independent messages", async ({ page }) => {
 
 test("day divider appears in timeline", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await expect(page.getByTestId("message-timeline")).toContainText(
@@ -2324,7 +2342,7 @@ test("sends a thread message to its parent channel with a root-thread link", asy
   );
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.waitForFunction(
     () =>
@@ -2570,7 +2588,7 @@ test("shows your avatar on your own message when profile avatar is set", async (
   await page.getByTestId("profile-avatar-done").click();
   await page.getByTestId("settings-back-to-app").click();
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await page.getByTestId("message-input").fill(message);
@@ -2598,7 +2616,7 @@ test("opens a single-level thread panel with inline expansion", async ({
   );
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("message-timeline")).toContainText(
     "Welcome to general",
@@ -2896,7 +2914,7 @@ test("thread panel width uses session storage and reset handle", async ({
   }, customWidthPx);
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const timeline = page.getByTestId("message-timeline");
@@ -2953,7 +2971,7 @@ test("narrow thread view collapses channel header actions into a menu", async ({
   await page.setViewportSize({ width: 980, height: 720 });
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("channel-add-bot-trigger")).toHaveCount(0);
   await expect(page.getByTestId("channel-actions-menu-trigger")).toHaveCount(0);
@@ -2998,7 +3016,7 @@ test("single-panel thread view hides channel actions", async ({ page }) => {
   await page.setViewportSize({ width: 860, height: 720 });
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("channel-add-bot-trigger")).toHaveCount(0);
 
@@ -3019,7 +3037,7 @@ test("single-panel thread view hides channel actions", async ({ page }) => {
 
 test("composer is focused after selecting a channel", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   // Without clicking the input, typing should land in the composer.
@@ -3034,10 +3052,10 @@ test("composer is focused after switching to a different channel", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
 
   const input = page.getByTestId("message-input");
@@ -3048,7 +3066,7 @@ test("thread composer is focused after clicking the reply icon", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   // Seed a message to reply to.
@@ -3080,7 +3098,7 @@ test("thread refetch preserves a live reply and reaction received in flight", as
 }) => {
   await installMockBridge(page, { threadRepliesDelayMs: 800 });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const rootMessage = page
@@ -3137,7 +3155,7 @@ test("thread reply appears after relay closes and restores its live subscription
 }) => {
   await installMockBridge(page, { closeChannelLiveSubscriptionOnce: true });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const seed = `Thread CLOSED seed ${Date.now()}`;
@@ -3165,7 +3183,7 @@ test("thread composer keeps focus after sending a thread reply", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   // Seed a root message we can open a thread on. At this point only one
@@ -3220,7 +3238,7 @@ test("editing the thread root uses and focuses the main composer", async ({
   const root = `Root edit routing ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const mainInput = page
@@ -3276,7 +3294,7 @@ test("editing a pre-seeded thread reply uses and focuses the thread composer", a
     { replyContent: reply, rootContent: root },
   );
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   const timelineRoot = page
     .getByTestId("message-timeline")
@@ -3336,7 +3354,7 @@ test("thread composer switches directly between visible reply edits", async ({
     { firstContent: first, rootContent: root, secondContent: second },
   );
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const timelineRoot = page
     .getByTestId("message-timeline")
     .locator(`[data-message-id="${rootId}"]`);
@@ -3387,7 +3405,7 @@ test("editing a broadcast reply from a thread returns to the main composer", asy
     return { broadcastId: broadcastEvent.id, rootId: rootEvent.id };
   });
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const timelineRoot = page.locator(`[data-message-id="${rootId}"]`);
   await timelineRoot.hover();
   await timelineRoot
@@ -3417,7 +3435,7 @@ test("editing a live thread reply uses and focuses the thread composer", async (
   const reply = `Live reply edit ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3454,7 +3472,7 @@ test("editing a thread root in single-panel view returns to the main composer", 
   const root = `Narrow root edit ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(root);
   await input.press("Enter");
@@ -3490,7 +3508,7 @@ test("editing a thread root in focus mode dismisses the drawer before focusing t
   const root = `Focus root edit ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3527,7 +3545,7 @@ test("focus mode preserves an active reply edit, then Escape makes root editing 
   const unsaved = `${reply} unsaved`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3624,7 +3642,7 @@ test("ArrowUp routes a narrow thread root without consuming into a hidden compos
   await page.setViewportSize({ width: 860, height: 720 });
   const root = `Narrow ArrowUp root ${Date.now()}`;
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(root);
   await input.press("Enter");
@@ -3657,7 +3675,7 @@ test("closing a thread while editing a reply preserves the typed edit", async ({
   const edited = `${reply} with unsaved text`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3702,7 +3720,7 @@ test("main ArrowUp ignores closed-thread replies and edits the visible timeline 
   const reply = `Main ArrowUp hidden reply ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3747,7 +3765,7 @@ test("main ArrowUp refuses to replace a dirty thread edit", async ({
   const unsaved = `${reply} with unsaved text`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3797,7 +3815,7 @@ test("main composer switches directly between visible message edits", async ({
   const second = `Main edit switch second ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3847,7 +3865,7 @@ test("a refused message deep link retries after the thread edit is canceled", as
   const destinationRoot = `Deep link retry destination ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const mainInput = page
     .getByTestId("channel-composer-overlay")
     .getByTestId("message-input");
@@ -3962,7 +3980,7 @@ test("a refused sent-from-thread link preserves the edit and retries after cance
     { destinationRoot, sharedMessage, sourceReply, sourceRoot },
   );
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const timeline = page.getByTestId("message-timeline");
   const source = timeline.locator(`[data-message-id="${sourceRootId}"]`);
   await source.hover();
@@ -4037,7 +4055,7 @@ test("a refused search result preserves the edit and retries after cancel", asyn
     { destinationRoot, sourceReply, sourceRoot },
   );
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const timeline = page.getByTestId("message-timeline");
   const source = timeline.locator(`[data-message-id="${sourceRootId}"]`);
   await source.hover();
@@ -4111,7 +4129,7 @@ test("a refused forum search result preserves the edit and retries after cancel"
     { sourceReply, sourceRoot },
   );
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const source = page
     .getByTestId("message-timeline")
     .locator(`[data-message-id="${sourceRootId}"]`);
@@ -4198,7 +4216,7 @@ for (const targetKind of ["reply", "root"] as const) {
       { sourceReply, sourceRoot, targetKind },
     );
 
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     const timeline = page.getByTestId("message-timeline");
     const source = timeline.locator(`[data-message-id="${sourceRootId}"]`);
     await source.hover();
@@ -4292,7 +4310,7 @@ test("a refused channel switch preserves the reply edit and retries after cancel
     { sourceReply, sourceRoot },
   );
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const source = page
     .getByTestId("message-timeline")
     .locator(`[data-message-id="${sourceRootId}"]`);
@@ -4319,7 +4337,7 @@ test("a refused channel switch preserves the reply edit and retries after cancel
       ).length,
   );
 
-  await page.getByTestId("channel-random").click();
+  await attemptWorkspaceChannelNavigation(page, "random");
 
   await expect(
     page.getByText("Finish or cancel your edit before leaving the thread."),
@@ -4344,7 +4362,7 @@ test("a refused channel switch preserves the reply edit and retries after cancel
 
   await threadInput.press("Escape");
   await expect(threadPanel.getByTestId("edit-target")).toHaveCount(0);
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
   await expect(page).not.toHaveURL(navigationBefore.url);
 });
@@ -4376,8 +4394,8 @@ for (const backInput of ["button", "keyboard"] as const) {
       { sourceReply, sourceRoot },
     );
 
-    await page.getByTestId("channel-random").click();
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "random");
+    await openWorkspaceChannel(page, "general");
     const source = page
       .getByTestId("message-timeline")
       .locator(`[data-message-id="${sourceRootId}"]`);
@@ -4455,7 +4473,7 @@ test("ArrowUp in an empty composer edits your last message right after sending",
   const input = page.getByTestId("message-input");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await input.fill(message);
@@ -4484,7 +4502,7 @@ test("ArrowUp does not edit when the composer has draft text", async ({
   const input = page.getByTestId("message-input");
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await input.fill(sent);
@@ -4508,7 +4526,7 @@ test("ArrowUp edits your last thread reply right after sending it", async ({
   const reply = `Thread reply to edit ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await page.getByTestId("message-input").fill(seed);
@@ -4550,7 +4568,7 @@ test("action bar stays within the timeline when the thread panel is open", async
   // fixed the wrap but rows still expanded to content min-width).
   await page.setViewportSize({ width: 1024, height: 800 });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const timeline = page.getByTestId("message-timeline");

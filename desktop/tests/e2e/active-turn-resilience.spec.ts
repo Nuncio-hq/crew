@@ -13,10 +13,13 @@ const CHANNEL_ENGINEERING = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
 // A fixed epoch so the mocked clock is deterministic across runs.
 const T0 = new Date("2026-06-18T12:00:00.000Z");
 
-// Past both thresholds: FRAME_GAP_PAUSE_MS (20s) and REMOVE_AFTER_MS (25s).
-// Several 5s prune ticks fire across this span, so shouldPausePrune is what
-// keeps the badges alive — not the absence of a prune tick.
-const FRAME_GAP_MS = 30_000;
+// The target turn is older than REMOVE_AFTER_MS (3 minutes) when the final
+// shared gap is applied. A sibling turn is seeded 150s later, so at the final
+// assertion max(lastSeenAt) is only 40s stale: past FRAME_GAP_PAUSE_MS (20s)
+// but below PRUNE_PAUSE_MAX_MS (3 minutes). Several 5s prune ticks therefore
+// run while shouldPausePrune is the only thing keeping the old target alive.
+const TARGET_HEAD_START_MS = 150_000;
+const FRAME_GAP_MS = 40_000;
 
 type SeedInput = {
   agentPubkey: string;
@@ -69,15 +72,15 @@ async function openAgentProfile(
   return panel;
 }
 
-test.describe("active turn badge resilience", () => {
+test.describe("active turn profile activity resilience", () => {
   test.use({ viewport: { width: 1280, height: 720 } });
 
-  test("badges persist through an all-at-once liveness gap", async ({
+  test("profile activity channels persist through an all-at-once liveness gap", async ({
     page,
   }) => {
     // Install the mocked clock BEFORE navigation so the store's Date.now() /
-    // setInterval and the badge's useNow(1000) all run on the mocked clock from
-    // module init. Seeded turns then stamp lastActivityAt at T0.
+    // setInterval and the activity feed's useNow(15_000) all run on the mocked
+    // clock from module init. The target turn then stamps lastSeenAt at T0.
     await installMockBridge(page, {
       managedAgents: [
         {
@@ -98,13 +101,21 @@ test.describe("active turn badge resilience", () => {
 
     await openAgentsView(page);
 
-    // Both agents working across channels — the healthy multi-agent state.
+    // Start the target turn first, then let it age close to the prune bound.
+    // Its startedAt and lastSeenAt remain anchored at T0.
     await seedTurns(page, [
       {
         agentPubkey: AGENT_PAUL,
         channelId: CHANNEL_GENERAL,
         turnId: "t-paul-g",
       },
+    ]);
+
+    // A later sibling frame keeps the agent's max(lastSeenAt) distinct from
+    // the target turn's age. This is the all-at-once gap signature: both turns
+    // stop receiving frames only after the sibling has become active.
+    await page.clock.fastForward(TARGET_HEAD_START_MS);
+    await seedTurns(page, [
       {
         agentPubkey: AGENT_PAUL,
         channelId: CHANNEL_ENGINEERING,
@@ -117,26 +128,30 @@ test.describe("active turn badge resilience", () => {
       },
     ]);
 
-    const paulPanel = await openAgentProfile(page, AGENT_PAUL);
-    await expect(paulPanel).toBeVisible();
-
-    // The profile panel surfaces active turns via the live-activity embed only
-    // where an agent session can open (channel surfaces). In the Agents view
-    // the store-driven working state shows as sidebar channel badges — the
-    // same activeAgentTurnsStore this test exercises.
-    const generalBadge = page.getByTestId("channel-working-general");
-    const engineeringBadge = page.getByTestId("channel-working-engineering");
-    await expect(generalBadge).toBeVisible({ timeout: 5_000 });
-    await expect(engineeringBadge).toBeVisible();
-
-    // Simulate the all-at-once relay drop: no further frames, advance the clock
-    // past both thresholds. This fires several real prune ticks; shouldPausePrune
-    // sees every turn's lastActivityAt stuck at T0 (gap > 20s) and pauses the
-    // prune, so the active-turn-driven working badges survive. Under the
-    // pre-fix code every badge would be gone after the first tick past 25s.
+    // Simulate the all-at-once relay drop while the Agents view remains
+    // mounted. The active-turn subscription is therefore live before the
+    // prune ticks run, and the profile opened below observes the store's
+    // post-prune state instead of relying on a re-render that may be queued.
+    // shouldPausePrune sees the sibling's lastSeenAt only 40s old (gap >20s
+    // and <180s) and pauses the prune, so both channels survive. Without that
+    // guard, the target channel is removed at the first tick at or after 180s.
     await page.clock.fastForward(FRAME_GAP_MS);
 
-    await expect(generalBadge).toBeVisible();
-    await expect(engineeringBadge).toBeVisible();
+    const paulPanel = await openAgentProfile(page, AGENT_PAUL);
+    const liveActivity = paulPanel.getByTestId(
+      `user-profile-live-activity-${AGENT_PAUL}`,
+    );
+    await expect(liveActivity).toBeVisible({ timeout: 5_000 });
+    await expect(liveActivity).toContainText("Latest Activity");
+    // The profile activity carousel is the current supported surface for the
+    // store-driven working channels in the CompanyOS shell.
+    const generalActivity = paulPanel.getByTestId(
+      `user-profile-activity-dot-${CHANNEL_GENERAL}`,
+    );
+    const engineeringActivity = paulPanel.getByTestId(
+      `user-profile-activity-dot-${CHANNEL_ENGINEERING}`,
+    );
+    await expect(generalActivity).toBeVisible();
+    await expect(engineeringActivity).toBeVisible();
   });
 });

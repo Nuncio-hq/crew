@@ -6,6 +6,7 @@ import {
   installMockBridge,
   TEST_IDENTITIES,
 } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const SHOTS = "test-results/entity-link-recipient-cards";
 
@@ -71,7 +72,7 @@ test("agent-style Buzz links stay chip-only with metadata tooltips", async ({
   await installMockBridge(page);
   await page.setViewportSize({ width: 900, height: 800 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.waitForFunction(
     () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
   );
@@ -245,8 +246,11 @@ test("agent-style Buzz links stay chip-only with metadata tooltips", async ({
     cloneTooltip.locator('[data-buzz-tooltip-metadata-content=""]'),
   ).toContainText("Operator tooling and admin CLI for relay deployments.");
   await labeledClone.click();
-  await expect(page.getByTestId("project-detail-scroll")).toBeVisible();
-  await page.getByTestId("channel-general").click();
+  const projectOverview = page.getByTestId("project-overview");
+  await expect(projectOverview).toBeVisible();
+  await expect(projectOverview).toHaveAttribute("aria-label", "buzz project");
+  await expect(projectOverview.locator("h1")).toHaveText("buzz");
+  await openWorkspaceChannel(page, "general");
 
   const missingRepoChip = row.getByRole("button", {
     name: "Open repository missing-repo",
@@ -317,7 +321,7 @@ test("issue chip width is metadata-independent while the title loads", async ({
   );
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   // No relay rate limit here: a rate-limited entity fetch caches a negative
   // result and never recovers, which would hide the resolved-title half of
   // this invariant. Natural relay latency supplies the pending window.
@@ -375,7 +379,7 @@ test("entity tooltip uses project context while relay metadata is delayed", asyn
 }) => {
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.evaluate(() =>
     window.__BUZZ_E2E_ACTIVATE_RELAY_RATE_LIMIT__?.(300),
   );
@@ -409,7 +413,7 @@ test("desktop composer and sent message keep Buzz entities chip-only", async ({
   await installMockBridge(page);
   await page.setViewportSize({ width: 900, height: 800 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
 
   const repoLink = `buzz://repo?owner=${ALICE_PUBKEY}&d=relay-tools`;
   await page.getByTestId("message-input").fill(`Check out ${repoLink}`);
@@ -478,7 +482,7 @@ test("composer classifies a same-relay clone URL as a repository chip, not a car
     },
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
 
   await page.getByTestId("message-input").fill(`Clone it: ${cloneHref}`);
   // Past the composer's 350ms resolution debounce: a same-relay clone URL must
@@ -503,7 +507,10 @@ test("composer classifies a same-relay clone URL as a repository chip, not a car
   // The chip navigates in-app, proving the clone URL resolved onto the
   // canonical buzz://repo target rather than being handed to the OS.
   await repoChip.click();
-  await expect(page.getByTestId("project-detail-scroll")).toBeVisible();
+  const projectOverview = page.getByTestId("project-overview");
+  await expect(projectOverview).toBeVisible();
+  await expect(projectOverview).toHaveAttribute("aria-label", "buzz project");
+  await expect(projectOverview.locator("h1")).toHaveText("buzz");
 });
 
 test("reopening the same entity link reapplies its workspace state", async ({
@@ -553,7 +560,8 @@ test("reopening the same entity link reapplies its workspace state", async ({
   );
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("channel-general")).toBeVisible();
+  await openWorkspaceChannel(page, "general");
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
   const repoLink = `buzz://repo?owner=${DEFAULT_MOCK_PUBKEY}&d=buzz&tab=prs`;
   const prLink = `buzz://pr?id=${PR_ID}&owner=${DEFAULT_MOCK_PUBKEY}&d=buzz`;
   const issueLink = `buzz://issue?id=${ISSUE_ID}&owner=${DEFAULT_MOCK_PUBKEY}&d=buzz`;
@@ -581,7 +589,7 @@ test("reopening the same entity link reapplies its workspace state", async ({
   const breadcrumb = page.getByRole("navigation", {
     name: "Project breadcrumb",
   });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await emitEntityLink(repoLink);
@@ -637,7 +645,7 @@ test("deleted reply links identify deletion and fall back to their thread root",
     },
     { id: threadRootId },
   );
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(`Deleted reply ${link}`);
   await page.getByTestId("send-message").click();
 
@@ -671,7 +679,7 @@ test("deleted top-level message links identify deletion and fall back to channel
   const link = `buzz://message?channel=${channelId}&id=${missingMessageId}`;
   await installMockBridge(page, { deletedEventIds: [missingMessageId] });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("message-input").fill(`Missing link ${link}`);
   await page.getByTestId("send-message").click();
 

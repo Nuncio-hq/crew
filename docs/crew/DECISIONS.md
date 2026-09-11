@@ -2089,7 +2089,106 @@ available.
 
 **Bounds and retention.** Each entire signed Wiki event is at most 192 KiB UTF-8; a publication has at most 256 pages and 64 MiB. Relay admission limits reserved live Wiki rows to 512 MiB and 4096 events per owner/community under owner-then-coordinate locks; exact replay adds no usage. This bounds logical live data, not physical soft-deleted/audit storage. There is no prune/GC API or control in the first release. Failed uploads also consume quota. `restricted: wiki-storage-quota` preserves the current head and explains that safe reclamation is unsupported, requiring administrator remediation or future reviewed tooling. Neither historical lineage nor local preflight proves cross-client deletion safety.
 
-**Native operation recovery.** `owner-operations/recovery.db` uses private directories/files, canonicalizes the trusted existing platform app-data anchor, rejects symlink paths below that anchor, and fails visibly on corrupt or future schemas without reset. `BEGIN IMMEDIATE`, `synchronous=FULL`, `journal_mode=DELETE`, `temp_store=MEMORY`, and a 250 ms busy limit protect whole-record CAS and owner-wide quota. No transaction spans external IO. Scope is native owner plus canonical HTTP community origin; an unresolved `(owner, community, kind, resource_key)` claim remains unique regardless of status. Same ID/equal payload is replay, same ID/different intent conflicts, and competing resource creation returns the existing operation. Only domain-reconciled records can be removed. Fixed native admission permits 100 unresolved `ChannelCrewConfig` operations per owner/community at 1 MiB per complete serialized record (including event envelopes). Other kinds collectively retain 16 unresolved operations per owner and 64 MiB per record. All kinds share the 256 MiB owner cap. Kind size applies to creation intent, encode/update, and load before allocation; callers cannot override policy. Reconciled history remains at most 100 entries/30 days; the admission transaction also evicts oldest reconciled history under byte pressure including the incoming snapshot. Unresolved rows are never evicted. Update timestamps clamp to the previous timestamp when the wall clock moves backward. A resource claim is not an execution lease; the domain owns timed worker-token/revision recovery. Automatic retry is bounded to five attempts before explicit recovery.
+**Native operation recovery.** `owner-operations/recovery.db` uses private directories/files, canonicalizes the trusted existing platform app-data anchor, rejects symlink paths below that anchor, and fails visibly on corrupt or future schemas without reset. `BEGIN IMMEDIATE`, `synchronous=FULL`, `journal_mode=DELETE`, `temp_store=MEMORY`, and a 250 ms busy limit protect whole-record CAS and owner-wide quota. No transaction spans external IO. Scope is native owner plus canonical HTTP community origin; an unresolved `(owner, community, kind, resource_key)` claim remains unique regardless of status. Same ID/equal creation intent is replay. Same ID/different intent and a competing resource claim with different intent conflict; an equal-intent resource replay returns its existing operation. Only domain-reconciled records can be removed. Fixed native admission permits 100 unresolved `ChannelCrewConfig` operations per owner/community at 1 MiB per complete serialized record (including event envelopes). Other kinds collectively retain 16 unresolved operations per owner and 64 MiB per record. All kinds share the 256 MiB owner cap. Kind size applies to creation intent, encode/update, and load before allocation; callers cannot override policy. Reconciled history retains at most 100 entries, with a 30-day age policy for eligible rows; the admission transaction also evicts oldest eligible reconciled history under byte pressure including the incoming snapshot. Unresolved rows and active direct-predecessor pins described below are never evicted. A pin defers age expiry until its successor is reconciled. Update timestamps clamp to the previous timestamp when the wall clock moves backward. A resource claim is not an execution lease; the domain owns timed worker-token/revision recovery. Automatic retry is bounded to five attempts before explicit recovery.
+
+**Wiki cancellation and explicit resume (accepted 2026-09-10;
+implementation and acceptance pending).** Cancel stops automatic publication
+attempts. After a head send with an unknown outcome, cancellation retains the
+unresolved claim; read-only **Reconcile** can establish a late matching head or
+a superseding head but cannot prove that an admitted request will never land.
+Explicit **Resume publication** may revoke cancellation for that same ambiguous
+operation by persisting a revision-checked transition before transport. It
+retains the exact signed graph, progress, head-attempt history and original CAS
+precondition. The normal owner, generation and lease fences still apply. A
+different current head resolves the operation as superseded rather than being
+overwritten. Restart and Reconcile never implicitly resume publication.
+Reconciled cancellation remains terminal. Typed immutable-dependency retirement
+cannot be cleared by Cancel or Resume; it requires the successor flow below.
+Those already read-only rows offer Regenerate and Reconcile, with Cancel
+unavailable while the retirement proof and unresolved claim are retained.
+
+**Wiki regeneration after permanent dependency loss (accepted 2026-09-10;
+implementation and acceptance pending).** Missing data alone is not evidence of
+deletion. Only the captured relay's HTTP 400 structured error with the exact
+machine reason `conflict: wiki-immutable-retired:<event-id>` proves that the
+persisted immutable dependency is no longer live and cannot be replayed. The
+relay emits this reason only for `DuplicateNotLive` at a reserved Wiki page or
+manifest address. Native recovery binds the event ID to the verified signed
+graph and checks exact dependency absence. Generic conflict, an older relay's
+response, timeout and query failure remain unresolved. This proof can apply
+before or after a TOC attempt; the desired TOC need not be live.
+
+**Wiki head and precondition retirement (accepted 2026-09-10; implementation
+in progress, acceptance pending).** The same evidence rule extends to the
+replaceable `_toc` head itself, using the existing conditional transaction and
+HTTP 400 seam — no new endpoint, event kind or store schema. Inside the
+existing owner→coordinate locks, and only for a conditional v1 Wiki `_toc`
+write, the store classifies two further facts after the exact-live replay still
+ACKs as a successful duplicate: the exact submitted head H was accepted at this
+same community/owner/kind/`d` coordinate and is now soft deleted
+(`conflict: wiki-head-retired:<H>`), or the coordinate has no live head and the
+non-absent `expected-revision` E was accepted at that same coordinate and is now
+soft deleted (`conflict: wiki-expected-head-retired:<H>:<E>`). A historical H is
+classified before the generic `RevisionMissing` return so retirement is never
+hidden behind it. An unknown or foreign E, a different live head, a query
+failure or a failed rollback never produce a proof, and generic conflict strings
+are never upgraded into one.
+
+Because a historical non-live exact event can never be reinserted, this is
+durable evidence that the attempt can never become live — unlike an empty read,
+which proves nothing. `expected-revision: absent` with a never-accepted head is
+deliberately excluded: absence is satisfiable again and stays admissible. The
+guarantee is scoped to the ordinary relay lifecycle and retained event history,
+not to administrative restore, reset or any future hard-deletion policy.
+
+Native recovery accepts the proof only from the captured relay's HTTP 400 with
+exact machine syntax whose IDs bind the persisted signed head and its exact
+non-absent precondition, under the active owner/community/generation/revision/
+lease fences, plus a successful fresh absence read of the exact retired event
+and a successful current `_toc` read. A live desired head contradicts the claim.
+The typed result settles the operation in one guarded compare-and-swap that
+records `Superseded` and releases the unresolved claim, before any ordinary
+post-send inspection and with no further network step. There is no pending-proof
+state and no new recovery action: a failed proof read or a failed journal write
+leaves the existing retryable claim, and the refusal can be obtained again.
+Reconcile and automatic restart never publish to obtain proof; the existing
+explicit Resume remains the only owner-reachable way to re-send the exact head.
+The terminal proof is separate metadata from `retired_dependency_id`, which is
+preserved independently across every conflict reconciliation. Older journal
+payloads without the field authorize nothing.
+
+Explicit **Regenerate** captures fresh source and builds a complete graph with a
+new snapshot UUID, including when source bytes are unchanged. Its page and
+manifest addresses therefore differ from the retired graph. A Wiki-only native
+store transaction replaces the exact predecessor claim with the successor
+intent. It retains the predecessor's signed graph, progress and typed reason as
+`Superseded`, never `Complete`, and persists the successor before transport.
+Quota, revision or migration failures roll back without releasing the old claim.
+The direct predecessor is protected from every trim/removal path while its
+immediate successor is unresolved. Earlier ancestors resume ordinary retention
+when their immediate successor is reconciled; there is no recursive pin chain.
+Pins and their bounded metadata share the existing owner quota, and history
+trimming removes only eligible rows.
+
+Local revision fences cannot revoke an already-admitted relay request. The
+relay's locked expected-head comparison determines the order: an old send that
+commits first makes the new CAS conflict and leaves an explicit recovery path;
+a new head that commits first prevents the old precondition from overwriting
+it. This is not an everlasting fence after a later generic deletion. Recovery
+must prove both orderings and that a conflict cannot strand a permanent claim.
+
+**Recovery schema compatibility.** The owner-operations journal reaches schema
+v3 through two atomic, idempotent migrations: v1-to-v2 adds the managed-agent
+deletion claim, and v2-to-v3 adds the Wiki successor relation. Both preserve
+every existing scoped payload, revision and unresolved claim. Older binaries
+refuse v3 rather than ignoring its retention pins or managed-delete invariant.
+Reverting only the binary is therefore not a safe rollback after migration.
+Stop publication, preserve the complete v3 journal and any SQLite sidecar, and
+recover with a verified v3-capable build or forward fix. Restoring a stale v1
+backup that discards later operations is not permitted. A downgrade requires a
+separate verified conversion; none is part of this change. Migration failure,
+older-reader refusal and executable forward recovery remain release acceptance
+requirements.
 
 **Channel canvas consumer (#350).** Role edits and member cleanup use this shared
 journal rather than the retention-DB placement originally proposed in the issue.
@@ -2138,3 +2237,34 @@ the signed opt-in; they never fall back to legacy semantics. Operators may
 activate it only after every writer is upgraded or quiesced. There is no
 mixed-version guarantee or new writer registry. Isolated relay fault, replay,
 concurrent-writer and deletion evidence remains required before acceptance.
+
+## D-079 clarification — Exact repository push cadence and relay identity
+
+- **Status:** Coordinator-approved contract; implementation and runtime evidence pending
+- **Date:** 2026-09-10
+- **Issue:** #362
+
+Relay-derived kind 30618 notifications add one
+`a=30617:<repository-owner>:<repoD>` from the already-authorized repository
+context. The existing `p` tag remains the transition actor, who can differ from
+the repository owner. Kind, `d`, refs, HEAD and the manifest-pointer revision
+authority remain unchanged. This adds no repository registry.
+
+Wiki push cadence accepts an owner-signed state for the exact repository, or a
+state with the exact association signed by the current configured origin's
+relay `self` key. Conflicting or duplicate associations are invalid. Historical
+relay-signed state without that association is unavailable for push automation;
+neither `d` nor `p` supplies missing ownership. Manual and time cadence remain
+available. A missing or unverifiable relay identity also leaves push automation
+unavailable instead of guessing a signer.
+
+The native reader extends the existing relay-self discovery module with an
+uncached, scope-fenced lookup at the captured canonical origin. It uses the
+existing client that refuses redirects, a ten-second total deadline and a
+streaming byte bound. Native identity/workspace generation checks run before
+and after the lookup. Missing, malformed, oversized, redirected, timed-out or
+stale responses cannot fall back to a cached key, the NIP-11 operator `pubkey`,
+or another origin. This is origin-scoped discovery under the configured
+transport's existing trust model, not additional cryptographic authentication
+or a new key-pinning interface. Other relay-self consumers keep their existing
+behavior.

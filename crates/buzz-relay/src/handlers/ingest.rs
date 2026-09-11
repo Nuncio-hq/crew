@@ -393,6 +393,27 @@ pub enum IngestError {
     Internal(String),
 }
 
+fn wiki_immutable_retired_error(kind: u32, d_tag: &str, event_id: &str) -> Option<IngestError> {
+    (kind == KIND_REPO_WIKI_PAGE && super::source_publication::is_reserved_immutable_d_tag(d_tag))
+        .then(|| IngestError::Rejected(format!("conflict: wiki-immutable-retired:{event_id}")))
+}
+
+/// Lowercase hex of the exact non-absent expected revision this conditional
+/// request compared against, when it selected one.
+///
+/// `expected-revision: absent` carries no event identity and can never be
+/// retired, so it deliberately yields `None`.
+fn conditional_expected_revision_hex(
+    mode: &super::source_publication::PublicationMode,
+) -> Option<String> {
+    match mode {
+        super::source_publication::PublicationMode::Conditional(
+            super::source_publication::ConditionalRevision::ExpectedRevision(revision),
+        ) => Some(hex::encode(revision)),
+        _ => None,
+    }
+}
+
 /// Map the durable community write-fence lookup onto the ingest error taxonomy.
 ///
 /// An inactive community is an authorization decision and keeps the exact
@@ -2615,6 +2636,13 @@ async fn ingest_event_inner(
         )));
     }
 
+    // Source-bound repository, Project, and Wiki publications select their
+    // compare-and-write mode only after signature, identity, and scope checks.
+    // Keeping this gate here prevents an unsigned or unauthorised envelope from
+    // probing the conditional transaction or its capability state.
+    let publication_mode =
+        super::source_publication::classify(&event, state.config.crew_conditional_publication_v1)?;
+
     // Command kinds are routed AFTER signature verification, timestamp check,
     // pubkey/auth match, and scope validation — never before.
     if buzz_core::kind::is_command_kind(kind_u32) {
@@ -3654,6 +3682,11 @@ async fn ingest_event_inner(
         });
     }
 
+    // A conditional publication (and every Wiki replacement, so the v1
+    // downgrade guard runs under the coordinate lock) keeps the transaction
+    // open until its status is classified. Legacy Project and other
+    // parameterized kinds retain the existing wrapper semantics.
+    let mut conditional_replay = false;
     let (stored_event, was_inserted) = if atomic_channel_create {
         let channel = channel_id.ok_or_else(|| {
             IngestError::Rejected("invalid: atomic create requires channel UUID".into())
@@ -3684,11 +3717,182 @@ async fn ingest_event_inner(
                 buzz_db::event::D_TAG_MAX_LEN,
             )));
         }
-        state
-            .db
-            .replace_parameterized_event(tenant.community(), &event, &d_tag, channel_id)
-            .await
-            .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+        let transactional = publication_mode.is_conditional() || kind_u32 == KIND_REPO_WIKI_PAGE;
+        if !transactional {
+            state
+                .db
+                .replace_parameterized_event(tenant.community(), &event, &d_tag, channel_id)
+                .await
+                .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+        } else {
+            use buzz_db::replaceable::{
+                ParameterizedReplacePrecondition, ParameterizedReplaceStatus,
+            };
+
+            let mut tx = state
+                .db
+                .begin_event_write_transaction()
+                .await
+                .map_err(|e| {
+                    IngestError::Internal(format!("error: begin publication transaction: {e}"))
+                })?;
+            buzz_deletion::store(&state.db)
+                .guard_transaction(&mut tx, tenant.community())
+                .await
+                .map_err(|error| {
+                    IngestError::Rejected(format!(
+                        "restricted: community writes are fenced: {error}"
+                    ))
+                })?;
+
+            let precondition = publication_mode
+                .precondition()
+                .unwrap_or(ParameterizedReplacePrecondition::Unconditional);
+            let result = if kind_u32 == KIND_PROJECT && publication_mode.is_conditional() {
+                state
+                    .db
+                    .replace_project_event_in_transaction(
+                        &mut tx,
+                        tenant.community(),
+                        &event,
+                        &d_tag,
+                        precondition,
+                    )
+                    .await
+            } else {
+                state
+                    .db
+                    .replace_parameterized_event_in_transaction(
+                        &mut tx,
+                        tenant.community(),
+                        &event,
+                        &d_tag,
+                        channel_id,
+                        precondition,
+                    )
+                    .await
+            }
+            .map_err(|e| match e {
+                buzz_db::DbError::WikiStorageQuotaExceeded => IngestError::Rejected(
+                    "restricted: wiki-storage-quota; current head preserved".into(),
+                ),
+                other => IngestError::Internal(format!("error: replace publication: {other}")),
+            })?;
+
+            match result.status {
+                ParameterizedReplaceStatus::Inserted => {
+                    tx.commit().await.map_err(|e| {
+                        IngestError::Internal(format!("error: commit publication: {e}"))
+                    })?;
+                    (result.event, true)
+                }
+                ParameterizedReplaceStatus::Duplicate => {
+                    conditional_replay = publication_mode.is_conditional();
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication replay: {e}"))
+                    })?;
+                    (result.event, false)
+                }
+                // D-079 head/precondition retirement (accepted; implementation
+                // pending acceptance). These two statuses are the only durable
+                // proof that this exact conditional Wiki attempt can never
+                // become live. The machine reason binds the exact submitted
+                // head — and, for the precondition case, the exact expected
+                // revision — so a native reader cannot mistake one attempt's
+                // refusal for another's. The proof is emitted only after the
+                // rejecting transaction rolls back cleanly; a failed rollback
+                // is an internal error and never a proof.
+                ParameterizedReplaceStatus::WikiHeadRetired => {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    return Err(IngestError::Rejected(format!(
+                        "conflict: wiki-head-retired:{event_id_hex}"
+                    )));
+                }
+                ParameterizedReplaceStatus::WikiExpectedHeadRetired => {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    let Some(expected_hex) = conditional_expected_revision_hex(&publication_mode)
+                    else {
+                        // Unreachable: the store only returns this status for an
+                        // ExpectedRevision precondition. Without the exact
+                        // expected ID there is no bindable proof, so degrade to
+                        // the generic conflict rather than emit a partial one.
+                        return Err(IngestError::Rejected(
+                            "conflict: conditional publication revision changed".into(),
+                        ));
+                    };
+                    return Err(IngestError::Rejected(format!(
+                        "conflict: wiki-expected-head-retired:{event_id_hex}:{expected_hex}"
+                    )));
+                }
+                ParameterizedReplaceStatus::RevisionMissing
+                | ParameterizedReplaceStatus::RevisionMismatch
+                    if publication_mode.is_conditional() || kind_u32 == KIND_REPO_WIKI_PAGE =>
+                {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    return Err(IngestError::Rejected(
+                        "conflict: conditional publication revision changed".into(),
+                    ));
+                }
+                ParameterizedReplaceStatus::Superseded
+                | ParameterizedReplaceStatus::ReplayOnlyMiss
+                    if publication_mode.is_conditional() =>
+                {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    return Err(IngestError::Rejected(
+                        "conflict: conditional publication is no longer the live head".into(),
+                    ));
+                }
+                ParameterizedReplaceStatus::DuplicateNotLive
+                    if kind_u32 == KIND_REPO_WIKI_PAGE
+                        && super::source_publication::is_reserved_immutable_d_tag(&d_tag) =>
+                {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    if let Some(error) =
+                        wiki_immutable_retired_error(kind_u32, &d_tag, &event_id_hex)
+                    {
+                        return Err(error);
+                    }
+                    return Err(IngestError::Rejected(
+                        "conflict: conditional publication is no longer the live head".into(),
+                    ));
+                }
+                ParameterizedReplaceStatus::DuplicateNotLive
+                    if publication_mode.is_conditional() =>
+                {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    return Err(IngestError::Rejected(
+                        "conflict: conditional publication is no longer the live head".into(),
+                    ));
+                }
+                ParameterizedReplaceStatus::Superseded
+                | ParameterizedReplaceStatus::DuplicateNotLive
+                | ParameterizedReplaceStatus::ReplayOnlyMiss => {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication no-op: {e}"))
+                    })?;
+                    (result.event, false)
+                }
+                ParameterizedReplaceStatus::RevisionMissing
+                | ParameterizedReplaceStatus::RevisionMismatch => {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication no-op: {e}"))
+                    })?;
+                    (result.event, false)
+                }
+            }
+        }
     } else {
         let thread_params = thread_meta.as_ref().map(|m| m.as_params());
         match state
@@ -3726,6 +3930,25 @@ async fn ingest_event_inner(
     };
 
     if !was_inserted {
+        // A conditional repository replay is an operational retry, not a
+        // no-op: rerun the existing idempotent name/pointer ensure before
+        // acknowledging it. This also repairs a prior post-commit side-effect
+        // failure without re-signing or republishing the event.
+        if conditional_replay && kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {
+            if let Err(error) =
+                crate::handlers::side_effects::handle_side_effects(tenant, kind_u32, &event, state)
+                    .await
+            {
+                error!(
+                    event_id = %event_id_hex,
+                    kind = kind_u32,
+                    "conditional repository replay side effect is pending: {error}"
+                );
+                return Err(IngestError::Internal(format!(
+                    "error: side-effect-pending: {error}"
+                )));
+            }
+        }
         return Ok(IngestResult {
             event_id: event_id_hex,
             accepted: true,
@@ -3733,7 +3956,9 @@ async fn ingest_event_inner(
         });
     }
 
-    if crate::handlers::side_effects::is_side_effect_kind(kind_u32) {
+    if crate::handlers::side_effects::is_side_effect_kind(kind_u32)
+        && !(publication_mode.is_conditional() && kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT)
+    {
         if let Err(e) =
             crate::handlers::side_effects::handle_side_effects(tenant, kind_u32, &event, state)
                 .await
@@ -3749,6 +3974,26 @@ async fn ingest_event_inner(
                     "error: side-effect-pending: {e}"
                 )));
             }
+        }
+    }
+
+    // Conditional repository publication has a stricter post-commit contract:
+    // the event is durable, but success is withheld until the idempotent name
+    // and manifest-pointer ensure completes. A retry of the exact live event
+    // enters the replay branch above and runs the same ensure.
+    if publication_mode.is_conditional() && kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {
+        if let Err(error) =
+            crate::handlers::side_effects::handle_side_effects(tenant, kind_u32, &event, state)
+                .await
+        {
+            error!(
+                event_id = %event_id_hex,
+                kind = kind_u32,
+                "conditional repository side effect is pending: {error}"
+            );
+            return Err(IngestError::Internal(format!(
+                "error: side-effect-pending: {error}"
+            )));
         }
     }
 
@@ -3831,6 +4076,32 @@ mod postgres_tests {
         KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_DIFF, KIND_TEAM, KIND_USER_STATUS,
     };
     use nostr::{EventBuilder, Kind};
+
+    #[test]
+    fn reserved_wiki_duplicate_not_live_has_stable_machine_reason() {
+        let event_id = "ab".repeat(32);
+        assert!(matches!(
+            wiki_immutable_retired_error(
+                KIND_REPO_WIKI_PAGE,
+                &format!("repo/p1-{event_id}"),
+                &event_id,
+            ),
+            Some(IngestError::Rejected(message))
+                if message == format!("conflict: wiki-immutable-retired:{event_id}")
+        ));
+        assert!(wiki_immutable_retired_error(
+            KIND_REPO_WIKI_PAGE,
+            "repo/p1-not-a-digest",
+            &event_id,
+        )
+        .is_none());
+        assert!(wiki_immutable_retired_error(
+            KIND_PROJECT,
+            &format!("repo/p1-{event_id}"),
+            &event_id,
+        )
+        .is_none());
+    }
 
     #[test]
     fn missing_huddle_backing_channel_is_a_client_rejection() {

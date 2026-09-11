@@ -61,8 +61,8 @@
     },
     {
       "area": "crates/buzz-relay/**",
-      "why": "ingest validate for org roster + wiki page (#198/#200); receipt kind range 46040..=46043 in event handler; workflow sink attribution. D-080 opt-in atomic kind9007 command, exact-event discovery recovery and NIP-11 capability (#361).",
-      "resolve": "keep next to existing kind arms; do not invent post-insert side effects. Preserve the existing authorization path, default-OFF opt-in and one canonical lifecycle-fenced discovery emitter; recovery never repeats initial creation effects.",
+      "why": "ingest validate for org roster + wiki page (#198/#200); receipt kind range 46040..=46043 in event handler; workflow sink attribution. D-080 opt-in atomic kind9007 command, exact-event discovery recovery and NIP-11 capability (#361). D-079 conditional repository/Project/Wiki publication and exact repository association on relay-signed 30618 notifications (#362).",
+      "resolve": "keep next to existing kind arms and preserve authorization. D-079 conditional repository replay must rerun the existing idempotent side-effect ensure before success. Preserve default-OFF capability gates, immutable Wiki addresses and rollback downgrade protection. D-080 keeps one lifecycle-fenced discovery emitter; recovery never repeats initial creation effects. Derive the 30618 repository association from authorized repository ownership, retaining p as the transition actor.",
       "filesAtRecord": 10,
       "fileHints": [
         {
@@ -79,8 +79,8 @@
     },
     {
       "area": "crates/buzz-db/**",
-      "why": "Crew migration numbering (0031_wiki_fts_allowlist inserted → upstream 0031+ shift by one); migrator tests count Crew files. D-080 composes channel/owner/exact-event persistence and canonical discovery using existing tables (#361).",
-      "resolve": "on sync, rename incoming upstream migrations to Crew numbering (N+1) and never keep both copies; update migrator counts. Retain transaction-bound event insertion with thread metadata and the community/TTL/replacement/membership/channel lock order.",
+      "why": "Crew migration numbering (0031_wiki_fts_allowlist inserted → upstream 0031+ shift by one); migrator tests count Crew files. D-080 composes channel/owner/exact-event persistence and canonical discovery using existing tables (#361). D-079 conditional replacement, immutable Wiki admission and owner/community live-storage bounds (#362).",
+      "resolve": "on sync, rename incoming upstream migrations to Crew numbering (N+1) and never keep both copies; update migrator counts. Retain transaction-bound event insertion with thread metadata and the community/TTL/replacement/membership/channel lock order. Wiki reserved writes take the owner quota lock before the coordinate lock; compare the locked live head, and only exact current replay succeeds. Keep legacy Project replacement semantics outside the opt-in contract.",
       "filesAtRecord": 10
     },
     {
@@ -452,8 +452,8 @@
     {
       "area": "desktop/src-tauri/**",
 
-      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362); #350 bulk canvas command registration and startup recovery worker.",
-      "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; keep selected path separate from Git ancestor, bound probe output/time, and report unavailable access as an error; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve the shared guarded key-replacement and native scope capture seams; relay events remain domain authority.",
+      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362); #350 bulk canvas command registration and startup recovery worker; #362 coherent Wiki reads, native publication recovery and scoped relay-self discovery.",
+      "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; keep selected path separate from Git ancestor, bound probe output/time, and report unavailable access as an error; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve the shared guarded key-replacement and native scope capture seams; relay events remain domain authority. Wiki retry reuses the journal's signed graph and fences every send; the reader verifies exact immutable dependencies. Keep scoped relay-self lookup uncached and bounded while preserving archive consumers' cache behavior.",
 
       "filesAtRecord": 88,
       "fileHints": [
@@ -647,8 +647,8 @@
     },
     {
       "area": ".config/nextest.toml",
-      "why": "Crew opt-in PostgreSQL proof modules for Project channel links and conditional publication require named disposable fixture URLs; the default CI lane must not execute them without those resources.",
-      "resolve": "Keep the default postgres-ci and wrapper filters excluding only these explicit-fixture modules. Dedicated proof commands select them with owned fixture URLs; never weaken production guards or silently fall back to localhost.",
+      "why": "Crew opt-in PostgreSQL proof module for Project channel links still requires a named disposable fixture URL; conditional publication uses the shared test-support URL and the standard per-test isolated wrapper.",
+      "resolve": "Keep the default postgres-ci and wrapper filters excluding only the Project channel-link module. Conditional publication tests stay in the normal ignored PostgreSQL discovery lane; never weaken production guards or silently fall back to localhost.",
       "filesAtRecord": 1
     }
   ]

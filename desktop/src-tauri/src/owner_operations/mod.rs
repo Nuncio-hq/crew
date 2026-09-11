@@ -82,6 +82,15 @@ pub struct Operation {
 /// Bounded recovery-list entry. Load the exact ID separately for its payload.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationSummary {
+    /// Stable native insertion sequence used to order separate history rows.
+    /// Operation revisions are local to one row and cannot order a predecessor
+    /// against its successor, and `updated_at` is wall clock. This is the
+    /// row's SQLite identifier: retention always removes the *oldest* eligible
+    /// terminal rows, so two rows that exist at the same time keep the order
+    /// in which they were reserved. It is internal ordering metadata and is
+    /// deliberately never serialized to the renderer.
+    #[serde(skip)]
+    pub sequence: i64,
     /// Canonical operation UUID, also the stable pagination cursor.
     pub id: String,
     /// Consumer that owns reconciliation.
@@ -156,6 +165,17 @@ pub enum CreateResult {
     Existing(Operation),
 }
 
+/// Atomic retirement of one Wiki operation and reservation of its immediate
+/// successor. The predecessor is returned as the committed retirement
+/// snapshot so a lost IPC response can be recovered without a generic write.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WikiSuccessorResult {
+    /// The superseded, reconciled predecessor snapshot.
+    pub predecessor: Operation,
+    /// The newly reserved unresolved successor snapshot.
+    pub successor: Operation,
+}
+
 /// Admission limits. Unresolved operations are never evicted.
 #[derive(Clone, Copy)]
 pub struct Limits {
@@ -195,6 +215,7 @@ pub enum StoreError {
     Conflict,
     Missing,
     Unreconciled,
+    Pinned,
     Quota,
     Corrupt,
     Version,
@@ -225,6 +246,7 @@ impl std::fmt::Display for StoreError {
             Self::Conflict => "recovery operation changed; reload",
             Self::Missing => "recovery operation is missing",
             Self::Unreconciled => "recovery operation has unresolved side effects",
+            Self::Pinned => "recovery operation is pinned by an unresolved Wiki successor",
             Self::Quota => "recovery storage quota reached",
             Self::Corrupt => "recovery storage is corrupt",
             Self::Version => "recovery storage version is unsupported",

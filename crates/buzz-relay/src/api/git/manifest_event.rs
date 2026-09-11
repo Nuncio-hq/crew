@@ -39,6 +39,10 @@ pub struct RefStateInputs<'a> {
     /// the pusher's pubkey from the receive-pack hook. On repo-creation, this
     /// is the kind:30617 author (repo owner). Hex-encoded (64 chars).
     pub actor_pubkey_hex: &'a str,
+    /// Repository owner pubkey to include in the `a` repository association.
+    /// This is resolved from the authorized repository context, so it may
+    /// differ from [`Self::actor_pubkey_hex`] on a push by another actor.
+    pub owner_pubkey_hex: &'a str,
 }
 
 /// Errors from building a kind:30618 ref-state event.
@@ -47,6 +51,9 @@ pub enum BuildError {
     /// `actor_pubkey_hex` did not parse as a valid 64-char hex pubkey.
     #[error("invalid actor_pubkey_hex: {0}")]
     InvalidActor(String),
+    /// `owner_pubkey_hex` did not parse as a valid 64-char hex pubkey.
+    #[error("invalid owner_pubkey_hex: {0}")]
+    InvalidOwner(String),
     /// `nostr` event signing returned an error.
     #[error("nostr event signing failed: {0}")]
     Sign(String),
@@ -74,6 +81,8 @@ pub fn build_ref_state_event(
     // Validate actor pubkey first so we error before any tag construction.
     let actor = PublicKey::from_hex(inputs.actor_pubkey_hex)
         .map_err(|e| BuildError::InvalidActor(e.to_string()))?;
+    let owner = PublicKey::from_hex(inputs.owner_pubkey_hex)
+        .map_err(|e| BuildError::InvalidOwner(e.to_string()))?;
 
     let mut tags: Vec<Tag> = Vec::with_capacity(inputs.refs.len() + 3);
 
@@ -101,6 +110,13 @@ pub fn build_ref_state_event(
             [format!("ref: {}", inputs.head)],
         ));
     }
+
+    // a-tag: the exact authorized repository coordinate. This is derived from
+    // the resolved repository owner, never from the transition actor.
+    tags.push(Tag::custom(
+        TagKind::custom("a"),
+        [format!("30617:{}:{}", owner.to_hex(), inputs.repo_id)],
+    ));
 
     // p-tag: buzz extension (pusher or owner pubkey).
     tags.push(Tag::public_key(actor));
@@ -183,6 +199,7 @@ mod tests {
             head: "refs/heads/main",
             refs: &refs,
             actor_pubkey_hex: &owner,
+            owner_pubkey_hex: &owner,
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
 
@@ -214,6 +231,7 @@ mod tests {
             head: "refs/heads/dev",
             refs: &refs,
             actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: &owner_hex(),
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
         assert_eq!(first_tag(&ev, "HEAD").unwrap()[1], "ref: refs/heads/dev");
@@ -234,6 +252,7 @@ mod tests {
             head: "refs/heads/main",
             refs: &refs,
             actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: &owner_hex(),
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
 
@@ -277,6 +296,7 @@ mod tests {
             head: "refs/heads/main",
             refs: &refs,
             actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: &owner_hex(),
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
 
@@ -300,6 +320,7 @@ mod tests {
             head: "refs/heads/sha1-branch",
             refs: &refs,
             actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: &owner_hex(),
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
         assert!(first_tag(&ev, "refs/heads/sha1-branch").is_some());
@@ -325,6 +346,7 @@ mod tests {
             head: "refs/heads/ok",
             refs: &refs,
             actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: &owner_hex(),
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
         assert!(first_tag(&ev, "refs/heads/short").is_none());
@@ -358,6 +380,7 @@ mod tests {
             head: "refs/heads/legit",
             refs: &refs,
             actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: &owner_hex(),
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
         assert!(first_tag(&ev, "refs/heads/legit").is_some());
@@ -373,9 +396,62 @@ mod tests {
             head: "refs/heads/main",
             refs: &refs,
             actor_pubkey_hex: "not-a-pubkey",
+            owner_pubkey_hex: &owner_hex(),
         };
         let err = build_ref_state_event(&inputs, &relay_keys()).unwrap_err();
         assert!(matches!(err, BuildError::InvalidActor(_)));
+    }
+
+    #[test]
+    fn associates_state_with_owner_and_keeps_actor_as_pusher() {
+        let refs = refs_with(&[]);
+        let owner = owner_hex();
+        let actor = "ab".repeat(32);
+        let inputs = RefStateInputs {
+            repo_id: "repo",
+            head: "refs/heads/main",
+            refs: &refs,
+            actor_pubkey_hex: &actor,
+            owner_pubkey_hex: &owner,
+        };
+        let event = build_ref_state_event(&inputs, &relay_keys()).unwrap();
+        let tags: Vec<_> = event
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice().to_vec())
+            .collect();
+        assert_eq!(
+            tags.iter()
+                .filter(|tag| tag.first().map(String::as_str) == Some("a"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            tags.iter()
+                .find(|tag| tag.first().map(String::as_str) == Some("a"))
+                .unwrap()[1],
+            format!("30617:{owner}:repo")
+        );
+        assert_eq!(
+            tags.iter()
+                .find(|tag| tag.first().map(String::as_str) == Some("p"))
+                .unwrap()[1],
+            actor
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_owner_pubkey() {
+        let refs = refs_with(&[]);
+        let inputs = RefStateInputs {
+            repo_id: "repo",
+            head: "refs/heads/main",
+            refs: &refs,
+            actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: "not-an-owner",
+        };
+        let error = build_ref_state_event(&inputs, &relay_keys()).unwrap_err();
+        assert!(matches!(error, BuildError::InvalidOwner(_)));
     }
 
     #[test]
@@ -386,6 +462,7 @@ mod tests {
             head: "refs/heads/main",
             refs: &refs,
             actor_pubkey_hex: &owner_hex(),
+            owner_pubkey_hex: &owner_hex(),
         };
         let ev = build_ref_state_event(&inputs, &relay_keys()).unwrap();
         assert_eq!(first_tag(&ev, "d").unwrap()[1], "myrepo");

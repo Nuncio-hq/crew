@@ -405,12 +405,54 @@ Wiki (30623 repository / 30023 company) and channel/thread models. #361 owns
 exact selected-repository folder operations and legacy/zero/multiple mapping;
 #349 owns scoped navigation. Prototype names and in-memory lists are fixtures.
 
-#362 owns coherent publication/retention and shared G-DURABLE. Publishing TOC
-last alone cannot preserve old replaced pages. There is no established generic
-Project/Wiki journal, private Ask history store or message outbox in the audited
-desktop; the concrete bounded owner-local seam must be approved, with private
-history separated from signed-event recovery. No new authoritative domain store
-is implied by this handoff.
+#362 owns coherent publication/retention and shared G-DURABLE. D-079 accepts
+immutable kind 30623 pages and manifests, a conditional TOC commit, and the
+native `owner_operations` SQLite recovery journal. The #362 integration uses
+`crew-wiki` to build and verify the complete signed graph, persists that graph
+before transport, verifies immutable dependencies, and changes the TOC through
+the relay's existing replacement transaction. Retries retain the signed event
+IDs. Cadence changes reuse the verified manifest and pages. A lost TOC
+acknowledgement remains unresolved until an exact live read establishes the
+outcome; cancellation alone cannot prove that an attempted write did not land.
+Cancel stops automatic sends. For an unresolved ambiguous attempt, explicit
+Resume publication durably revokes cancellation before reusing the same graph
+and CAS precondition. Reconcile remains read-only. A typed permanently retired
+dependency requires Regenerate instead. When the relay proves that the exact
+head, or the exact non-absent revision it required, was accepted and later
+deleted, the attempt is settled terminally as superseded and its claim is
+released in the same guarded write — no new state, action or network step. All
+other absence remains unresolved; see D-079 for the full recovery contract.
+
+The native `wiki_snapshot_read` command reads one exact repository coordinate
+under a captured owner/community/generation token and rereads its replaceable
+head after loading dependencies. The renderer shares one repository query and
+read coordinator across Wiki consumers, with two concurrent native reads,
+128 automatic repository reads per pass and a 64 MiB retained-graph budget.
+Selection and explicit retry can prioritize repositories outside the automatic
+set. An incomplete refresh can retain a previously verified graph only within
+the same native scope, visibly marked stale; it cannot merge revisions.
+Company kind 30023 knowledge remains an independent query and retains its
+existing ACL. Push freshness uses the exact repository association and scoped
+relay identity described in the D-079 clarification.
+
+Writer/reader integration, restart recovery, and real cross-client acceptance
+remain in progress. Signed relay events remain domain authority. Private Ask
+history remains separate from shared publication recovery; this journal is not
+a private history store or a channel-message outbox.
+
+The accepted permanent-dependency recovery extension in D-079 adds a Wiki-only
+atomic successor operation. Explicit Regenerate signs a new UUID-bound graph,
+retains the unusable predecessor and transfers its local claim in one SQLite
+transaction. Only direct predecessors of unresolved successors are pinned;
+older ancestors follow normal retention. The exact relay refusal, fresh
+dependency checks and locked relay CAS establish the outcome. A local check
+before sending cannot revoke work already admitted by the relay. This requires
+journal schema v3: the v1-to-v2 managed-agent claim migration and the
+v2-to-v3 Wiki successor migration are both atomic and idempotent. Older
+binaries fail closed, so recovery preserves the v3 data and uses a verified
+compatible build rather than restoring a stale v1 database. See [the recovery
+runbook](TESTING.md#wiki-journal-v3-recovery) and
+[D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
 #363 certifies installed-runtime generation and immutable Git/folder snapshots;
 #364 owns scoped full-body retrieval and exact-revision source reads. Current

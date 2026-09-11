@@ -126,6 +126,11 @@ run_unit_tests() {
   run_test_step "buzz-agent unit tests" \
     cargo test -p buzz-agent --lib -- --nocapture
 
+  # crew-wiki's signed snapshot builder and verifier are pure in-process
+  # contract tests. Keep this fallback in step with just test-unit.
+  run_test_step "crew-wiki tests" \
+    cargo test -p crew-wiki --lib -- --nocapture
+
   # ACP author-gate and queue tests are pure unit tests. Keep this fallback in
   # step with `just test-unit`; ignored lifecycle tests run elsewhere.
   run_test_step "buzz-acp unit tests" \
@@ -142,6 +147,15 @@ run_unit_tests() {
 
   run_test_step "buzz-relay side-effects helper tests" \
     cargo test -p buzz-relay --lib handlers::side_effects::tests:: -- --nocapture
+
+  run_test_step "buzz-relay conditional publication tests" \
+    cargo test -p buzz-relay --lib handlers::source_publication:: -- --nocapture
+
+  run_test_step "buzz-relay Wiki ingest tests" \
+    cargo test -p buzz-relay --lib handlers::wiki_page:: -- --nocapture
+
+  run_test_step "buzz-relay git manifest event tests" \
+    cargo test -p buzz-relay --lib api::git::manifest_event:: -- --nocapture
 }
 
 # ---- DB / integration tests (infra required) --------------------------------

@@ -409,6 +409,10 @@ test-unit:
         #     crash recovery — infra-free via a stub OIDC provider and an
         #     injected browser opener, no network or Postgres.
         cargo nextest run -p buzz-agent
+        # crew-wiki owns the signed snapshot builder and verifier. These tests
+        # are pure and must run in the mandatory unit lane because the relay
+        # admission contract depends on their canonical envelopes.
+        cargo nextest run -p crew-wiki
         # Admin API auth-boundary tests (api::admin in buzz-relay): the NIP-98
         # duplicate-tag rejections, the Host/Origin replay-ordering causal pair,
         # the admin.localhost origin/advertisement/canonical-URL pins, and the
@@ -446,7 +450,7 @@ test-unit:
         # the ~30s sqlx acquire timeout, so they do not belong in the infra-free
         # unit job either.
         cargo nextest run -p buzz-relay --lib \
-            -E '(test(/^api::admin::/) - test(=api::admin::tests::disabled_mode_allows_unauthenticated_requests_on_the_admin_host) - test(=api::admin::tests::nip98_mode_unrostered_signer_does_not_consume_a_replay_slot)) + test(/^handlers::channel_authz::/) + test(/^handlers::moderation_authz::/) + test(/^handlers::side_effects::tests::/)'
+            -E '(test(/^api::admin::/) - test(=api::admin::tests::disabled_mode_allows_unauthenticated_requests_on_the_admin_host) - test(=api::admin::tests::nip98_mode_unrostered_signer_does_not_consume_a_replay_slot)) + test(/^api::git::manifest_event::/) + test(/^handlers::channel_authz::/) + test(/^handlers::moderation_authz::/) + test(/^handlers::side_effects::tests::/) + test(/^handlers::source_publication::/) + test(/^handlers::wiki_page::/)'
         # ACP author-gate and queue tests protect the trust boundary between
         # relay events and agent prompts. They are infra-free; ignored lifecycle
         # tests remain excluded and run in their dedicated integration lanes.
@@ -459,6 +463,16 @@ test-unit:
 # Set BUZZ_POSTGRES_ADMIN_URL and PGHOST/PGPORT/PGUSER/PGPASSWORD first.
 test-postgres *ARGS:
     ./scripts/postgres-test-run.sh {{ARGS}}
+
+# Run the focused Wiki admission and canonical-envelope contract. The Project
+# Relay CI job builds buzz-relay with the same `ci` profile before invoking this
+# target, so nextest reuses target/ci artifacts instead of starting a second
+# workspace build. Keep these filters explicit: they are the small Rust seam
+# behind the mandatory relay-native Project acceptance check.
+wiki-contract:
+    cargo nextest run --cargo-profile ci -p crew-wiki --lib
+    cargo nextest run --cargo-profile ci -p buzz-relay --lib \
+        -E 'test(/^handlers::source_publication::/) + test(/^handlers::wiki_page::/) + test(/^api::git::manifest_event::/)'
 
 # Run integration tests only (starts services if needed)
 test-integration:

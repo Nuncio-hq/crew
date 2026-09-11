@@ -19,11 +19,13 @@ use crate::{
     events,
     managed_agents::try_regenerate_nest,
     relay::{
-        classify_request_error, query_relay, query_relay_at, relay_api_base_url,
-        relay_http_base_url, relay_ws_url, relay_ws_url_with_override, submit_event,
-        workspace_relay_override, SubmitEventResponse,
+        query_relay, query_relay_at, relay_api_base_url, relay_http_base_url, relay_ws_url,
+        submit_event, workspace_relay_override, SubmitEventResponse,
     },
 };
+
+mod relay_self;
+pub(crate) use relay_self::*;
 
 /// A relay target resolved from a single workspace-override read, so a caller
 /// that performs several relay requests cannot mix two relays if the workspace
@@ -324,83 +326,6 @@ async fn maybe_owner_auth_tag(
 pub struct ArchivedIdentitiesSnapshot {
     /// Lowercase hex pubkeys present in the latest relay-signed `kind:13535`.
     pub archived: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RelayInformationDocument {
-    #[serde(default, rename = "self")]
-    self_: Option<String>,
-}
-
-pub(crate) async fn fetch_relay_self(state: &AppState) -> Result<Option<String>, String> {
-    fetch_relay_self_at(state, &relay_ws_url_with_override(state)).await
-}
-
-/// How long a fetched NIP-11 `self` pubkey stays valid in
-/// [`AppState::relay_self_cache`]. The relay's signing identity changes only
-/// on an operator-driven key rotation, so minutes of staleness are safe; the
-/// TTL exists so even that rare rotation converges without an app restart.
-pub(crate) const RELAY_SELF_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
-
-/// Read a still-fresh cached `self` pubkey for `relay_url`, if any. Fails open
-/// (cache miss) on a poisoned lock — the fetch path never depends on the cache.
-fn cached_relay_self(state: &AppState, relay_url: &str) -> Option<String> {
-    let cache = state.relay_self_cache.lock().ok()?;
-    let (fetched_at, relay_self) = cache.get(relay_url)?;
-    (fetched_at.elapsed() < RELAY_SELF_CACHE_TTL).then(|| relay_self.clone())
-}
-
-/// Like [`fetch_relay_self`] but reads NIP-11 from an explicit relay WS URL
-/// instead of re-resolving the workspace override. Used by
-/// [`fetch_archived_pubkeys_at`] so the advertised signer and the snapshot
-/// query belong to the same captured relay target.
-///
-/// Successful lookups are cached per relay URL for [`RELAY_SELF_CACHE_TTL`]:
-/// send-time agent revalidation calls this on every agent-mention send, and
-/// the uncached GET was a measurable slice of that latency. Only a verified
-/// `Some` is cached — `Ok(None)` covers transient states (non-2xx status, a
-/// document momentarily missing `self`) that must be re-tried, not pinned.
-pub(crate) async fn fetch_relay_self_at(
-    state: &AppState,
-    relay_url: &str,
-) -> Result<Option<String>, String> {
-    if let Some(cached) = cached_relay_self(state, relay_url) {
-        return Ok(Some(cached));
-    }
-
-    let http_url = relay_http_base_url(relay_url);
-    let response = state
-        .http_client
-        .get(&http_url)
-        .header("Accept", "application/nostr+json")
-        .send()
-        .await
-        .map_err(|e| classify_request_error(&e))?;
-
-    if !response.status().is_success() {
-        return Ok(None);
-    }
-
-    let doc = response
-        .json::<RelayInformationDocument>()
-        .await
-        .map_err(|_| "relay returned malformed NIP-11 document".to_string())?;
-
-    let Some(relay_self) = doc.self_.map(|value| value.to_ascii_lowercase()) else {
-        return Ok(None);
-    };
-
-    if relay_self.len() == 64 && relay_self.chars().all(|c| c.is_ascii_hexdigit()) {
-        if let Ok(mut cache) = state.relay_self_cache.lock() {
-            cache.insert(
-                relay_url.to_string(),
-                (std::time::Instant::now(), relay_self.clone()),
-            );
-        }
-        Ok(Some(relay_self))
-    } else {
-        Ok(None)
-    }
 }
 
 fn archived_pubkeys_from_snapshot(snapshot: &nostr::Event) -> Vec<String> {

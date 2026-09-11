@@ -603,6 +603,18 @@ fn durable_core_listing_is_bounded_scoped_and_paginates_without_payloads() {
     assert!(serde_json::to_value(&first).unwrap()[0]
         .get("payload")
         .is_none());
+    // The insertion sequence orders native history selection; it is not part
+    // of the renderer contract and must never reach the IPC wire.
+    assert!(
+        serde_json::to_value(&first).unwrap()[0]
+            .get("sequence")
+            .is_none(),
+        "the native ordering sequence stays internal"
+    );
+    assert!(
+        first.iter().all(|summary| summary.sequence > 0),
+        "every listed row carries its durable insertion sequence"
+    );
     assert_eq!(store.list(&owner, None, 101), Err(StoreError::Invalid));
     assert_eq!(store.list(&owner, None, 0), Err(StoreError::Invalid));
     assert!(store
@@ -788,3 +800,6 @@ fn durable_core_constraint_errors_distinguish_conflict_from_corruption() {
         StoreError::Conflict
     );
 }
+
+#[path = "wiki_successor_tests.rs"]
+mod wiki_successor_tests;

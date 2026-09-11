@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const CHANNEL = "general";
 const EVIDENCE_TAG = (kind: string) => [["crew-evidence", kind]];
@@ -28,7 +29,7 @@ async function openEvidenceChannel(page: import("@playwright/test").Page) {
     ],
   });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText(CHANNEL);
   await page.waitForFunction(
     () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",

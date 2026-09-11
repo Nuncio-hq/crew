@@ -19,7 +19,6 @@ default-filter = """
 (test(/postgres_tests::/) or binary(/^postgres_/))
 and not test(/(^|::)external_infra[^:]*::/)
 and not test(/project_channel_link::/)
-and not test(/conditional_publication_postgres_tests::/)
 """
 fail-fast = false
 # Eight workers was the fastest stable setting in the Blox benchmark while the
@@ -31,13 +30,24 @@ test-threads = 8
 # so database-per-test isolation alone cannot make them independent.
 max-threads = 1
 
+[test-groups.postgres-wiki-quota]
+# The JSONB byte-boundary fixture creates about 512 MiB of logical live Wiki
+# envelopes and may transiently use roughly 1.2 GiB across PostgreSQL TOAST/WAL.
+# Keep all conditional quota scenarios in one disposable database worker so
+# this resource budget is not multiplied by the normal eight-test fan-out.
+max-threads = 1
+
 [[profile.postgres-ci.overrides]]
 filter = "test(/cluster_global_/)"
 test-group = "postgres-cluster-global"
 
+[[profile.postgres-ci.overrides]]
+filter = "test(/conditional_publication_postgres_tests::conditional_publication_reserved_quota/)"
+test-group = "postgres-wiki-quota"
+
 [[profile.postgres-ci.scripts]]
 # Script filters are separate from default-filter: they attach the setup and
 # isolation wrapper to the same automatically discovered test set.
-filter = "(test(/postgres_tests::/) or binary(/^postgres_/)) and not test(/(^|::)external_infra[^:]*::/) and not test(/project_channel_link::/) and not test(/conditional_publication_postgres_tests::/)"
+filter = "(test(/postgres_tests::/) or binary(/^postgres_/)) and not test(/(^|::)external_infra[^:]*::/) and not test(/project_channel_link::/)"
 setup = "postgres-template"
 run-wrapper = "postgres-isolation"

@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const BRANCH = "buzz/cccccccccccc";
@@ -88,7 +89,7 @@ async function openProjectThread(
     },
   });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await waitForLiveChannel(page);
 
   await page.evaluate(
@@ -318,7 +319,7 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
       ],
     });
     await page.goto("/");
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await waitForLiveChannel(page);
     await page.evaluate(
       ({ pubkey }) =>

@@ -15,6 +15,16 @@ pub enum ParameterizedReplaceStatus {
     RevisionMismatch,
     /// An exact replay was required, but the event is not the live head.
     ReplayOnlyMiss,
+    /// Conditional v1 Wiki `_toc` only: the exact submitted head was accepted
+    /// at this same community/owner/kind/`d` coordinate and is now soft
+    /// deleted. Its exact event identity can never become live again through
+    /// ordinary replacement, so the submitted head is permanently retired.
+    WikiHeadRetired,
+    /// Conditional v1 Wiki `_toc` only: the coordinate has no live head, the
+    /// precondition names an exact expected revision, and that expected event
+    /// was accepted at this same coordinate and is now soft deleted. The
+    /// precondition can therefore never be satisfied again.
+    WikiExpectedHeadRetired,
 }
 
 /// Structural precondition for a parameterized-replaceable write.

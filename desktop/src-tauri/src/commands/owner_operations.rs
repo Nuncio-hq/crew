@@ -9,7 +9,7 @@ use crate::app_state::owner_scope::{
 };
 use crate::owner_operations::{
     CreateResult, Limits, NewOperation, Operation, OperationScope, OperationStore,
-    OperationSummary, OperationUpdate,
+    OperationSummary, OperationUpdate, WikiSuccessorResult,
 };
 
 /// Consumer must retain and compare this token before applying queued results.
@@ -81,7 +81,9 @@ pub(crate) async fn load_owner_operation_for_dispatch<R: Runtime>(
     load_owner_operation_for_dispatch_at_path(app, path, expected, id, revision).await
 }
 
-async fn load_owner_operation_for_dispatch_at_path<R: Runtime>(
+// Widened to sibling command modules only so the native guarded-read context
+// can fence on an explicitly supplied journal path. No IPC or store API change.
+pub(super) async fn load_owner_operation_for_dispatch_at_path<R: Runtime>(
     app: AppHandle<R>,
     path: PathBuf,
     expected: OwnerScopeToken,
@@ -274,6 +276,61 @@ pub(crate) async fn owner_operation_update(
         update,
         false,
     )
+    .await
+}
+
+/// Atomically retire one unresolved Wiki operation and reserve its successor.
+///
+/// The store validates the predecessor's exact retirement snapshot and the
+/// successor's immutable creation intent inside one SQLite transaction. No
+/// network or source-generation work belongs in this helper.
+pub(crate) async fn replace_wiki_with_successor(
+    app: AppHandle,
+    expected: OwnerScopeToken,
+    id: String,
+    revision: u64,
+    retirement_update: OperationUpdate,
+    new_operation: NewOperation,
+) -> Result<ScopedOperationResult<WikiSuccessorResult>, String> {
+    run_at_path(
+        app.clone(),
+        journal_path(&app)?,
+        expected,
+        move |store, scope| {
+            store
+                .replace_wiki_with_successor(
+                    scope,
+                    &id,
+                    revision,
+                    retirement_update,
+                    new_operation,
+                    now()?,
+                )
+                .map_err(|error| error.to_string())
+        },
+    )
+    .await
+}
+
+/// Resolve an already-committed Wiki successor for one exact predecessor.
+///
+/// This is deliberately not a Tauri command: it exists so a native regenerate
+/// request whose IPC response was lost recovers the successor it already
+/// committed instead of capturing fresh source and signing a second graph.
+/// `revision` is the caller's pre-retirement revision; the store binds it to
+/// the recorded post-retirement revision.
+pub(crate) async fn load_wiki_successor_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: OwnerScopeToken,
+    id: String,
+    revision: u64,
+) -> Result<ScopedOperationResult<Option<WikiSuccessorResult>>, String> {
+    run_at_path(app, path, expected, move |store, scope| {
+        store
+            .wiki_successor(scope, &id, revision)
+            .map_err(|error| error.to_string())
+    })
     .await
 }
 

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { KIND_HUDDLE_STARTED } from "../../src/shared/constants/kinds";
 import { installMockBridge } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 
@@ -41,7 +42,7 @@ test("message action rail copies the same canonical thread link as More", async 
 }) => {
   await page.setViewportSize({ width: 900, height: 700 });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect
     .poll(() =>
@@ -156,7 +157,7 @@ test("pending and huddle rows omit both copy-link surfaces", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect
     .poll(() =>

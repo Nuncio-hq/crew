@@ -274,6 +274,10 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@0fd46367812ee04360509b4169d9f659d6892bb2 # v2.79.15
+        with:
+          tool: cargo-nextest@0.9.136
       - name: Install desktop dependencies
         run: just desktop-install-ci
       - name: Run the relay-native Project contract
@@ -282,6 +286,8 @@ jobs:
         run: |
           bash scripts/run-nuncio-crew-project-relay-ci.sh \
             desktop/src/features/projects/project-local-workspace-live-relay.test.mjs
+      - name: Run focused Wiki Rust contracts
+        run: just wiki-contract
       - name: Upload relay log
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const AGENT_PUBKEY = TEST_IDENTITIES.charlie.pubkey;
 const RESTORED_UNSCOPED_AGENT_PUBKEY = TEST_IDENTITIES.outsider.pubkey;
@@ -63,7 +64,7 @@ async function openAgentActivity(
   seedChannels: string[] = [activityChannelId],
 ): Promise<ReturnType<Page["getByTestId"]>> {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
   await waitForActiveTurnSeed(page);
   for (const channelId of seedChannels) {

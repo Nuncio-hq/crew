@@ -320,6 +320,14 @@ pub fn run() {
                 .load(std::sync::atomic::Ordering::Acquire);
             let recovery_mode = identity_lost || keyring_locked;
 
+            // Wiki publication recovery is journal-owned and must outlive any
+            // renderer mount. Start it after native identity resolution so a
+            // restart resumes due rows even when the Wiki screen is never
+            // opened; the worker fences every attempt to the captured scope.
+            if !recovery_mode {
+                start_wiki_publication_worker(app_handle.clone());
+            }
+
             // Backfill the pinned persona snapshot for any pre-existing agent
             // that predates the record-authoritative-spawn cutover (persona_id
             // set but no source_version). Must run before

@@ -7,7 +7,20 @@ use std::time::Duration;
 
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior};
 
-use super::{Limits, Operation, OperationKind, OperationScope, OperationStore, StoreError};
+use super::{
+    Limits, Operation, OperationKind, OperationScope, OperationStore, StoreError,
+    WikiSuccessorResult,
+};
+
+/// Schema versions this binary can open. `0` is an empty file this opener
+/// initializes. Version 2 is the managed-agent deletion journal; version 3
+/// adds the Wiki successor relation on top of it. Keeping the intermediate
+/// version in the accepted set lets an existing journal upgrade atomically
+/// without treating an older, valid file as corrupt.
+pub(super) const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[0, 1, 2, 3];
+
+/// Version written by the newest migration in this binary.
+pub(super) const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 pub(super) fn sql_error(error: rusqlite::Error) -> StoreError {
     if let rusqlite::Error::SqliteFailure(code, _) = &error {
@@ -156,7 +169,7 @@ impl OperationStore {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(sql_error)?;
-        if version != 0 && version != 1 && version != 2 {
+        if !SUPPORTED_SCHEMA_VERSIONS.contains(&version) {
             return Err(StoreError::Version);
         }
         connection
@@ -177,33 +190,41 @@ impl OperationStore {
             }
             tx.execute_batch(include_str!("schema.sql"))
                 .map_err(sql_error)?;
-        } else if version != 1 && version != 2 {
-            return Err(StoreError::Version);
         }
+        let version: i64 = tx
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(sql_error)?;
         if version <= 1 {
+            // Version 2 is the durable managed-agent deletion claim. This is
+            // kept as a separate step so an existing v1 journal can be
+            // upgraded without losing its rows.
             tx.execute_batch(include_str!("managed_delete_migration.sql"))
                 .map_err(sql_error)?;
-        } else {
-            let index_sql: Option<String> = tx
-                .query_row(
-                    "SELECT sql FROM sqlite_master WHERE type='index' AND name='unresolved_managed_agent_delete'",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(sql_error)?;
-            let Some(index_sql) = index_sql else {
-                return Err(StoreError::Corrupt);
-            };
-            let normalized = index_sql.to_ascii_lowercase();
-            if !normalized.contains("unique index unresolved_managed_agent_delete")
-                || !normalized.contains("kind = 'managed-agent-delete'")
-                || !normalized.contains("reconciled = 0")
-            {
-                return Err(StoreError::Corrupt);
-            }
         }
+        let version: i64 = tx
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(sql_error)?;
+        if version == 2 {
+            // Version 3 adds the Wiki successor relation and repeats the
+            // managed-delete index creation defensively for v2 journals that
+            // were produced by the pre-merge Wiki branch.
+            tx.execute_batch(include_str!("migration_2_to_3.sql"))
+                .map_err(sql_error)?;
+        }
+        let final_version: i64 = tx
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(sql_error)?;
+        if final_version != CURRENT_SCHEMA_VERSION {
+            return Err(StoreError::Version);
+        }
+        // Migrations are one immediate transaction: an interrupted opener
+        // leaves the previous version intact and retries the idempotent
+        // scripts on the next open.
+        #[cfg(all(test, unix))]
+        super::tests::crash_checkpoint("before-migration-commit");
         tx.commit().map_err(sql_error)?;
+        #[cfg(all(test, unix))]
+        super::tests::crash_checkpoint("after-migration-commit");
         Ok(Self { connection, limits })
     }
 
@@ -223,7 +244,7 @@ impl OperationStore {
             return Err(StoreError::Invalid);
         }
         let mut query = self.connection.prepare(
-            "SELECT CASE WHEN length(CAST(id AS BLOB))=36 THEN id ELSE '' END, \
+            "SELECT rowid, CASE WHEN length(CAST(id AS BLOB))=36 THEN id ELSE '' END, \
              CASE WHEN length(CAST(kind AS BLOB)) BETWEEN 1 AND 32 THEN kind ELSE '' END, \
              CASE WHEN length(CAST(resource_key AS BLOB)) BETWEEN 1 AND 512 THEN resource_key ELSE '' END, revision, \
              CASE WHEN length(CAST(status AS BLOB)) BETWEEN 1 AND 32 THEN status ELSE '' END,reconciled,updated_at FROM operations \
@@ -239,19 +260,20 @@ impl OperationStore {
                 ],
                 |row| {
                     Ok((
-                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, u64>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, bool>(5)?,
-                        row.get::<_, i64>(6)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, u64>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, bool>(6)?,
+                        row.get::<_, i64>(7)?,
                     ))
                 },
             )
             .map_err(sql_error)?;
         rows.map(|row| {
-            let (id, kind, resource_key, revision, status, reconciled, updated_at) =
+            let (sequence, id, kind, resource_key, revision, status, reconciled, updated_at) =
                 row.map_err(sql_error)?;
             validate_id(&id).map_err(|_| StoreError::Corrupt)?;
             if resource_key.is_empty() {
@@ -261,6 +283,7 @@ impl OperationStore {
                 .map_err(|_| StoreError::Corrupt)?;
             let status = serde_json::from_str(&status).map_err(|_| StoreError::Corrupt)?;
             Ok(super::OperationSummary {
+                sequence,
                 id,
                 kind,
                 resource_key,
@@ -279,6 +302,70 @@ impl OperationStore {
         validate_id(id)?;
         read(&self.connection, scope, id, self.limits.bytes_per_operation)?
             .ok_or(StoreError::Missing)
+    }
+
+    /// Resolve the committed direct Wiki successor of one exact predecessor.
+    ///
+    /// `requested_revision` is the caller's **pre-retirement** revision. The
+    /// link row records the predecessor revision the retirement CAS produced,
+    /// so a request whose IPC response was lost proves it is asking about the
+    /// same point in history by matching `requested_revision + 1`. Any other
+    /// revision, owner or community resolves to nothing or to a conflict; this
+    /// lookup never adopts an unrelated operation into a caller's request.
+    ///
+    /// The successor is returned even after it has reconciled, because a lost
+    /// response must be recoverable after the worker finished the successor.
+    pub fn wiki_successor(
+        &self,
+        scope: &OperationScope,
+        predecessor_id: &str,
+        requested_revision: u64,
+    ) -> Result<Option<WikiSuccessorResult>, StoreError> {
+        validate_scope(scope)?;
+        validate_id(predecessor_id)?;
+        let retired_revision = requested_revision
+            .checked_add(1)
+            .filter(|value| *value <= i64::MAX as u64)
+            .ok_or(StoreError::Invalid)?;
+        let relation: Option<(String, String, i64)> = self
+            .connection
+            .query_row(
+                "SELECT resource_key, successor_id, predecessor_revision \
+                 FROM wiki_publication_successors \
+                 WHERE owner=?1 AND community=?2 AND predecessor_id=?3",
+                params![scope.owner, scope.community, predecessor_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(sql_error)?;
+        let Some((resource_key, successor_id, predecessor_revision)) = relation else {
+            return Ok(None);
+        };
+        let max = self.limits.bytes_per_operation;
+        let predecessor =
+            read(&self.connection, scope, predecessor_id, max)?.ok_or(StoreError::Corrupt)?;
+        if u64::try_from(predecessor_revision).ok() != Some(predecessor.revision)
+            || resource_key != predecessor.resource_key
+            || predecessor.kind != OperationKind::WikiPublication
+            || !predecessor.reconciled
+        {
+            return Err(StoreError::Corrupt);
+        }
+        if predecessor.revision != retired_revision {
+            return Err(StoreError::Conflict);
+        }
+        let successor =
+            read(&self.connection, scope, &successor_id, max)?.ok_or(StoreError::Corrupt)?;
+        if successor.kind != OperationKind::WikiPublication
+            || successor.resource_key != predecessor.resource_key
+            || successor.id == predecessor.id
+        {
+            return Err(StoreError::Corrupt);
+        }
+        Ok(Some(WikiSuccessorResult {
+            predecessor,
+            successor,
+        }))
     }
 }
 
