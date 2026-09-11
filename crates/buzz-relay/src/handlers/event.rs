@@ -2371,7 +2371,7 @@ mod tests {
                 .await
                 .expect("remove relay member");
 
-            let (req_conn, mut req_rx, _req_ctrl) =
+            let (req_conn, _req_rx, mut req_ctrl) =
                 authenticated_conn(&state, &tenant, &keys).await;
             crate::handlers::req::handle_req(
                 "revoked-req".to_owned(),
@@ -2382,10 +2382,10 @@ mod tests {
             )
             .await;
             assert!(
-                matches!(req_rx.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+                matches!(req_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
             );
 
-            let (count_conn, mut count_rx, _count_ctrl) =
+            let (count_conn, _count_rx, mut count_ctrl) =
                 authenticated_conn(&state, &tenant, &keys).await;
             crate::handlers::count::handle_count(
                 "revoked-count".to_owned(),
@@ -2395,7 +2395,7 @@ mod tests {
             )
             .await;
             assert!(
-                matches!(count_rx.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+                matches!(count_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
             );
 
             let (event_conn, _event_rx, mut event_ctrl) =
