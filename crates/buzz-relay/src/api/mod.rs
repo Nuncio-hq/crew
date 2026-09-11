@@ -526,17 +526,23 @@ pub mod relay_members {
             config.require_relay_membership = true;
             config.allow_nip_oa_auth = true;
 
-            let pool = sqlx::PgPool::connect(&config.database_url)
-                .await
-                .expect("connect isolated PostgreSQL database");
+            let pool = crate::test_support::bounded(
+                "connect relay-membership PostgreSQL",
+                sqlx::PgPool::connect(&config.database_url),
+            )
+            .await
+            .expect("connect relay-membership PostgreSQL");
             let db = buzz_db::Db::from_pool(pool.clone());
             let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
                 .create_pool(Some(deadpool_redis::Runtime::Tokio1))
                 .expect("create Redis pool");
             let pubsub = Arc::new(
-                buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
-                    .await
-                    .expect("create pubsub manager"),
+                crate::test_support::bounded(
+                    "create relay-membership pubsub manager",
+                    buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone()),
+                )
+                .await
+                .expect("create relay-membership pubsub manager"),
             );
             let auth = buzz_auth::AuthService::new(config.auth.clone());
             let search = buzz_search::SearchService::new(pool.clone());
@@ -544,8 +550,14 @@ pub mod relay_members {
                 db.clone(),
                 buzz_workflow::WorkflowConfig::default(),
             ));
-            let media_storage =
-                buzz_media::MediaStorage::new(&config.media).expect("create media storage");
+            let media_config = config.media.clone();
+            let media_storage = crate::test_support::bounded(
+                "create relay-membership media storage",
+                tokio::task::spawn_blocking(move || buzz_media::MediaStorage::new(&media_config)),
+            )
+            .await
+            .expect("create relay-membership media storage task")
+            .expect("create relay-membership media storage");
             let (state, audit_shutdown) = AppState::new(
                 config,
                 db,
@@ -573,67 +585,85 @@ pub mod relay_members {
             let owner_hex = owner.public_key().to_hex();
             let agent_bytes = agent.public_key().to_bytes();
             let host = format!("membership-gate-{community_uuid}.example");
+            let body_pool = pool.clone();
 
-            sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
-                .bind(community_uuid)
-                .bind(&host)
-                .execute(&pool)
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert relay-membership community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
                 .await
-                .expect("insert isolated community");
-            sqlx::query(
-                "INSERT INTO relay_members (community_id, pubkey, role) \
-                 VALUES ($1, $2, 'owner')",
-            )
-            .bind(community_uuid)
-            .bind(&owner_hex)
-            .execute(&pool)
-            .await
-            .expect("insert owner membership");
-
-            assert!(
-                current_relay_membership_for_auth(&state, community, &owner_bytes, None,)
-                    .await
-                    .expect("read direct membership")
-            );
-            assert!(current_relay_membership_for_auth(
-                &state,
-                community,
-                &agent_bytes,
-                Some(&owner_bytes),
-            )
-            .await
-            .expect("read delegated membership"));
-
-            sqlx::query("DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2")
-                .bind(community_uuid)
-                .bind(&owner_hex)
-                .execute(&pool)
+                .expect("insert relay-membership community");
+                crate::test_support::bounded(
+                    "insert relay-membership owner",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'owner')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&owner_hex)
+                    .execute(&body_pool),
+                )
                 .await
-                .expect("remove owner membership");
+                .expect("insert relay-membership owner");
 
-            assert!(
-                !current_relay_membership_for_auth(&state, community, &owner_bytes, None,)
-                    .await
-                    .expect("read removed direct membership")
-            );
-            assert!(!current_relay_membership_for_auth(
-                &state,
-                community,
-                &agent_bytes,
-                Some(&owner_bytes),
-            )
-            .await
-            .expect("read removed delegated membership"));
-
-            sqlx::query("DELETE FROM communities WHERE id = $1")
-                .bind(community_uuid)
-                .execute(&pool)
+                assert!(crate::test_support::bounded(
+                    "read direct relay membership",
+                    current_relay_membership_for_auth(&state, community, &owner_bytes, None,),
+                )
                 .await
-                .expect("remove isolated community");
-            drop(state);
-            audit_shutdown
-                .drain(std::time::Duration::from_secs(1))
-                .await;
+                .expect("read direct relay membership"));
+                assert!(crate::test_support::bounded(
+                    "read delegated relay membership",
+                    current_relay_membership_for_auth(
+                        &state,
+                        community,
+                        &agent_bytes,
+                        Some(&owner_bytes),
+                    ),
+                )
+                .await
+                .expect("read delegated relay membership"));
+
+                crate::test_support::bounded(
+                    "remove relay-membership owner",
+                    sqlx::query(
+                        "DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(&owner_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("remove relay-membership owner");
+
+                assert!(!crate::test_support::bounded(
+                    "read removed direct relay membership",
+                    current_relay_membership_for_auth(&state, community, &owner_bytes, None,),
+                )
+                .await
+                .expect("read removed direct relay membership"));
+                assert!(!crate::test_support::bounded(
+                    "read removed delegated relay membership",
+                    current_relay_membership_for_auth(
+                        &state,
+                        community,
+                        &agent_bytes,
+                        Some(&owner_bytes),
+                    ),
+                )
+                .await
+                .expect("read removed delegated relay membership"));
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
         }
     }
 }

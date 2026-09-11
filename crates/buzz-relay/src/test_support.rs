@@ -1,5 +1,63 @@
 const DEFAULT_DATABASE_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1 -- local test-only credentials
 
+#[cfg(test)]
+use std::{future::Future, panic::AssertUnwindSafe, time::Duration};
+
+#[cfg(test)]
+use futures_util::FutureExt;
+
+#[cfg(test)]
+use uuid::Uuid;
+
+/// Maximum time a PostgreSQL/Redis-backed library fixture may wait on one
+/// dependency operation.
+#[cfg(test)]
+pub(crate) const DEPENDENCY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Await one test dependency operation with the shared integration deadline.
+#[cfg(test)]
+pub(crate) async fn bounded<T>(label: &str, future: impl Future<Output = T>) -> T {
+    tokio::time::timeout(DEPENDENCY_TIMEOUT, future)
+        .await
+        .unwrap_or_else(|_| panic!("{label} exceeded {DEPENDENCY_TIMEOUT:?}"))
+}
+
+/// Run a shared-database community fixture and clean its rows on success or
+/// panic. The body owns its relay state; unwinding drops those handles before
+/// the cleanup query runs, while the cleanup itself remains deadline-bounded.
+#[cfg(test)]
+pub(crate) async fn with_community_cleanup<Fut>(pool: &sqlx::PgPool, community_id: Uuid, body: Fut)
+where
+    Fut: Future<Output = ()>,
+{
+    let body_result = AssertUnwindSafe(body).catch_unwind().await;
+    if let Err(error) = cleanup_community(pool, community_id).await {
+        panic!("community fixture cleanup failed: {error}");
+    }
+    if let Err(panic_payload) = body_result {
+        std::panic::resume_unwind(panic_payload);
+    }
+}
+
+#[cfg(test)]
+async fn cleanup_community(pool: &sqlx::PgPool, community_id: Uuid) -> Result<(), String> {
+    tokio::time::timeout(DEPENDENCY_TIMEOUT, async {
+        sqlx::query("DELETE FROM relay_members WHERE community_id = $1")
+            .bind(community_id)
+            .execute(pool)
+            .await
+            .map_err(|error| format!("delete relay membership rows: {error}"))?;
+        sqlx::query("DELETE FROM communities WHERE id = $1")
+            .bind(community_id)
+            .execute(pool)
+            .await
+            .map_err(|error| format!("delete community row: {error}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| format!("cleanup exceeded {DEPENDENCY_TIMEOUT:?}"))?
+}
+
 /// Resolve the database URL shared by PostgreSQL-backed relay tests.
 pub(crate) fn database_url() -> String {
     std::env::var("BUZZ_TEST_DATABASE_URL")
