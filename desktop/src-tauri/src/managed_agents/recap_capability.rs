@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::recap_adapter::RECAP_OUTPUT_LIMIT;
+use super::recap_adapter::{RecapAdapterObservation, RECAP_OUTPUT_LIMIT};
 
 /// Runtime-owned selection contract, separate from employee session settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,16 +77,31 @@ pub(crate) struct RecapToolProbeEvidence {
 /// certification constructor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecapProbeAttestation {
-    pub(crate) runtime_id: String,
-    pub(crate) executable: RecapExecutableIdentity,
-    pub(crate) selection: RecapSelection,
-    pub(crate) auth: RecapAuthBinding,
-    pub(crate) one_shot_completed: bool,
-    pub(crate) tool_probe: RecapToolProbeEvidence,
-    pub(crate) output: Vec<u8>,
-    pub(crate) effective_model: String,
-    pub(crate) state_unchanged: bool,
-    pub(crate) process_reaped: bool,
+    runtime_id: String,
+    executable: RecapExecutableIdentity,
+    selection: RecapSelection,
+    auth: RecapAuthBinding,
+    adapter: RecapAdapterObservation,
+    state: RecapStateObservation,
+    process: RecapProcessObservation,
+}
+
+/// State observation produced by the adapter's before/after sentinel check.
+/// The producer accepts only the positive observation; a changed or missing
+/// snapshot is a typed negative result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecapStateObservation {
+    Unchanged,
+    Changed,
+}
+
+/// Process observation produced after the bounded owner has completed cleanup.
+/// Unix group escape remains an explicit negative outcome until a stronger
+/// containment boundary is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecapProcessObservation {
+    ReapedAndContained,
+    EscapedOrUnknown,
 }
 
 /// Capabilities that must be attested by the separately reviewed runtime
@@ -145,6 +160,17 @@ pub(crate) struct RecapCertificationParts {
     pub(crate) effective_model: String,
     pub(crate) output_digest: String,
     pub(crate) tool_probe_digest: String,
+}
+
+/// Native identity and selection supplied alongside one adapter observation.
+/// This is request context, not a capability or a positive result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapProbeTarget {
+    pub(crate) contract: RecapRuntimeContract,
+    pub(crate) runtime_id: String,
+    pub(crate) executable: RecapExecutableIdentity,
+    pub(crate) selection: RecapSelection,
+    pub(crate) auth: RecapAuthBinding,
 }
 
 /// The exact runtime and selection admitted for one recap invocation.
@@ -284,10 +310,33 @@ impl RecapRuntimeReadyProof {
 }
 
 impl RecapRuntimeCertification {
+    /// Build the attestation at the adapter boundary. The adapter observation
+    /// must have come from [`super::recap_adapter::RecapLaunchPlan::parse_probe_output`];
+    /// callers do not provide individual output/model/tool booleans.
+    pub(crate) fn from_adapter_observation(
+        target: RecapProbeTarget,
+        adapter: RecapAdapterObservation,
+        state: RecapStateObservation,
+        process: RecapProcessObservation,
+    ) -> Result<Self, RecapFailure> {
+        Self::from_probe(
+            target.contract,
+            RecapProbeAttestation {
+                runtime_id: target.runtime_id,
+                executable: target.executable,
+                selection: target.selection,
+                auth: target.auth,
+                adapter,
+                state,
+                process,
+            },
+        )
+    }
+
     /// Consume one adapter probe and create the sole positive certification
     /// value. Every positive property is supplied as explicit evidence; this
     /// function never infers tool, state, or process guarantees from flags.
-    pub(crate) fn from_probe(
+    fn from_probe(
         contract: RecapRuntimeContract,
         probe: RecapProbeAttestation,
     ) -> Result<Self, RecapFailure> {
@@ -328,31 +377,31 @@ impl RecapRuntimeCertification {
             }
             _ => {}
         }
-        if probe.output.is_empty() {
+        if probe.adapter.output().is_empty() {
             return Err(RecapFailure::EmptyProbeOutput);
         }
-        if probe.output.len() > RECAP_OUTPUT_LIMIT {
+        if probe.adapter.output().len() > RECAP_OUTPUT_LIMIT {
             return Err(RecapFailure::ProbeOutputLimit);
         }
-        if probe.output.contains(&0) {
+        if probe.adapter.output().contains(&0) {
             return Err(RecapFailure::InvalidProbeOutput);
         }
-        if !valid_recap_model(&probe.effective_model) {
+        if !valid_recap_model(probe.adapter.effective_model()) {
             return Err(RecapFailure::EffectiveModelMismatch);
         }
-        if probe.effective_model != probe.selection.model {
+        if probe.adapter.effective_model() != probe.selection.model {
             return Err(RecapFailure::EffectiveModelMismatch);
         }
-        if !probe.one_shot_completed {
+        if !probe.adapter.one_shot_completed() {
             return Err(RecapFailure::UnsupportedOneShot);
         }
-        if !valid_tool_probe_evidence(&probe.tool_probe) {
+        if !valid_tool_probe_evidence(probe.adapter.tool_probe()) {
             return Err(RecapFailure::InvalidToolProbeEvidence);
         }
-        if !probe.state_unchanged {
+        if probe.state != RecapStateObservation::Unchanged {
             return Err(RecapFailure::ProbeStateChanged);
         }
-        if !probe.process_reaped {
+        if probe.process != RecapProcessObservation::ReapedAndContained {
             return Err(RecapFailure::ProbeProcessNotReaped);
         }
         Ok(Self {
@@ -366,9 +415,9 @@ impl RecapRuntimeCertification {
                 state_isolation: true,
                 process_containment: true,
             },
-            effective_model: probe.effective_model,
-            output_digest: hex::encode(Sha256::digest(&probe.output)),
-            tool_probe_digest: tool_probe_digest(&probe.tool_probe),
+            effective_model: probe.adapter.effective_model().to_owned(),
+            output_digest: hex::encode(Sha256::digest(probe.adapter.output())),
+            tool_probe_digest: tool_probe_digest(probe.adapter.tool_probe()),
         })
     }
 
@@ -529,7 +578,8 @@ fn valid_auth_service(service: &str) -> bool {
         && !service.chars().any(char::is_control)
 }
 
-const RECAP_TOOL_PROBE_ID: &str = "crew-recap-hostile-tool-v1";
+/// Stable identifier for the hostile-tool probe evidence contract.
+pub(crate) const RECAP_TOOL_PROBE_ID: &str = "crew-recap-hostile-tool-v1";
 
 fn valid_tool_probe_evidence(evidence: &RecapToolProbeEvidence) -> bool {
     evidence.probe_id == RECAP_TOOL_PROBE_ID

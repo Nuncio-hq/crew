@@ -1,9 +1,10 @@
 //! Native staging ownership receipt. It is deliberately not a generation grant.
 
+use super::recap_adapter::RecapAdapterObservation;
 use super::recap_capability::{
     verify_executable, RecapCertificationParts, RecapExecutableIdentity, RecapGuarantees,
-    RecapProbeAttestation, RecapRuntimeCertification, RecapRuntimeContract, RecapRuntimeReadyProof,
-    RecapSelection,
+    RecapProbeTarget, RecapProcessObservation, RecapRuntimeCertification, RecapRuntimeReadyProof,
+    RecapSelection, RecapStateObservation,
 };
 use super::recap_state::{
     directory_identity, private_read_file, validate_owned_base, DirectoryIdentity,
@@ -525,6 +526,8 @@ pub(crate) fn runtime_ready_proof_for_ownership<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     ownership: &VerifiedStagingOwnership,
 ) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+    use tauri::Manager;
+
     let state = app.state::<crate::app_state::AppState>();
     let scope = super::retention::active_retention_scope(app, &state)
         .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
@@ -533,21 +536,22 @@ pub(crate) fn runtime_ready_proof_for_ownership<R: tauri::Runtime>(
     ownership.runtime_ready_proof_with_store(&store)
 }
 
-/// Consume a typed native probe through the active catalog/retention scope.
-///
-/// This is the production producer seam for #351: callers must supply an
-/// attestation emitted by a native adapter, and the resulting grant is bound
-/// to the current owner/relay retention database before it can make a runtime
-/// visible as supported. Renderer settings and catalog discovery cannot call
-/// this with synthetic capability data.
+/// Consume a typed native adapter observation through the active catalog and
+/// retention scope. The adapter creates the observation by parsing its bounded
+/// probe envelope; this native entrypoint then creates the opaque certification
+/// and projects the strict runtime-ready grant. Renderer settings and catalog
+/// discovery cannot provide the individual probe facts.
 pub(crate) fn certify_runtime_probe_for_app<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-    contract: RecapRuntimeContract,
-    probe: RecapProbeAttestation,
+    target: RecapProbeTarget,
+    adapter: RecapAdapterObservation,
+    state: RecapStateObservation,
+    process: RecapProcessObservation,
     certified_at: u64,
 ) -> Result<(), RecapStateFailure> {
-    let certification = RecapRuntimeCertification::from_probe(contract, probe)
-        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    let certification =
+        RecapRuntimeCertification::from_adapter_observation(target, adapter, state, process)
+            .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
     let ownership = VerifiedStagingOwnership::load(app)?;
     let state = app.state::<crate::app_state::AppState>();
     let scope = super::retention::active_retention_scope(app, &state)

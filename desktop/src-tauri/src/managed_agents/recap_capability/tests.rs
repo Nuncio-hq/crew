@@ -1,4 +1,5 @@
 use super::*;
+use crate::managed_agents::recap_adapter::claude_recap_plan;
 
 fn candidate() -> RecapRuntimeContract {
     RecapRuntimeContract {
@@ -30,15 +31,30 @@ fn known_contract() -> RecapRuntimeContract {
         .recap_contract()
 }
 
-fn tool_probe() -> RecapToolProbeEvidence {
-    RecapToolProbeEvidence {
-        probe_id: "crew-recap-hostile-tool-v1".into(),
-        tool_name: "context_engine".into(),
-        request_observed: true,
-        denied_before_effect: true,
-        sentinel_before: "a".repeat(64),
-        sentinel_after: "a".repeat(64),
-    }
+fn adapter_observation(model: &str) -> RecapAdapterObservation {
+    let plan = claude_recap_plan(
+        Path::new("/staging/claude"),
+        Path::new("/staging/recap-runs/probe"),
+        model,
+        b"probe",
+    )
+    .unwrap();
+    let envelope = serde_json::json!({
+        "type": "recap_probe",
+        "result": "bounded recap output",
+        "effectiveModel": model,
+        "oneShotCompleted": true,
+        "toolProbe": {
+            "probeId": "crew-recap-hostile-tool-v1",
+            "toolName": "context_engine",
+            "requestObserved": true,
+            "deniedBeforeEffect": true,
+            "sentinelBefore": "a".repeat(64),
+            "sentinelAfter": "a".repeat(64)
+        }
+    });
+    plan.parse_probe_output(true, &serde_json::to_vec(&envelope).unwrap(), b"")
+        .unwrap()
 }
 
 fn probe() -> RecapProbeAttestation {
@@ -56,12 +72,9 @@ fn probe() -> RecapProbeAttestation {
             service: "test-keyring-service".into(),
             reference: "test-auth-reference".into(),
         },
-        one_shot_completed: true,
-        tool_probe: tool_probe(),
-        output: b"bounded recap output".to_vec(),
-        effective_model: "claude-fable-5-1".into(),
-        state_unchanged: true,
-        process_reaped: true,
+        adapter: adapter_observation("claude-fable-5-1"),
+        state: RecapStateObservation::Unchanged,
+        process: RecapProcessObservation::ReapedAndContained,
     }
 }
 
@@ -292,8 +305,20 @@ fn explicit_model_contract_rejects_profile_bearing_proof() {
 
 #[test]
 fn bounded_probe_is_the_only_path_to_a_positive_certification() {
-    let certification = RecapRuntimeCertification::from_probe(known_contract(), probe())
-        .expect("complete adapter evidence should certify");
+    let raw = probe();
+    let certification = RecapRuntimeCertification::from_adapter_observation(
+        RecapProbeTarget {
+            contract: known_contract(),
+            runtime_id: raw.runtime_id,
+            executable: raw.executable,
+            selection: raw.selection,
+            auth: raw.auth,
+        },
+        raw.adapter,
+        raw.state,
+        raw.process,
+    )
+    .expect("complete adapter evidence should certify");
     let parts = certification.parts();
     assert_eq!(parts.runtime_id, "claude");
     assert_eq!(parts.effective_model, parts.selection.model);
@@ -307,6 +332,37 @@ fn bounded_probe_is_the_only_path_to_a_positive_certification() {
 
 #[test]
 fn certification_requires_catalog_identity_and_all_probe_evidence() {
+    let parse = |result: &str,
+                 effective_model: &str,
+                 one_shot_completed: bool,
+                 request_observed: bool,
+                 sentinel_after: &str|
+     -> RecapAdapterObservation {
+        let plan = claude_recap_plan(
+            Path::new("/staging/claude"),
+            Path::new("/staging/recap-runs/probe"),
+            "claude-fable-5-1",
+            b"probe",
+        )
+        .unwrap();
+        let envelope = serde_json::json!({
+            "type": "recap_probe",
+            "result": result,
+            "effectiveModel": effective_model,
+            "oneShotCompleted": one_shot_completed,
+            "toolProbe": {
+                "probeId": "crew-recap-hostile-tool-v1",
+                "toolName": "context_engine",
+                "requestObserved": request_observed,
+                "deniedBeforeEffect": true,
+                "sentinelBefore": "a".repeat(64),
+                "sentinelAfter": sentinel_after
+            }
+        });
+        plan.parse_probe_output(true, &serde_json::to_vec(&envelope).unwrap(), b"")
+            .unwrap()
+    };
+
     let mut invalid = probe();
     invalid.runtime_id = "unknown-runtime".into();
     assert_eq!(
@@ -315,56 +371,92 @@ fn certification_requires_catalog_identity_and_all_probe_evidence() {
     );
 
     let mut invalid = probe();
-    invalid.one_shot_completed = false;
+    invalid.adapter = parse(
+        "bounded recap output",
+        "claude-fable-5-1",
+        false,
+        true,
+        &"a".repeat(64),
+    );
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::UnsupportedOneShot)
     );
 
     let mut invalid = probe();
-    invalid.tool_probe.request_observed = false;
+    invalid.adapter = parse(
+        "bounded recap output",
+        "claude-fable-5-1",
+        true,
+        false,
+        &"a".repeat(64),
+    );
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::InvalidToolProbeEvidence)
     );
 
     let mut invalid = probe();
-    invalid.tool_probe.sentinel_after = "b".repeat(64);
+    invalid.adapter = parse(
+        "bounded recap output",
+        "claude-fable-5-1",
+        true,
+        true,
+        &"b".repeat(64),
+    );
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::InvalidToolProbeEvidence)
     );
 
     let mut invalid = probe();
-    invalid.effective_model = "other-model".into();
+    invalid.adapter = parse(
+        "bounded recap output",
+        "other-model",
+        true,
+        true,
+        &"a".repeat(64),
+    );
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::EffectiveModelMismatch)
     );
 
     let mut invalid = probe();
-    invalid.output = Vec::new();
+    invalid.adapter = RecapAdapterObservation::for_test(
+        Vec::new(),
+        "claude-fable-5-1",
+        true,
+        RecapToolProbeEvidence {
+            probe_id: RECAP_TOOL_PROBE_ID.into(),
+            tool_name: "context_engine".into(),
+            request_observed: true,
+            denied_before_effect: true,
+            sentinel_before: "a".repeat(64),
+            sentinel_after: "a".repeat(64),
+        },
+    );
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::EmptyProbeOutput)
     );
 
     let mut invalid = probe();
-    invalid.state_unchanged = false;
+    invalid.state = RecapStateObservation::Changed;
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::ProbeStateChanged)
     );
 
     let mut invalid = probe();
-    invalid.process_reaped = false;
+    invalid.process = RecapProcessObservation::EscapedOrUnknown;
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::ProbeProcessNotReaped)
     );
 
     let mut invalid = probe();
-    invalid.auth.service = "".into();
+    invalid.auth.service = String::new();
     assert_eq!(
         RecapRuntimeCertification::from_probe(known_contract(), invalid),
         Err(RecapFailure::InvalidAuthBinding)

@@ -15,6 +15,8 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+use super::recap_capability::RecapToolProbeEvidence;
+
 /// Maximum UTF-8 input bytes accepted by the recap executor.
 pub(crate) const RECAP_INPUT_LIMIT: usize = 128 * 1024;
 /// Maximum captured bytes in each recap output stream.
@@ -25,6 +27,51 @@ const HERMES_PROFILE_ENTRY_LIMIT: usize = 4096;
 const HERMES_PROFILE_DEPTH_LIMIT: usize = 32;
 const HERMES_PROFILE_BYTES_LIMIT: u64 = 32 * 1024 * 1024;
 const HERMES_USAGE_LIMIT: u64 = 64 * 1024;
+
+/// Redacted facts parsed from one native certification-probe result. This is
+/// produced by [`RecapLaunchPlan::parse_probe_output`], rather than assembled
+/// by a renderer or settings caller. The raw probe envelope is never retained
+/// after these bounded fields are extracted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecapAdapterObservation {
+    output: Vec<u8>,
+    effective_model: String,
+    one_shot_completed: bool,
+    tool_probe: RecapToolProbeEvidence,
+}
+
+impl RecapAdapterObservation {
+    pub(crate) fn output(&self) -> &[u8] {
+        &self.output
+    }
+
+    pub(crate) fn effective_model(&self) -> &str {
+        &self.effective_model
+    }
+
+    pub(crate) fn one_shot_completed(&self) -> bool {
+        self.one_shot_completed
+    }
+
+    pub(crate) fn tool_probe(&self) -> &RecapToolProbeEvidence {
+        &self.tool_probe
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        output: Vec<u8>,
+        effective_model: &str,
+        one_shot_completed: bool,
+        tool_probe: RecapToolProbeEvidence,
+    ) -> Self {
+        Self {
+            output,
+            effective_model: effective_model.to_owned(),
+            one_shot_completed,
+            tool_probe,
+        }
+    }
+}
 
 /// Failures expose fixed codes, never a provider's potentially secret stderr.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +190,48 @@ impl RecapLaunchPlan {
                 Ok(result)
             }
         }
+    }
+
+    /// Parse the fixed certification envelope emitted by a native adapter
+    /// probe. A normal recap result is intentionally not enough: the envelope
+    /// must carry an observed hostile-tool denial and its unchanged sentinel.
+    /// Installed runtimes that cannot emit this evidence remain unsupported.
+    pub(crate) fn parse_probe_output(
+        &self,
+        exit_success: bool,
+        stdout: &[u8],
+        stderr: &[u8],
+    ) -> Result<RecapAdapterObservation, RecapRunFailure> {
+        if stdout.len() > RECAP_OUTPUT_LIMIT || stderr.len() > RECAP_OUTPUT_LIMIT {
+            return Err(RecapRunFailure::OutputLimit);
+        }
+        if !exit_success {
+            return Err(RecapRunFailure::NonzeroExit);
+        }
+        let envelope: RecapProbeEnvelope =
+            serde_json::from_slice(stdout).map_err(|_| RecapRunFailure::InvalidOutput)?;
+        if envelope.kind != "recap_probe"
+            || envelope.result.trim().is_empty()
+            || envelope.result.contains('\0')
+            || envelope.effective_model.trim().is_empty()
+            || envelope.effective_model != envelope.effective_model.trim()
+            || envelope.effective_model.chars().any(char::is_control)
+        {
+            return Err(RecapRunFailure::InvalidOutput);
+        }
+        Ok(RecapAdapterObservation {
+            output: envelope.result.into_bytes(),
+            effective_model: envelope.effective_model,
+            one_shot_completed: envelope.one_shot_completed,
+            tool_probe: RecapToolProbeEvidence {
+                probe_id: envelope.tool_probe.probe_id,
+                tool_name: envelope.tool_probe.tool_name,
+                request_observed: envelope.tool_probe.request_observed,
+                denied_before_effect: envelope.tool_probe.denied_before_effect,
+                sentinel_before: envelope.tool_probe.sentinel_before,
+                sentinel_after: envelope.tool_probe.sentinel_after,
+            },
+        })
     }
 }
 
@@ -554,6 +643,37 @@ fn is_executable(path: &Path) -> bool {
 #[derive(Deserialize)]
 struct HermesUsage {
     model: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecapProbeEnvelope {
+    #[serde(rename = "type")]
+    kind: String,
+    result: String,
+    #[serde(rename = "effectiveModel")]
+    effective_model: String,
+    #[serde(rename = "oneShotCompleted")]
+    one_shot_completed: bool,
+    #[serde(rename = "toolProbe")]
+    tool_probe: RecapToolProbeEnvelope,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecapToolProbeEnvelope {
+    #[serde(rename = "probeId")]
+    probe_id: String,
+    #[serde(rename = "toolName")]
+    tool_name: String,
+    #[serde(rename = "requestObserved")]
+    request_observed: bool,
+    #[serde(rename = "deniedBeforeEffect")]
+    denied_before_effect: bool,
+    #[serde(rename = "sentinelBefore")]
+    sentinel_before: String,
+    #[serde(rename = "sentinelAfter")]
+    sentinel_after: String,
 }
 
 #[derive(Deserialize)]
