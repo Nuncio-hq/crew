@@ -1,14 +1,14 @@
 //! Desktop-governed Crew Wiki generate worker.
 //!
-//! Caller-agnostic engine lives in `crew-wiki`. This command is the default
-//! face: one generate per repo (lock), heuristic unless `CREW_WIKI_API_KEY`
-//! is set on a build with the crate `llm` feature. The legacy preview command
-//! returns unsigned drafts; durable publication signs and journals the complete
-//! snapshot in the native Wiki publication command.
+//! Caller-agnostic engine lives in `crew-wiki`. The legacy preview command
+//! retains its deterministic heuristic generator for compatibility; native
+//! callers can pass an explicit [`WikiRuntimeSelection`] to use a bounded
+//! installed runtime. Selecting a runtime never falls back to the heuristic.
 
+use crate::managed_agents::wiki_runtime::{WikiRuntimeGenerator, WikiRuntimeSelection};
 use crew_wiki::cadence::GenerateLock;
 use crew_wiki::cluster::plan_pages;
-use crew_wiki::generate::{generate_page, HeuristicGenerator};
+use crew_wiki::generate::{generate_page, Generator, HeuristicGenerator};
 use crew_wiki::generate_root::{
     classify_from_git_failure, resolve_wiki_generate_root, WikiGenerateRoot, WikiLocalSnapshotError,
 };
@@ -18,11 +18,67 @@ use crew_wiki::source_folder::capture_folder;
 use crew_wiki::steering::load_captured_steering;
 use crew_wiki::types::WikiPlan;
 use serde::Serialize;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+/// Maximum wall-clock time for one complete native Wiki generation job.
+/// Individual runtime requests remain bounded by the adapter's 180-second
+/// process deadline; this outer budget prevents a large page plan from
+/// extending a job indefinitely.
+pub(crate) const WIKI_RUNTIME_JOB_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 pub(crate) fn generate_lock() -> &'static GenerateLock {
     static LOCK: OnceLock<GenerateLock> = OnceLock::new();
     LOCK.get_or_init(GenerateLock::default)
+}
+
+fn generation_cancels() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    static CANCELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+    CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Register one owner/community/repository generation for explicit cancel.
+pub(crate) fn begin_generation_cancel(key: &str) -> Result<Arc<AtomicBool>, String> {
+    let mut cancels = generation_cancels()
+        .lock()
+        .map_err(|_| "Wiki generation cancellation registry unavailable.".to_string())?;
+    if cancels.contains_key(key) {
+        return Err("Wiki generation is already running for this repository.".to_string());
+    }
+    let token = Arc::new(AtomicBool::new(false));
+    cancels.insert(key.to_owned(), token.clone());
+    Ok(token)
+}
+
+/// Request cancellation of the currently running generation for `key`.
+/// Returns false when no foreground generation owns that key.
+pub(crate) fn cancel_generation(key: &str) -> bool {
+    generation_cancels()
+        .lock()
+        .ok()
+        .and_then(|cancels| cancels.get(key).cloned())
+        .is_some_and(|token| {
+            token.store(true, Ordering::Release);
+            true
+        })
+}
+
+/// Remove a completed generation without clearing a newer replacement.
+pub(crate) fn finish_generation_cancel(key: &str, token: &Arc<AtomicBool>) {
+    if let Ok(mut cancels) = generation_cancels().lock() {
+        if cancels
+            .get(key)
+            .is_some_and(|current| Arc::ptr_eq(current, token))
+        {
+            cancels.remove(key);
+        }
+    }
+}
+
+pub(crate) fn generation_cancel_key(community: &str, coordinate: &str) -> String {
+    format!("{community}:{coordinate}")
 }
 
 /// One unsigned page the renderer signs and publishes.
@@ -111,6 +167,50 @@ pub(crate) fn generate_wiki_pages(
     repo_path: Option<&str>,
     workspace_mode: Option<&str>,
 ) -> Result<WikiGeneration, WikiGenerationError> {
+    generate_wiki_pages_with_runtime(owner, repo_d, repo_path, workspace_mode, None)
+}
+
+/// Capture and generate using an explicitly selected installed runtime.
+///
+/// `None` is reserved for the unsigned legacy preview surface. A native
+/// publication caller that supplies a selection receives a hard failure when
+/// the executable, profile, output or process contract is unavailable.
+pub(crate) fn generate_wiki_pages_with_runtime(
+    owner: &str,
+    repo_d: &str,
+    repo_path: Option<&str>,
+    workspace_mode: Option<&str>,
+    runtime_selection: Option<WikiRuntimeSelection>,
+) -> Result<WikiGeneration, WikiGenerationError> {
+    generate_wiki_pages_with_runtime_and_cancel(
+        owner,
+        repo_d,
+        repo_path,
+        workspace_mode,
+        runtime_selection,
+        None,
+    )
+}
+
+/// Capture and generate with an explicit cancellation flag owned by the
+/// foreground native job. Legacy preview callers use the wrapper above.
+pub(crate) fn generate_wiki_pages_with_runtime_and_cancel(
+    owner: &str,
+    repo_d: &str,
+    repo_path: Option<&str>,
+    workspace_mode: Option<&str>,
+    runtime_selection: Option<WikiRuntimeSelection>,
+    cancel: Option<Arc<AtomicBool>>,
+) -> Result<WikiGeneration, WikiGenerationError> {
+    let started = Instant::now();
+    if cancel
+        .as_ref()
+        .is_some_and(|token| token.load(Ordering::Acquire))
+    {
+        return Err(WikiGenerationError::Failed(
+            "Wiki generation was canceled.".into(),
+        ));
+    }
     let root = match resolve_wiki_generate_root(repo_path) {
         WikiGenerateRoot::MissingLocalPath => return Err(WikiGenerationError::MissingLocalPath),
         WikiGenerateRoot::Ready(root) => root,
@@ -147,12 +247,41 @@ pub(crate) fn generate_wiki_pages(
         .map_err(|error| WikiGenerationError::Failed(error.to_string()))?;
     let plan = plan_pages(&snapshot, steering.as_ref())
         .map_err(|error| WikiGenerationError::Failed(error.to_string()))?;
-    let generator = HeuristicGenerator;
+    if started.elapsed() >= WIKI_RUNTIME_JOB_TIMEOUT {
+        return Err(WikiGenerationError::Failed(
+            "Wiki generation exceeded its job time limit.".into(),
+        ));
+    }
+    let generator: Box<dyn Generator> = match runtime_selection {
+        Some(selection) => Box::new(
+            WikiRuntimeGenerator::installed_with_cancel(
+                selection,
+                cancel
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+            )
+            .map_err(|error| WikiGenerationError::Failed(error.to_string()))?,
+        ),
+        None => Box::new(HeuristicGenerator),
+    };
     let mut drafts = Vec::new();
     for section in &plan.sections {
         for page in &section.pages {
+            if cancel
+                .as_ref()
+                .is_some_and(|token| token.load(Ordering::Acquire))
+            {
+                return Err(WikiGenerationError::Failed(
+                    "Wiki generation was canceled.".into(),
+                ));
+            }
+            if started.elapsed() >= WIKI_RUNTIME_JOB_TIMEOUT {
+                return Err(WikiGenerationError::Failed(
+                    "Wiki generation exceeded its job time limit.".into(),
+                ));
+            }
             drafts.push(
-                generate_page(&generator, page, &snapshot, &plan.language)
+                generate_page(generator.as_ref(), page, &snapshot, &plan.language)
                     .map_err(|error| WikiGenerationError::Failed(error.to_string()))?,
             );
         }
@@ -181,11 +310,11 @@ pub async fn wiki_generate(
         .acquire(&key)
         .map_err(|err| err.to_string())?;
 
-    let cost_note = if std::env::var("CREW_WIKI_API_KEY").is_ok() {
-        "OpenAI-compatible generator (CREW_WIKI_API_KEY)".to_string()
-    } else {
-        "Heuristic generator · no API key billed".to_string()
-    };
+    // This unsigned preview command intentionally remains deterministic while
+    // the native publication path requires an explicit installed runtime.
+    // Do not infer a provider or billing claim from an environment variable.
+    let cost_note =
+        "Deterministic preview generator · select an installed runtime to publish".to_string();
 
     let generation = match generate_wiki_pages(&owner, &repo_d, repo_path.as_deref(), Some("git")) {
         Ok(generation) => generation,

@@ -4,7 +4,7 @@ use super::BOUNDED_CREATION_FLAGS;
 #[cfg(unix)]
 use super::KILL_GRACE;
 use super::{BoundedFailure, CLEANUP_BUDGET, POLL_INTERVAL};
-use std::process::{ChildStderr, ChildStdout, Command, ExitStatus};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
 use std::time::Instant;
 
 /// A spawned child plus ownership of its descendant tree, torn down on *every*
@@ -199,6 +199,11 @@ impl BoundedChild {
     /// configures `Stdio::piped()` before spawn.
     pub(super) fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.stdout.take()
+    }
+
+    /// Take the child stdin when a bounded caller supplies a prompt payload.
+    pub(super) fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
     }
 
     /// Take the captured stderr pipe.
