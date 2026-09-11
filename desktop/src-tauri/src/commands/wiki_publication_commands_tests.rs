@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::owner_operations::{Operation, OperationScope, OperationSummary};
+use std::sync::atomic::Ordering;
 
 fn summary(
     sequence: i64,
@@ -126,6 +127,31 @@ fn foreground_decision_rejects_a_row_of_another_kind() {
     let mut foreign = row(4, false, OperationStatus::Reconciling);
     foreign.kind = OperationKind::ProjectChange;
     assert!(foreground_decision(foreign, 4, false).is_err());
+}
+
+#[test]
+fn cancel_signal_is_not_emitted_when_the_durable_update_fails() {
+    let key = crate::wiki_worker::generation_cancel_key(
+        "https://one.example",
+        "30617:owner:repo",
+        "operation",
+        4,
+    );
+    let token = crate::wiki_worker::begin_generation_cancel(&key).expect("generation token");
+
+    let failed = signal_generation_after_cancel::<()>(Err("journal unavailable".into()), &key);
+    assert_eq!(
+        failed.as_ref().err().map(String::as_str),
+        Some("journal unavailable")
+    );
+    assert!(
+        !token.load(Ordering::Acquire),
+        "a failed cancellation CAS must not stop the foreground generation"
+    );
+
+    signal_generation_after_cancel(Ok(()), &key).expect("successful cancellation signal");
+    assert!(token.load(Ordering::Acquire));
+    crate::wiki_worker::finish_generation_cancel(&key, &token);
 }
 
 fn row(revision: u64, reconciled: bool, status: OperationStatus) -> Operation {

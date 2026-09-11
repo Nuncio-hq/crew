@@ -476,6 +476,8 @@ export function WikiLibraryScreen() {
                   recoveryPending={recovery.isPending}
                   regeneratePending={recovery.isPending}
                   owner={repo.owner}
+                  operationScope={operationScope}
+                  repoD={repo.dtag}
                   updatedAt={toc?.generatedAt ?? null}
                 />
               );

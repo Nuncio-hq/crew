@@ -14,6 +14,7 @@ import {
 } from "@/features/wiki/lib/wikiEvents";
 import type { OwnerOperationScope } from "@/shared/api/ownerOperations";
 import type { RelayEvent } from "@/shared/api/types";
+import { WikiRuntimeSettingsControl } from "@/features/wiki/ui/WikiRuntimeSettingsControl";
 
 export function WikiHeaderControls({
   toc,
@@ -96,6 +97,13 @@ export function WikiHeaderControls({
               : "Never generated"}
       </span>
       <span>⑂ {toc?.branch || "main"}</span>
+      {canGenerate ? (
+        <WikiRuntimeSettingsControl
+          expected={operationScope}
+          owner={owner}
+          repoD={repoD}
+        />
+      ) : null}
       {showCadence && canEditOwner ? (
         <label className="flex items-center gap-1">
           Auto:

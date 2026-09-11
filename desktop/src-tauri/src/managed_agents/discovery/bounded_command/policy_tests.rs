@@ -30,6 +30,20 @@ fn configured_stdin_handle_reaches_child() {
 }
 
 #[test]
+fn bounded_stdin_writer_cannot_wedge_on_a_child_that_never_reads() {
+    let result = output_with_policy_and_stdin(
+        shell("exec sleep 30"),
+        Some(vec![b'x'; 128 * 1024]),
+        BoundedPolicy {
+            timeout: Duration::from_millis(50),
+            ..per_stream(64)
+        },
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.unwrap_err(), BoundedFailure::Deadline);
+}
+
+#[test]
 fn each_stream_has_its_own_enforced_budget() {
     for (script, failure) in [
         ("head -c 65 /dev/zero", BoundedFailure::StdoutLimit),
