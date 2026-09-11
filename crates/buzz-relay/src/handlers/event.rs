@@ -2450,11 +2450,10 @@ mod tests {
                 "the writer-backed sweep must close an idle revoked socket"
             );
             assert!(sweep_conn.cancel.is_cancelled());
-            assert!(matches!(
-                sweep_ctrl.try_recv(),
-                Ok(axum::extract::ws::Message::Text(text))
-                    if text.contains("OK") && text.contains("false")
-            ));
+            assert!(
+                matches!(sweep_ctrl.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+                "a background sweep closes the socket without an unsolicited event ACK"
+            );
             state.conn_manager.deregister(sweep_conn.conn_id);
 
             let (req_conn, _req_rx, mut req_ctrl) =
