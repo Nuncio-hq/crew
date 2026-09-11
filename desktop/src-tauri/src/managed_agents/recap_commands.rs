@@ -6,7 +6,7 @@
 //! never replaces relay-authoritative thread state.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -24,6 +24,8 @@ const RECAPS_DIRECTORY: &str = "recaps";
 const MAX_SETTINGS_BYTES: usize = 32 * 1024;
 const MAX_RECAP_BYTES: usize = 512 * 1024;
 const MAX_SOURCE_EVENTS: usize = 256;
+const MAX_SOURCE_SCAN_EVENTS: usize = 4096;
+const SOURCE_PAGE_LIMIT: usize = 500;
 const MAX_RECAP_ENTRIES: usize = 100;
 const MAX_RECAP_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_GENERATION_ID_BYTES: usize = 128;
@@ -47,6 +49,13 @@ const THREAD_SOURCE_KINDS: [u32; 11] = [
     43005,
     43006,
     buzz_core_pkg::kind::KIND_HUDDLE_STARTED,
+];
+
+const THREAD_AUX_KINDS: [u32; 4] = [
+    buzz_core_pkg::kind::KIND_DELETION,
+    buzz_core_pkg::kind::KIND_REACTION,
+    buzz_core_pkg::kind::KIND_NIP29_DELETE_EVENT,
+    buzz_core_pkg::kind::KIND_STREAM_MESSAGE_EDIT,
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -237,9 +246,37 @@ fn read_private_json(path: &std::path::Path, limit: usize) -> Result<Option<Vec<
             return Err("state_ownership".to_string());
         }
     }
-    std::fs::read(path)
-        .map(Some)
-        .map_err(|_| "state_io".to_string())
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let file = options.open(path).map_err(|_| "state_io".to_string())?;
+    let opened = file.metadata().map_err(|_| "state_io".to_string())?;
+    if !opened.is_file() || opened.len() > limit as u64 {
+        return Err("state_ownership".to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.uid() != rustix::process::getuid().as_raw()
+            || opened.mode() & 0o077 != 0
+            || opened.dev() != metadata.dev()
+            || opened.ino() != metadata.ino()
+        {
+            return Err("state_ownership".to_string());
+        }
+    }
+    let mut bytes = Vec::with_capacity(opened.len().min(limit as u64) as usize);
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "state_io".to_string())?;
+    if bytes.len() > limit {
+        return Err("state_ownership".to_string());
+    }
+    Ok(Some(bytes))
 }
 
 fn load_settings<R: tauri::Runtime>(
@@ -498,6 +535,8 @@ fn load_artifact<R: tauri::Runtime>(
             || artifact.channel_id != channel_id
             || artifact.root_event_id != root_event_id
             || !valid_generation_id(&artifact.recap.generation_id)
+            || artifact.recap.text.len() > super::recap_adapter::RECAP_OUTPUT_LIMIT
+            || artifact.recap.source_event_ids.len() > MAX_SOURCE_EVENTS
             || !artifact
                 .recap
                 .source_event_ids
@@ -672,10 +711,11 @@ fn validate_settings(
     } else if settings.profile_ref.is_some() {
         return Err("profile_mismatch".to_string());
     }
-    if let Some(model) = settings.requested_model.as_deref() {
-        if !runtime.models.iter().any(|candidate| candidate == model) {
-            return Err("invalid_model_selection".to_string());
-        }
+    let Some(model) = settings.requested_model.as_deref() else {
+        return Err("missing_selection".to_string());
+    };
+    if !runtime.models.iter().any(|candidate| candidate == model) {
+        return Err("invalid_model_selection".to_string());
     }
     Ok(normalized)
 }
@@ -780,11 +820,32 @@ fn source_manifest_event(event: &nostr::Event) -> Result<SourceManifestEvent, St
 
 fn build_thread_source(
     mut events: Vec<nostr::Event>,
+    auxiliary_events: Vec<nostr::Event>,
     channel_id: &str,
     root_event_id: &str,
 ) -> Result<ThreadSource, String> {
     let omitted_by_source_cap = events.len().saturating_sub(MAX_SOURCE_EVENTS) as u32;
-    events.truncate(MAX_SOURCE_EVENTS);
+    if events.len() > MAX_SOURCE_EVENTS {
+        let root = events
+            .iter()
+            .find(|event| event.id.to_hex() == root_event_id)
+            .cloned()
+            .ok_or_else(|| "source_unavailable".to_string())?;
+        events = events.into_iter().rev().take(MAX_SOURCE_EVENTS).collect();
+        if !events
+            .iter()
+            .any(|event| event.id.to_hex() == root_event_id)
+        {
+            events.pop();
+            events.push(root);
+        }
+        events.sort_by(|left, right| {
+            left.created_at
+                .as_secs()
+                .cmp(&right.created_at.as_secs())
+                .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
+        });
+    }
     let Some(root_index) = events
         .iter()
         .position(|event| event.id.to_hex() == root_event_id)
@@ -834,7 +895,16 @@ fn build_thread_source(
         return Err("input_limit".to_string());
     }
 
-    let manifest_events = events
+    let mut manifest_source_events = events.clone();
+    manifest_source_events.extend(auxiliary_events);
+    manifest_source_events.sort_by(|left, right| {
+        left.created_at
+            .as_secs()
+            .cmp(&right.created_at.as_secs())
+            .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
+    });
+    manifest_source_events.dedup_by(|left, right| left.id == right.id);
+    let manifest_events = manifest_source_events
         .iter()
         .map(source_manifest_event)
         .collect::<Result<Vec<_>, _>>()?;
@@ -890,30 +960,60 @@ async fn collect_thread_source(
         return Err("source_unavailable".to_string());
     };
 
-    let replies = super::super::relay::query_relay_at_with_keys(
-        state,
-        &relay_http,
-        &[serde_json::json!({
+    let mut replies = Vec::new();
+    let mut cursor: Option<(u64, String)> = None;
+    let mut scan_complete = false;
+    loop {
+        let mut filter = serde_json::json!({
             "#e": [root_event_id],
             "#h": [channel_id],
             "kinds": THREAD_SOURCE_KINDS,
             "depth_limit": 64,
-            "limit": MAX_SOURCE_EVENTS as u32,
-            "include_aux": true,
-        })],
-        &owner_scope.keys,
-        None,
-    )
-    .await
-    .map_err(|_| "source_unavailable".to_string())?;
+            "limit": SOURCE_PAGE_LIMIT as u32,
+        });
+        if let Some((created_at, event_id)) = cursor.as_ref() {
+            filter["thread_cursor"] = serde_json::json!(created_at);
+            filter["thread_cursor_id"] = serde_json::json!(event_id);
+        }
+        let page = super::super::relay::query_relay_at_with_keys(
+            state,
+            &relay_http,
+            &[filter],
+            &owner_scope.keys,
+            None,
+        )
+        .await
+        .map_err(|_| "source_unavailable".to_string())?;
+        let page_len = page.len();
+        let last = page
+            .last()
+            .map(|event| (event.created_at.as_secs(), event.id.to_hex()));
+        replies.extend(
+            page.into_iter()
+                .filter(|event| event_in_channel(event, channel_id)),
+        );
+        if page_len < SOURCE_PAGE_LIMIT {
+            scan_complete = true;
+            break;
+        }
+        if replies.len() >= MAX_SOURCE_SCAN_EVENTS {
+            break;
+        }
+        let Some(next_cursor) = last else {
+            break;
+        };
+        if cursor.as_ref() == Some(&next_cursor) {
+            break;
+        }
+        cursor = Some(next_cursor);
+    }
+    if !scan_complete {
+        return Err("source_limit".to_string());
+    }
 
     let mut events = Vec::with_capacity(replies.len() + 1);
     events.push(root);
-    events.extend(
-        replies
-            .into_iter()
-            .filter(|event| event_in_channel(event, channel_id)),
-    );
+    events.extend(replies);
     events.sort_by(|left, right| {
         left.created_at
             .as_secs()
@@ -921,7 +1021,32 @@ async fn collect_thread_source(
             .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
     });
     events.dedup_by(|left, right| left.id == right.id);
-    build_thread_source(events, channel_id, root_event_id)
+    let target_ids = events
+        .iter()
+        .map(|event| event.id.to_hex())
+        .collect::<Vec<_>>();
+    let auxiliary_events = if target_ids.is_empty() {
+        Vec::new()
+    } else {
+        super::super::relay::query_relay_at_with_keys(
+            state,
+            &relay_http,
+            &[serde_json::json!({
+                "#e": target_ids,
+                "#h": [channel_id],
+                "kinds": THREAD_AUX_KINDS,
+                "limit": MAX_SOURCE_SCAN_EVENTS as u32,
+            })],
+            &owner_scope.keys,
+            None,
+        )
+        .await
+        .map_err(|_| "source_unavailable".to_string())?
+        .into_iter()
+        .filter(|event| event_in_channel(event, channel_id))
+        .collect()
+    };
+    build_thread_source(events, auxiliary_events, channel_id, root_event_id)
 }
 
 /// Read the latest owner-local artifact and compare it with the current thread
@@ -1081,23 +1206,45 @@ pub(crate) async fn generate_thread_recap(
     if settings.mode != RecapMode::Manual {
         return Err("recap_off".to_string());
     }
-    let Some(runtime) = snapshot
+    let Some(_runtime) = snapshot
         .runtimes
         .iter()
         .find(|runtime| runtime.id == runtime_id && runtime.availability == "supported")
     else {
         return Err("runtime_not_ready".to_string());
     };
+    let key = generation_key(&relay_origin, &viewer_pubkey, &channel_id, &root_event_id);
+    let cancelled = register_generation(&key, &generation_id)?;
     let model = settings
         .requested_model
         .clone()
-        .or_else(|| runtime.models.first().cloned())
-        .ok_or_else(|| "invalid_model_selection".to_string())?;
-    let source = collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id).await?;
-    crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await?;
-    let settings_fingerprint = settings_fingerprint(&settings)?;
-    let key = generation_key(&relay_origin, &viewer_pubkey, &channel_id, &root_event_id);
-    let cancelled = register_generation(&key, &generation_id)?;
+        .ok_or_else(|| "missing_selection".to_string())?;
+    let source =
+        match collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id).await {
+            Ok(source) => source,
+            Err(error) => {
+                unregister_generation(&key, &generation_id);
+                return Err(error);
+            }
+        };
+    if let Err(error) =
+        crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await
+    {
+        cancelled.store(true, Ordering::Release);
+        unregister_generation(&key, &generation_id);
+        return Err(error);
+    }
+    if cancelled.load(Ordering::Acquire) {
+        unregister_generation(&key, &generation_id);
+        return Err("cancelled".to_string());
+    }
+    let settings_fingerprint = match settings_fingerprint(&settings) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => {
+            unregister_generation(&key, &generation_id);
+            return Err(error);
+        }
+    };
     // Close the capture/register race: a settings, identity, or relay change
     // that lands after source collection must still prevent this generation
     // from reaching the provider. Once registered, the cancellation flag also
@@ -1297,8 +1444,13 @@ mod tests {
             channel_id,
         );
         let root_id = root.id.to_hex();
-        let source =
-            build_thread_source(vec![root, older, newest_too_large], channel_id, &root_id).unwrap();
+        let source = build_thread_source(
+            vec![root, older, newest_too_large],
+            Vec::new(),
+            channel_id,
+            &root_id,
+        )
+        .unwrap();
         assert_eq!(source.event_ids.len(), 2);
         assert_eq!(source.omitted_message_count, 1);
         assert!(source.prompt.contains("root"));
@@ -1311,14 +1463,20 @@ mod tests {
         let channel_id = "550e8400-e29b-41d4-a716-446655440000";
         let root = event("root", 1, channel_id);
         let root_id = root.id.to_hex();
-        let first = build_thread_source(vec![root.clone()], channel_id, &root_id).unwrap();
+        let first =
+            build_thread_source(vec![root.clone()], Vec::new(), channel_id, &root_id).unwrap();
         let changed = event("changed", 1, channel_id);
         let changed_id = changed.id.to_hex();
-        let changed_source = build_thread_source(vec![changed], channel_id, &changed_id).unwrap();
+        let changed_source =
+            build_thread_source(vec![changed], Vec::new(), channel_id, &changed_id).unwrap();
         assert_ne!(first.manifest_hash, changed_source.manifest_hash);
-        let other_scope =
-            build_thread_source(vec![root], "6ba7b810-9dad-11d1-80b4-00c04fd430c8", &root_id)
-                .unwrap();
+        let other_scope = build_thread_source(
+            vec![root],
+            Vec::new(),
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            &root_id,
+        )
+        .unwrap();
         assert_ne!(first.manifest_hash, other_scope.manifest_hash);
     }
 }
