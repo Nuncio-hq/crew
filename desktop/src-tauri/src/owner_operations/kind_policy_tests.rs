@@ -8,11 +8,32 @@ fn scope(community: &str) -> OperationScope {
     }
 }
 fn new(kind: OperationKind, resource: &str, body: String) -> NewOperation {
+    let payload = if kind == OperationKind::ManagedAgentDelete {
+        json!({
+            "version": 1,
+            "fence": {
+                "pubkey": resource,
+                "name": "agent",
+                "created_at": "created",
+                "relay_url": "wss://relay.example",
+                "backend_agent_id": null
+            },
+            "channels": [],
+            "local_removed": false,
+            "key_removed": false,
+            "tombstone_enqueued": false,
+            "failures": 0,
+            "last_error": null,
+            "body": body
+        })
+    } else {
+        json!({"body":body})
+    };
     NewOperation {
         id: uuid::Uuid::new_v4().to_string(),
         kind,
         resource_key: resource.into(),
-        payload: json!({"body":body}),
+        payload,
     }
 }
 fn created(result: CreateResult) -> Operation {
@@ -304,4 +325,51 @@ fn durable_core_other_kinds_keep_larger_record_admission() {
     );
     assert!(serde_json::to_vec(&op).unwrap().len() > 1024 * 1024);
     assert_eq!(store.load(&owner, &op.id).unwrap(), op);
+}
+
+#[test]
+fn durable_core_managed_agent_delete_record_is_bounded() {
+    const CAP: usize = 64 * 1024;
+    let (_dir, mut store) = fixture(Limits::default());
+    let owner = scope("https://one.example");
+    let template = created(
+        store
+            .create(
+                &owner,
+                new(
+                    OperationKind::ManagedAgentDelete,
+                    &"a".repeat(64),
+                    String::new(),
+                ),
+                100,
+            )
+            .unwrap(),
+    );
+    let overhead = serde_json::to_vec(&template).unwrap().len();
+    let exact = created(
+        store
+            .create(
+                &owner,
+                new(
+                    OperationKind::ManagedAgentDelete,
+                    &"b".repeat(64),
+                    "x".repeat(CAP - overhead),
+                ),
+                100,
+            )
+            .unwrap(),
+    );
+    assert_eq!(serde_json::to_vec(&exact).unwrap().len(), CAP);
+    assert!(matches!(
+        store.create(
+            &owner,
+            new(
+                OperationKind::ManagedAgentDelete,
+                &"c".repeat(64),
+                "x".repeat(CAP - overhead + 1),
+            ),
+            100,
+        ),
+        Err(StoreError::Quota)
+    ));
 }

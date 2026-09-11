@@ -31,6 +31,7 @@ pub(super) fn kind_key(kind: OperationKind) -> &'static str {
         OperationKind::ProjectChange => "project-change",
         OperationKind::ThreadHandoff => "thread-handoff",
         OperationKind::ChannelCrewConfig => "channel-crew-config",
+        OperationKind::ManagedAgentDelete => "managed-agent-delete",
     }
 }
 
@@ -155,7 +156,7 @@ impl OperationStore {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(sql_error)?;
-        if version != 0 && version != 1 {
+        if version != 0 && version != 1 && version != 2 {
             return Err(StoreError::Version);
         }
         connection
@@ -176,8 +177,31 @@ impl OperationStore {
             }
             tx.execute_batch(include_str!("schema.sql"))
                 .map_err(sql_error)?;
-        } else if version != 1 {
+        } else if version != 1 && version != 2 {
             return Err(StoreError::Version);
+        }
+        if version <= 1 {
+            tx.execute_batch(include_str!("managed_delete_migration.sql"))
+                .map_err(sql_error)?;
+        } else {
+            let index_sql: Option<String> = tx
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name='unresolved_managed_agent_delete'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            let Some(index_sql) = index_sql else {
+                return Err(StoreError::Corrupt);
+            };
+            let normalized = index_sql.to_ascii_lowercase();
+            if !normalized.contains("unique index unresolved_managed_agent_delete")
+                || !normalized.contains("kind = 'managed-agent-delete'")
+                || !normalized.contains("reconciled = 0")
+            {
+                return Err(StoreError::Corrupt);
+            }
         }
         tx.commit().map_err(sql_error)?;
         Ok(Self { connection, limits })

@@ -364,6 +364,7 @@ fn start_pair(
     app: AppHandle,
 ) -> Result<ManagedAgentRuntimeStatus, String> {
     let state = app.state::<AppState>();
+    let journal = crate::managed_agent_delete::open_journal_store(&app)?;
     let _transition = state
         .managed_agent_runtime_transition
         .lock()
@@ -375,6 +376,12 @@ fn start_pair(
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
+    if crate::managed_agent_delete::pending_in_store(&journal, &pubkey)? {
+        return Err(
+            "agent deletion is still unresolved; retry the durable deletion before starting it"
+                .into(),
+        );
+    }
     let mut records = load_managed_agents(&app)?;
     let record = find_managed_agent_mut(&mut records, &pubkey)?;
     if record.backend != BackendKind::Local {
