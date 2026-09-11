@@ -883,6 +883,7 @@ pub(crate) async fn generate_thread_recap(
     let request = RecapRequest {
         runtime_id: runtime_id.clone(),
         model: model.clone(),
+        profile_ref: settings.profile_ref.clone(),
         input: source.prompt.clone(),
     };
     let app_for_run = app.clone();

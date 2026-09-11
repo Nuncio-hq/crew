@@ -24,6 +24,47 @@ fn selection() -> RecapSelection {
     }
 }
 
+fn known_contract() -> RecapRuntimeContract {
+    super::super::known_acp_runtime_exact("claude")
+        .expect("catalog contains claude")
+        .recap_contract()
+}
+
+fn tool_probe() -> RecapToolProbeEvidence {
+    RecapToolProbeEvidence {
+        probe_id: "crew-recap-hostile-tool-v1".into(),
+        tool_name: "context_engine".into(),
+        request_observed: true,
+        denied_before_effect: true,
+        sentinel_before: "a".repeat(64),
+        sentinel_after: "a".repeat(64),
+    }
+}
+
+fn probe() -> RecapProbeAttestation {
+    RecapProbeAttestation {
+        runtime_id: "claude".into(),
+        executable: RecapExecutableIdentity {
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            ..identity()
+        },
+        selection: RecapSelection {
+            model: "claude-fable-5-1".into(),
+            ..selection()
+        },
+        auth: RecapAuthBinding {
+            service: "test-keyring-service".into(),
+            reference: "test-auth-reference".into(),
+        },
+        one_shot_completed: true,
+        tool_probe: tool_probe(),
+        output: b"bounded recap output".to_vec(),
+        effective_model: "claude-fable-5-1".into(),
+        state_unchanged: true,
+        process_reaped: true,
+    }
+}
+
 #[test]
 fn missing_executable_is_not_an_unsupported_installed_runtime() {
     assert_eq!(
@@ -246,5 +287,86 @@ fn explicit_model_contract_rejects_profile_bearing_proof() {
     assert_eq!(
         admit_runtime_ready("fixture", candidate(), &proof, &selected),
         Err(RecapFailure::ProfileMismatch)
+    );
+}
+
+#[test]
+fn bounded_probe_is_the_only_path_to_a_positive_certification() {
+    let certification = RecapRuntimeCertification::from_probe(known_contract(), probe())
+        .expect("complete adapter evidence should certify");
+    let parts = certification.parts();
+    assert_eq!(parts.runtime_id, "claude");
+    assert_eq!(parts.effective_model, parts.selection.model);
+    assert_eq!(parts.output_digest.len(), 64);
+    assert_eq!(parts.tool_probe_digest.len(), 64);
+    assert!(parts.guarantees.one_shot);
+    assert!(parts.guarantees.tool_isolation);
+    assert!(parts.guarantees.state_isolation);
+    assert!(parts.guarantees.process_containment);
+}
+
+#[test]
+fn certification_requires_catalog_identity_and_all_probe_evidence() {
+    let mut invalid = probe();
+    invalid.runtime_id = "unknown-runtime".into();
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::RuntimeMismatch)
+    );
+
+    let mut invalid = probe();
+    invalid.one_shot_completed = false;
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::UnsupportedOneShot)
+    );
+
+    let mut invalid = probe();
+    invalid.tool_probe.request_observed = false;
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::InvalidToolProbeEvidence)
+    );
+
+    let mut invalid = probe();
+    invalid.tool_probe.sentinel_after = "b".repeat(64);
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::InvalidToolProbeEvidence)
+    );
+
+    let mut invalid = probe();
+    invalid.effective_model = "other-model".into();
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::EffectiveModelMismatch)
+    );
+
+    let mut invalid = probe();
+    invalid.output = Vec::new();
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::EmptyProbeOutput)
+    );
+
+    let mut invalid = probe();
+    invalid.state_unchanged = false;
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::ProbeStateChanged)
+    );
+
+    let mut invalid = probe();
+    invalid.process_reaped = false;
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::ProbeProcessNotReaped)
+    );
+
+    let mut invalid = probe();
+    invalid.auth.service = "".into();
+    assert_eq!(
+        RecapRuntimeCertification::from_probe(known_contract(), invalid),
+        Err(RecapFailure::InvalidAuthBinding)
     );
 }

@@ -5,18 +5,20 @@ use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
-fn only_the_catalogued_claude_recipe_can_reach_this_service() {
+fn only_the_catalogued_native_recipes_can_reach_this_service() {
     let claude = contract_for_runtime("claude").expect("Claude is the wired adapter");
     assert_eq!(claude.command, Some("claude"));
     assert_eq!(claude.selection, RecapSelectionContract::ExplicitModel);
-    assert!(contract_for_runtime("hermes").is_none());
+    let hermes = contract_for_runtime("hermes").expect("Hermes is the wired adapter");
+    assert_eq!(hermes.command, Some("hermes"));
+    assert_eq!(hermes.selection, RecapSelectionContract::StagingProfile);
     assert!(contract_for_runtime("codex").is_none());
 }
 
 fn admission(executable: &std::path::Path, model: &str) -> RecapAdmission {
     let fingerprint = hex::encode(Sha256::digest(std::fs::read(executable).unwrap()));
     RecapAdmission {
-        runtime_id: RECAP_RUNTIME_ID.to_string(),
+        runtime_id: "claude".to_string(),
         executable: super::super::recap_capability::RecapExecutableIdentity {
             resolved_path: executable.to_path_buf(),
             version: "fixture-1".to_string(),

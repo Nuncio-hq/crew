@@ -15,7 +15,11 @@ use tauri::AppHandle;
 use crate::app_state::AppState;
 
 mod legacy_migration;
+mod recap;
 pub use legacy_migration::migrate_legacy_retention_db;
+pub(crate) use recap::{
+    get_recap_certification, persist_recap_certification, RECAP_CERTIFICATION_SCHEMA,
+};
 
 /// Durable event-retention scope for one community relay and owner identity.
 ///
@@ -146,6 +150,8 @@ pub fn open_retention_db(path: &Path) -> Result<Connection, String> {
         );",
     )
     .map_err(|e| format!("failed to create retention table: {e}"))?;
+    conn.execute_batch(RECAP_CERTIFICATION_SCHEMA)
+        .map_err(|e| format!("failed to create recap certification table: {e}"))?;
 
     Ok(conn)
 }

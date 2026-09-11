@@ -476,25 +476,25 @@ discovery remains `hermes-acp` first. Other candidates use the existing
 `underlying_cli` metadata. The native
 CLI candidate and its model/profile selection contract are inventory, not proof
 of one-shot support. `classify_recap` currently returns only failure states;
-the five registered recap commands expose a typed settings/cache/generation
-boundary, but remain fail-closed until the ownership loader supplies a
-separately bound runtime-ready grant and an authenticated thread-source adapter.
+there is no positive capability cache or runnable recap UI. A registered native
+command remains fail-closed until the ownership loader supplies a separately
+bound runtime-ready grant.
 [#356](https://github.com/Nuncio-hq/crew/issues/356) remains dependent on a proven
 runtime combination. Ordinary agent/ACP readiness is a separate contract.
 
-The default-off source slice contains a fixed Claude candidate argv/parser,
-private disposable-state ownership, a native-only runtime-ready grant loader,
-and the existing bounded discovery process helper extended with caller-owned
-stdin, cancellation and per-stream budgets. The registered recap service binds
-those pieces at one production seam, persists one owner-local settings snapshot,
-loads bounded recap cache entries, and keeps generation unavailable until both
-the grant and authenticated source adapter exist. It never fabricates a recap
-when either prerequisite is absent.
-The Claude recipe remains unapproved for generation. Its native `--tools ''`
-flag is not sufficient to establish that all hooks are disabled. A Unix process
-group bounds ordinary descendants but does not contain a `setsid` escape;
-reader shutdown is not evidence that an escaped process exited. No production
-OS-sandbox recipe is enabled.
+The default-off source slice contains fixed Claude and Hermes candidate
+argv/parsers, private disposable-state ownership, a native-only runtime-ready
+grant loader, and the existing bounded discovery process helper extended with
+caller-owned stdin, cancellation and per-stream budgets. The registered recap
+service binds those pieces at one production seam and keeps its command
+unavailable without the grant.
+Hermes copies the selected profile into the disposable run, disables its
+configured MCP path and rule injection, binds a one-shot prompt, and checks the
+written usage model before accepting output. On macOS its plan is launched
+through the fixed `sandbox-exec` process-fork denial policy; the ordinary Unix
+process-group limitation and any escaped-descendant caveat still apply to the
+bounded owner. Neither recipe has a positive staging grant in the current
+inventory, so these adapter tests are not runtime acceptance.
 
 The staging ownership loader reads only native `app_data_dir()` plus
 `crew-staging-ownership-v1.json`. It verifies compiled demo identity, actual
@@ -520,6 +520,16 @@ unexamined; the 1,024-entry sweep is not proof of complete recovery. Repeated
 unknown-entry flooding can delay reclamation, and pending-process roots require
 separate verified ownership recovery. Non-Unix private-state ACLs are unproved
 and rejected.
+
+Thread source collection follows the bridge's chronological reply cursor with a
+bounded forward scan (4,096 combined source and auxiliary rows, 16 MiB of
+serialized event footprint). The source builder then keeps the newest complete
+messages observed that fit the 256-event and 128-KiB prompt limits.
+When the scan ceiling is reached, collection returns `source_limit` and writes
+no artifact, so a bounded prefix is never mistaken for a proven newest/EOF
+snapshot. Auxiliary edits and deletions are projected onto their referenced
+timeline messages before prompt selection; reactions remain manifest-only and
+do not enter the recap prompt.
 
 ### Bounded inventory limits (2026-09-10)
 

@@ -196,3 +196,70 @@ fn model_cannot_be_an_argv_option() {
         ));
     }
 }
+
+#[test]
+fn hermes_plan_copies_profile_and_requires_matching_usage_model() {
+    let fixture = tempfile::tempdir().unwrap();
+    let profile = fixture.path().join("source").join("profiles").join("scout");
+    let root = fixture.path().join("run");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    let executable = fixture.path().join("hermes");
+    std::fs::write(&executable, b"fixture").unwrap();
+
+    let plan =
+        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap();
+    let usage = plan.usage_file.clone().unwrap();
+    std::fs::write(&usage, r#"{"model":"hermes-low"}"#).unwrap();
+    assert!(root.join("hermes/profiles/scout/config.yaml").is_file());
+    let bound = bind_hermes_prompt(plan, b"thread input").unwrap();
+    assert_eq!(bound.args.last().unwrap(), "thread input");
+    assert_eq!(
+        bound.parse_output(true, b"Hermes recap", b""),
+        Ok("Hermes recap".into())
+    );
+
+    std::fs::write(&usage, r#"{"model":"other-model"}"#).unwrap();
+    assert_eq!(
+        bound.parse_output(true, b"Hermes recap", b""),
+        Err(RecapRunFailure::ModelRequestedOnly)
+    );
+}
+
+#[test]
+fn hermes_profile_copy_rejects_symlinked_entries() {
+    let fixture = tempfile::tempdir().unwrap();
+    let profile = fixture.path().join("profiles").join("scout");
+    let root = fixture.path().join("run");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(fixture.path().join("outside"), b"outside").unwrap();
+    std::os::unix::fs::symlink(fixture.path().join("outside"), profile.join("link")).unwrap();
+    let error = hermes_recap_plan(
+        &fixture.path().join("hermes"),
+        &root,
+        "hermes-low",
+        &profile,
+        b"input",
+    )
+    .unwrap_err();
+    assert_eq!(error, RecapRunFailure::ProfileUnavailable);
+}
+
+#[test]
+fn hermes_profile_ref_accepts_only_home_or_named_profile_shape() {
+    assert_eq!(
+        hermes_profile_ref(Path::new("/staging/.hermes")),
+        Some("default".to_string())
+    );
+    assert_eq!(
+        hermes_profile_ref(Path::new("/staging/.hermes/profiles/scout")),
+        Some("scout".to_string())
+    );
+    assert_eq!(hermes_profile_ref(Path::new("/staging/scout")), None);
+    assert_eq!(
+        hermes_profile_ref(Path::new("/staging/profiles/default")),
+        None
+    );
+}

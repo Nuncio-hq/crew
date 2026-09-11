@@ -276,8 +276,9 @@ pub(super) async fn collect_thread_source(
     };
 
     let mut replies = Vec::new();
-    let mut reply_bytes = event_footprint_bytes(&root);
-    if reply_bytes > MAX_SOURCE_SCAN_BYTES {
+    let mut scanned_events = 1usize;
+    let mut scanned_bytes = event_footprint_bytes(&root);
+    if scanned_bytes > MAX_SOURCE_SCAN_BYTES {
         return Err("source_limit".to_string());
     }
     let mut cursor: Option<(u64, String)> = None;
@@ -308,15 +309,13 @@ pub(super) async fn collect_thread_source(
             .last()
             .map(|event| (event.created_at.as_secs(), event.id.to_hex()));
         for event in page {
+            scanned_events = scanned_events.saturating_add(1);
+            scanned_bytes = scanned_bytes.saturating_add(event_footprint_bytes(&event));
+            if scanned_events > MAX_SOURCE_SCAN_EVENTS || scanned_bytes > MAX_SOURCE_SCAN_BYTES {
+                return Err("source_limit".to_string());
+            }
             if !event_is_thread_source(&event) || !event_in_channel(&event, channel_id) {
                 continue;
-            }
-            if replies.len() >= MAX_SOURCE_SCAN_EVENTS {
-                return Err("source_limit".to_string());
-            }
-            reply_bytes = reply_bytes.saturating_add(event_footprint_bytes(&event));
-            if reply_bytes > MAX_SOURCE_SCAN_BYTES {
-                return Err("source_limit".to_string());
             }
             replies.push(event);
         }
@@ -354,7 +353,6 @@ pub(super) async fn collect_thread_source(
         .map(|event| event.id.to_hex())
         .collect::<Vec<_>>();
     let mut auxiliary_events = Vec::new();
-    let mut auxiliary_bytes = 0usize;
     let mut aux_cursor: Option<(u64, String)> = None;
     if !target_ids.is_empty() {
         loop {
@@ -381,11 +379,10 @@ pub(super) async fn collect_thread_source(
                 .last()
                 .map(|event| (event.created_at.as_secs(), event.id.to_hex()));
             for event in page {
-                if auxiliary_events.len() >= MAX_SOURCE_SCAN_EVENTS {
-                    return Err("source_limit".to_string());
-                }
-                auxiliary_bytes = auxiliary_bytes.saturating_add(event_footprint_bytes(&event));
-                if reply_bytes.saturating_add(auxiliary_bytes) > MAX_SOURCE_SCAN_BYTES {
+                scanned_events = scanned_events.saturating_add(1);
+                scanned_bytes = scanned_bytes.saturating_add(event_footprint_bytes(&event));
+                if scanned_events > MAX_SOURCE_SCAN_EVENTS || scanned_bytes > MAX_SOURCE_SCAN_BYTES
+                {
                     return Err("source_limit".to_string());
                 }
                 auxiliary_events.push(event);

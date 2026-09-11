@@ -45,9 +45,11 @@ pub(super) async fn capture_owner_scope<R: tauri::Runtime>(
 }
 
 pub(super) fn runtime_inventory<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<RecapRuntimeOption> {
-    let proof = super::super::recap_ownership::VerifiedStagingOwnership::load(app)
-        .ok()
-        .and_then(|ownership| ownership.runtime_ready_proof().ok());
+    // Runtime support is projected only from a proof that is tied to the
+    // active owner/relay retention scope. A standalone staging grant is not
+    // enough: the positive probe row must survive in the same durable store
+    // used by the managed-agent lifecycle.
+    let proof = super::super::recap_ownership::runtime_ready_proof_for_app(app).ok();
 
     KNOWN_ACP_RUNTIMES
         .iter()

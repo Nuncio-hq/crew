@@ -13,7 +13,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
-use super::recap_adapter::{claude_recap_plan, RecapLaunchPlan, RecapRunFailure};
+use super::recap_adapter::{
+    bind_hermes_prompt, claude_recap_plan, hermes_recap_plan, RecapLaunchPlan, RecapRunFailure,
+};
 use super::recap_capability::{
     admit_runtime_ready, same_executable_proof, verify_executable, RecapAdmission, RecapFailure,
     RecapRuntimeContract, RecapSelection, RecapSelectionContract,
@@ -24,8 +26,6 @@ use super::{
     bounded_output_with_policy_and_spawn_hook, BoundedFailure, BoundedPolicy, OutputBudget,
 };
 
-const RECAP_RUNTIME_ID: &str = "claude";
-const RECAP_NATIVE_COMMAND: &str = "claude";
 const RECAP_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Renderer request for one recap. The profile and authentication selection
@@ -35,6 +35,7 @@ const RECAP_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) struct RecapRequest {
     pub(crate) runtime_id: String,
     pub(crate) model: String,
+    pub(crate) profile_ref: Option<String>,
     pub(crate) input: String,
 }
 
@@ -171,10 +172,11 @@ fn abort_after_pending_before_spawn<T>(
 pub(crate) fn contract_for_runtime(runtime_id: &str) -> Option<RecapRuntimeContract> {
     let runtime = super::known_acp_runtime_exact(runtime_id)?;
     let contract = runtime.recap_contract();
-    (runtime.id == RECAP_RUNTIME_ID
-        && contract.command == Some(RECAP_NATIVE_COMMAND)
-        && contract.selection == RecapSelectionContract::ExplicitModel)
-        .then_some(contract)
+    match (runtime.id, contract.command, contract.selection) {
+        ("claude", Some("claude"), RecapSelectionContract::ExplicitModel)
+        | ("hermes", Some("hermes"), RecapSelectionContract::StagingProfile) => Some(contract),
+        _ => None,
+    }
 }
 
 fn now_seconds() -> u64 {
@@ -213,6 +215,20 @@ fn error_code(error: RecapServiceFailure) -> &'static str {
         RecapServiceFailure::Admission(RecapFailure::UnverifiedCapability) => {
             "unverified_capability"
         }
+        RecapServiceFailure::Admission(RecapFailure::InvalidAuthBinding) => "invalid_auth_binding",
+        RecapServiceFailure::Admission(RecapFailure::EmptyProbeOutput) => "empty_probe_output",
+        RecapServiceFailure::Admission(RecapFailure::ProbeOutputLimit) => "probe_output_limit",
+        RecapServiceFailure::Admission(RecapFailure::InvalidProbeOutput) => "invalid_probe_output",
+        RecapServiceFailure::Admission(RecapFailure::EffectiveModelMismatch) => {
+            "effective_model_mismatch"
+        }
+        RecapServiceFailure::Admission(RecapFailure::InvalidToolProbeEvidence) => {
+            "invalid_tool_probe_evidence"
+        }
+        RecapServiceFailure::Admission(RecapFailure::ProbeStateChanged) => "probe_state_changed",
+        RecapServiceFailure::Admission(RecapFailure::ProbeProcessNotReaped) => {
+            "probe_process_not_reaped"
+        }
         RecapServiceFailure::State(RecapStateFailure::RuntimeNotReady) => "runtime_not_ready",
         RecapServiceFailure::State(RecapStateFailure::Io) => "state_io",
         RecapServiceFailure::State(RecapStateFailure::InputLimit) => "input_limit",
@@ -239,6 +255,11 @@ fn error_code(error: RecapServiceFailure) -> &'static str {
         RecapServiceFailure::Adapter(RecapRunFailure::InvalidOutput) => "invalid_output",
         RecapServiceFailure::Adapter(RecapRunFailure::ModelRequestedOnly) => "model_mismatch",
         RecapServiceFailure::Adapter(RecapRunFailure::StateIsolation) => "state_isolation",
+        RecapServiceFailure::Adapter(RecapRunFailure::ProfileUnavailable) => "profile_unavailable",
+        RecapServiceFailure::Adapter(RecapRunFailure::ProfileCopyLimit) => "profile_copy_limit",
+        RecapServiceFailure::Adapter(RecapRunFailure::UnsupportedContainment) => {
+            "unsupported_containment"
+        }
         RecapServiceFailure::PlanMismatch => "plan_mismatch",
         RecapServiceFailure::Cleanup(_) => "cleanup_required",
     }
@@ -295,10 +316,12 @@ pub(crate) fn run_recap_sync_with_cancel(
     request: RecapRequest,
     cancelled: Arc<AtomicBool>,
 ) -> Result<String, String> {
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("cancelled".to_string());
+    }
     let ownership = VerifiedStagingOwnership::load(&app)
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
-    let proof = ownership
-        .runtime_ready_proof()
+    let proof = super::recap_ownership::runtime_ready_proof_for_ownership(&app, &ownership)
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
     let contract = contract_for_runtime(&request.runtime_id).ok_or_else(|| {
         error_code(RecapServiceFailure::Admission(
@@ -307,8 +330,52 @@ pub(crate) fn run_recap_sync_with_cancel(
         .to_string()
     })?;
     let native_selection = proof.selection_for_service();
+    let requested_profile = match contract.selection {
+        RecapSelectionContract::ExplicitModel => {
+            if request.profile_ref.is_some() {
+                return Err(error_code(RecapServiceFailure::Admission(
+                    RecapFailure::ProfileMismatch,
+                ))
+                .to_string());
+            }
+            None
+        }
+        RecapSelectionContract::StagingProfile => {
+            let Some(requested_name) = request.profile_ref.as_deref() else {
+                return Err(error_code(RecapServiceFailure::Admission(
+                    RecapFailure::MissingProfile,
+                ))
+                .to_string());
+            };
+            if super::hermes_profile::validate_hermes_profile_name(requested_name).is_err() {
+                return Err(error_code(RecapServiceFailure::Admission(
+                    RecapFailure::ProfileMismatch,
+                ))
+                .to_string());
+            }
+            let Some(native_profile) = native_selection.profile.as_deref() else {
+                return Err(error_code(RecapServiceFailure::Admission(
+                    RecapFailure::MissingProfile,
+                ))
+                .to_string());
+            };
+            let native_name =
+                super::recap_adapter::hermes_profile_ref(native_profile).ok_or_else(|| {
+                    error_code(RecapServiceFailure::Admission(RecapFailure::MissingProfile))
+                        .to_string()
+                })?;
+            if native_name != requested_name {
+                return Err(error_code(RecapServiceFailure::Admission(
+                    RecapFailure::ProfileMismatch,
+                ))
+                .to_string());
+            }
+            Some(native_profile.to_owned())
+        }
+    };
     let requested = RecapSelection {
         model: request.model,
+        profile: requested_profile,
         ..native_selection
     };
     let mut admission = admit_runtime_ready(&request.runtime_id, contract, &proof, &requested)
@@ -329,12 +396,31 @@ pub(crate) fn run_recap_sync_with_cancel(
     let run = OwnedRecapRun::create(&base, now_seconds())
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
     let input = request.input.into_bytes();
-    let plan = match claude_recap_plan(
-        &admission.executable.resolved_path,
-        run.path(),
-        &admission.selection.model,
-        &input,
-    ) {
+    let plan = match match contract.selection {
+        RecapSelectionContract::ExplicitModel => claude_recap_plan(
+            &admission.executable.resolved_path,
+            run.path(),
+            &admission.selection.model,
+            &input,
+        ),
+        RecapSelectionContract::StagingProfile => {
+            let Some(profile) = admission.selection.profile.as_deref() else {
+                return abort_before_start(
+                    run,
+                    RecapServiceFailure::Admission(RecapFailure::MissingProfile),
+                )
+                .map_err(|error| error_code(error).to_string());
+            };
+            hermes_recap_plan(
+                &admission.executable.resolved_path,
+                run.path(),
+                &admission.selection.model,
+                profile,
+                &input,
+            )
+            .and_then(|plan| bind_hermes_prompt(plan, &input))
+        }
+    } {
         Ok(plan) => plan,
         Err(error) => {
             return abort_before_start(run, RecapServiceFailure::Adapter(error))
