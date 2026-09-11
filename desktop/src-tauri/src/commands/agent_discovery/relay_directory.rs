@@ -8,6 +8,11 @@ use crate::{
 };
 
 const RELAY_DIRECTORY_PAGE_SIZE: usize = 500;
+/// A directory rebuild must prove exhaustion with a short page. These bounds
+/// keep a relay that ignores cursors, repeats pages, or keeps returning full
+/// pages from holding the command and accumulating an unbounded event vector.
+const RELAY_DIRECTORY_MAX_PAGES: usize = 40;
+const RELAY_DIRECTORY_MAX_EVENTS: usize = RELAY_DIRECTORY_PAGE_SIZE * RELAY_DIRECTORY_MAX_PAGES;
 const RELAY_FILTER_BATCH_SIZE: usize = 10;
 /// Per-rebuild ceiling on directory-rebuild `/query` requests in flight at once.
 /// The rebuild fans dozens of exact-author batches across the relay; issuing
@@ -95,21 +100,74 @@ pub(super) fn advance_relay_cursor(filter: &mut serde_json::Value, page: &[nostr
 
 async fn query_all_relay_pages(
     state: &AppState,
-    mut filter: serde_json::Value,
+    filter: serde_json::Value,
 ) -> Result<Vec<nostr::Event>, String> {
+    collect_relay_pages(filter, |filter| async move {
+        query_relay(state, &[filter])
+            .await
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+/// Walk a relay directory filter until a short page proves exhaustion.
+///
+/// The closure is the production `query_relay` seam and is generic only so
+/// the pagination guards can be tested with deterministic pages. A full page
+/// must advance its `(until, before_id)` pair; returning the collected prefix
+/// after a repeated/non-progress page would silently present a truncated
+/// directory as complete.
+async fn collect_relay_pages<F, Fut>(
+    mut filter: serde_json::Value,
+    mut fetch_page: F,
+) -> Result<Vec<nostr::Event>, String>
+where
+    F: FnMut(serde_json::Value) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<nostr::Event>, String>>,
+{
     filter["limit"] = serde_json::json!(RELAY_DIRECTORY_PAGE_SIZE);
     let mut events = Vec::new();
-    loop {
-        let page = query_relay(state, &[filter.clone()]).await?;
-        let done = page.len() < RELAY_DIRECTORY_PAGE_SIZE;
-        if !done {
-            advance_relay_cursor(&mut filter, &page);
+
+    for _ in 0..RELAY_DIRECTORY_MAX_PAGES {
+        let page = fetch_page(filter.clone()).await?;
+        if page.len() > RELAY_DIRECTORY_PAGE_SIZE {
+            return Err(format!(
+                "relay directory page exceeds the {RELAY_DIRECTORY_PAGE_SIZE}-event limit"
+            ));
         }
-        events.extend(page);
-        if done {
+
+        let page_is_short = page.len() < RELAY_DIRECTORY_PAGE_SIZE;
+        let next_event_count = events
+            .len()
+            .checked_add(page.len())
+            .ok_or_else(|| "relay directory event count overflowed".to_string())?;
+        if next_event_count > RELAY_DIRECTORY_MAX_EVENTS {
+            return Err(format!(
+                "relay directory exceeds the {RELAY_DIRECTORY_MAX_EVENTS}-event scan budget"
+            ));
+        }
+        events.extend(page.iter().cloned());
+        if page_is_short {
             return Ok(events);
         }
+
+        let previous_cursor = (
+            filter.get("until").cloned(),
+            filter.get("before_id").cloned(),
+        );
+        advance_relay_cursor(&mut filter, &page);
+        let next_cursor = (
+            filter.get("until").cloned(),
+            filter.get("before_id").cloned(),
+        );
+        if next_cursor == previous_cursor {
+            return Err("relay directory pagination made no progress".to_string());
+        }
     }
+
+    Err(format!(
+        "relay directory exceeds the {RELAY_DIRECTORY_MAX_PAGES}-page scan budget"
+    ))
 }
 
 fn retain_agents_allowed_by_build(
@@ -345,6 +403,7 @@ pub async fn revalidate_relay_agents(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr::{EventBuilder, Keys, Timestamp};
 
     #[test]
     fn marked_build_requires_verified_viewer_ownership() {
@@ -454,6 +513,75 @@ mod tests {
             .collect();
 
         assert_eq!(batch_sizes, vec![10, 10, 5]);
+    }
+
+    #[tokio::test]
+    async fn repeated_full_page_fails_instead_of_returning_a_truncated_directory() {
+        let keys = Keys::generate();
+        let repeated = EventBuilder::text_note("repeated directory page")
+            .sign_with_keys(&keys)
+            .expect("directory event");
+        let page = vec![repeated; RELAY_DIRECTORY_PAGE_SIZE];
+        let mut fetches = 0usize;
+        let result = collect_relay_pages(serde_json::json!({"kinds": [10100]}), |_filter| {
+            fetches += 1;
+            let page = page.clone();
+            async move { Ok(page) }
+        })
+        .await;
+
+        assert_eq!(
+            fetches, 2,
+            "the repeated cursor is detected on the next page"
+        );
+        let error = result.expect_err("a non-progressing relay must fail loudly");
+        assert!(
+            error.contains("made no progress"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn full_pages_through_the_scan_cap_fail_instead_of_truncating() {
+        let keys = Keys::generate();
+        let mut fetches = 0usize;
+        let result = collect_relay_pages(serde_json::json!({"kinds": [10100]}), |_filter| {
+            fetches += 1;
+            let cursor_event = EventBuilder::text_note("directory cursor")
+                .custom_created_at(Timestamp::from(
+                    (RELAY_DIRECTORY_MAX_PAGES - fetches + 1) as u64,
+                ))
+                .sign_with_keys(&keys)
+                .expect("directory cursor event");
+            let mut page = vec![cursor_event.clone(); RELAY_DIRECTORY_PAGE_SIZE - 1];
+            page.push(cursor_event);
+            async move { Ok(page) }
+        })
+        .await;
+
+        assert_eq!(fetches, RELAY_DIRECTORY_MAX_PAGES);
+        let error = result.expect_err("a directory without a short page must fail loudly");
+        assert!(
+            error.contains("page scan budget"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn page_larger_than_requested_limit_is_rejected_before_accumulation() {
+        let keys = Keys::generate();
+        let event = EventBuilder::text_note("oversized directory page")
+            .sign_with_keys(&keys)
+            .expect("directory event");
+        let page = vec![event; RELAY_DIRECTORY_PAGE_SIZE + 1];
+        let result = collect_relay_pages(serde_json::json!({"kinds": [10100]}), |_filter| {
+            let page = page.clone();
+            async move { Ok(page) }
+        })
+        .await;
+
+        let error = result.expect_err("oversized pages must be rejected");
+        assert!(error.contains("event limit"), "unexpected error: {error}");
     }
 }
 
