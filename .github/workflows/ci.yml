@@ -373,6 +373,7 @@ jobs:
             -p buzz-test-client \
             --lib \
             --test e2e_event_reminder \
+            --test e2e_membership_revocation \
             --archive-file target/ci/backend-integration-tests.tar.zst
       - name: Save relay artifacts cache
         # PR-scoped exact-source entries cannot warm main or other PRs and churn
@@ -684,6 +685,10 @@ jobs:
             RELAY_URL=ws://localhost:3000 \
             BUZZ_BIND_ADDR=0.0.0.0:3000 \
             BUZZ_REQUIRE_AUTH_TOKEN=false \
+            BUZZ_REQUIRE_RELAY_MEMBERSHIP=true \
+            RELAY_OWNER_PUBKEY=79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 \
+            BUZZ_RELAY_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+            BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS=1 \
             BUZZ_RECONCILE_CHANNELS=true \
             BUZZ_GIT_PROBE_WRITERS=8 \
             SPROUT_REMINDER_SCHEDULER_INTERVAL_SECS=1 \
@@ -709,6 +714,17 @@ jobs:
             -E '(package(buzz-db) and test(/relay_invite::tests/)) or (package(buzz-relay) and test(/api::invites::tests/))' \
             --run-ignored ignored-only
         env:
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+      - name: Live relay membership revocation e2e
+        # Exercise real NIP-42 admission, writer-backed roster removal,
+        # correlated query/write denials, and the revalidator's policy close.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'binary(e2e_membership_revocation)' \
+            --run-ignored ignored-only
+        env:
+          RELAY_URL: ws://localhost:3000
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: Workspace profile (kind:9033) gate tests
         # Call-site integration for the 9033 authorization gate: open relay
