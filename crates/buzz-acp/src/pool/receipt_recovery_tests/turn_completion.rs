@@ -82,11 +82,15 @@ async fn rejected_receipt_cannot_panic_or_requeue_completed_agent_work() {
             None,
             "completed-before-receipt".into(),
         ));
-        tokio::time::timeout(Duration::from_secs(8), task)
-            .await
-            .expect("bounded receipt rejection")
-            .expect("receipt rejection must not panic a completed agent task");
-        let result = rx.recv().await.expect("original agent returned");
+        let result = tokio::time::timeout(Duration::from_secs(8), async {
+            task.await
+                .expect("receipt rejection must not panic a completed agent task");
+            let result = rx.recv().await.expect("original agent returned");
+            fixture.wait_for_submissions(1).await;
+            result
+        })
+        .await
+        .expect("bounded receipt rejection");
         assert!(matches!(
             result.outcome,
             PromptOutcome::Ok(StopReason::EndTurn)

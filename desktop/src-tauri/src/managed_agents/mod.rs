@@ -72,6 +72,7 @@ mod team_repair;
 mod teams;
 pub(crate) mod transport_status;
 mod types;
+pub(crate) mod wiki_runtime;
 
 // Shared lock for tests that call `lock_path_mutex` or `lock_env_mutex`.
 // Both helpers delegate here so any two tests using either helper are mutually

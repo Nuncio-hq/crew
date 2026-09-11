@@ -8,14 +8,17 @@ import {
   type WikiJobState,
 } from "@/features/wiki/lib/wikiEvents";
 import type { WikiRepositoryReadStatus } from "@/shared/api/wikiSnapshot";
+import type { OwnerOperationScope } from "@/shared/api/ownerOperations";
 import {
   WIKI_EMPTY_REPO_COPY,
   type WikiRepoProbe,
 } from "@/features/wiki/lib/wikiRepoProbe";
+import { WikiRuntimeSettingsControl } from "@/features/wiki/ui/WikiRuntimeSettingsControl";
 
 export function WikiRepoCard({
   name,
   owner,
+  repoD,
   description,
   freshness,
   generating,
@@ -29,11 +32,13 @@ export function WikiRepoCard({
   onRecoveryReconcile,
   onRecoveryCancel,
   onRegenerate,
+  operationScope,
   recoveryPending,
   regeneratePending,
 }: {
   name: string;
   owner: string;
+  repoD: string;
   description?: string;
   freshness: WikiFreshness | "generating" | "failed";
   generating?: WikiJobState;
@@ -48,6 +53,7 @@ export function WikiRepoCard({
   onRecoveryCancel?: () => void;
   /** Explicit successor action, available only for native retirement proof. */
   onRegenerate?: () => void;
+  operationScope?: OwnerOperationScope;
   recoveryPending?: boolean;
   regeneratePending?: boolean;
 }) {
@@ -140,6 +146,15 @@ export function WikiRepoCard({
           >
             {missingLocalCopy}
           </p>
+        ) : null}
+        {onGenerate && operationScope ? (
+          <div className="mb-2">
+            <WikiRuntimeSettingsControl
+              expected={operationScope}
+              owner={owner}
+              repoD={repoD}
+            />
+          </div>
         ) : null}
         {!emptyRepo && freshness === "never" && onGenerate ? (
           <button
