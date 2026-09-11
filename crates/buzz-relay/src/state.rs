@@ -961,6 +961,42 @@ async fn maybe_stall_self_leave_bulk_for_test() {
         hook.release.notified().await;
     }
 }
+
+/// Test-only gate placed at the production detached-topic-release seam. It
+/// makes cancellation after registry detachment falsifiable without relying on
+/// a live Redis connection or an arbitrarily large subscription set.
+#[cfg(test)]
+pub(crate) struct DetachedTopicReleaseTestHook {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static DETACHED_TOPIC_RELEASE_TEST_HOOK: std::sync::OnceLock<
+    tokio::sync::Mutex<Option<Arc<DetachedTopicReleaseTestHook>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+/// Install or clear the test gate for detached subscription-topic release.
+pub(crate) async fn install_detached_topic_release_test_hook(
+    hook: Option<Arc<DetachedTopicReleaseTestHook>>,
+) {
+    let slot = DETACHED_TOPIC_RELEASE_TEST_HOOK.get_or_init(|| tokio::sync::Mutex::new(None));
+    *slot.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn maybe_stall_detached_topic_release_for_test() {
+    let Some(slot) = DETACHED_TOPIC_RELEASE_TEST_HOOK.get() else {
+        return;
+    };
+    let hook = slot.lock().await.clone();
+    if let Some(hook) = hook {
+        hook.entered.notify_one();
+        hook.release.notified().await;
+    }
+}
+
 /// Reserve half of every bounded pass for fresh identities whenever retry
 /// work and live identities coexist. A permanently failing writer lookup must
 /// therefore make progress through the fresh cursor ring instead of occupying
@@ -1803,11 +1839,20 @@ impl AppState {
         &self,
         conn_id: Uuid,
     ) -> Vec<crate::subscription::RemovedSubscription> {
-        let removed = self.sub_registry.remove_connection(conn_id);
+        // Acquire the connection-local map before removing the registry
+        // entry. If this future is cancelled while another handler owns the
+        // map lock, the registry remains intact and a later retry still owns
+        // the complete `RemovedSubscription` snapshot. Hold the guard across
+        // the synchronous registry removal so no REQ can repopulate the map
+        // between the two operations.
         if let Some(subscriptions) = self.conn_manager.subscriptions_for(conn_id) {
-            subscriptions.lock().await.clear();
+            let mut subscriptions = subscriptions.lock().await;
+            let removed = self.sub_registry.remove_connection(conn_id);
+            subscriptions.clear();
+            removed
+        } else {
+            self.sub_registry.remove_connection(conn_id)
         }
-        removed
     }
 
     /// Release the Redis topic retains belonging to a detached subscription
@@ -1819,6 +1864,13 @@ impl AppState {
         tenant: &TenantContext,
         removed: &[crate::subscription::RemovedSubscription],
     ) {
+        if removed.is_empty() {
+            return;
+        }
+
+        #[cfg(test)]
+        maybe_stall_detached_topic_release_for_test().await;
+
         for subscription in removed {
             if subscription.scope.is_global() {
                 self.pubsub
@@ -1833,18 +1885,40 @@ impl AppState {
         }
     }
 
-    /// Remove every subscription held by one connection, release its retained
-    /// Redis topics, and clear the connection-local subscription map. The
-    /// registry removal happens before any revocation publication so both
-    /// local fan-out and a raced REQ see an empty live subscription set.
+    /// Keep the detached topic snapshot alive in a task that is independent of
+    /// the revocation caller. A bounded caller may be cancelled while Redis
+    /// desired-topic mutation is waiting on its mutex; the detached registry
+    /// state must still release every retain after that cancellation.
+    fn spawn_detached_subscription_topic_release(
+        &self,
+        tenant: &TenantContext,
+        removed: &[crate::subscription::RemovedSubscription],
+    ) {
+        if removed.is_empty() {
+            return;
+        }
+        let state = self.clone();
+        let tenant = tenant.clone();
+        let removed = removed.to_vec();
+        std::mem::drop(tokio::spawn(async move {
+            state
+                .release_detached_subscription_topics(&tenant, &removed)
+                .await;
+        }));
+    }
+
+    /// Remove every subscription held by one connection, clear the
+    /// connection-local subscription map, and schedule release of its retained
+    /// Redis topics. The registry removal happens before any revocation
+    /// publication so both local fan-out and a raced REQ see an empty live
+    /// subscription set.
     pub(crate) async fn evict_connection_subscriptions(
         &self,
         tenant: &TenantContext,
         conn_id: Uuid,
     ) -> Vec<crate::subscription::RemovedSubscription> {
         let removed = self.detach_connection_subscriptions(conn_id).await;
-        self.release_detached_subscription_topics(tenant, &removed)
-            .await;
+        self.spawn_detached_subscription_topic_release(tenant, &removed);
         removed
     }
 
@@ -1922,8 +1996,8 @@ impl AppState {
         })
     }
 
-    /// Prepare one connection for a local policy revocation and release its
-    /// retained Redis topics before returning. Self-leave uses the paired
+    /// Prepare one connection for a local policy revocation and schedule
+    /// release of its retained Redis topics. Self-leave uses the paired
     /// `without_topic_release` variant for its origin so the terminal ACK and
     /// policy close do not wait behind topic cleanup.
     async fn prepare_connection_revocation(
@@ -1942,8 +2016,7 @@ impl AppState {
                 preheld_guard,
             )
             .await?;
-        self.release_detached_subscription_topics(tenant, &pending.removed)
-            .await;
+        self.spawn_detached_subscription_topic_release(tenant, &pending.removed);
         Some(pending)
     }
 
@@ -2223,15 +2296,7 @@ impl AppState {
         // detachment and terminal frame queuing. The registry is already
         // empty, so no stale subscription can receive fan-out while this
         // in-memory Redis interest is being released.
-        if !origin_removed.is_empty() {
-            let release_state = self.clone();
-            let release_tenant = tenant.clone();
-            std::mem::drop(tokio::spawn(async move {
-                release_state
-                    .release_detached_subscription_topics(&release_tenant, &origin_removed)
-                    .await;
-            }));
-        }
+        self.spawn_detached_subscription_topic_release(tenant, &origin_removed);
 
         let command = ConnControl::DisconnectPubkey {
             pubkey: pubkey.to_vec(),
@@ -4088,6 +4153,155 @@ pub(crate) mod tests {
         assert!(matches!(frame, WsMessage::Text(ref text) if text.contains("false")));
         state.conn_manager.deregister(origin_conn);
         state.conn_manager.deregister(other_conn);
+    }
+
+    #[tokio::test]
+    async fn revocation_preparation_does_not_wait_for_detached_topic_release() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(4);
+        let cancel = CancellationToken::new();
+        let subscriptions = Arc::new(Mutex::new(HashMap::new()));
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel,
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::clone(&subscriptions),
+            3,
+        );
+        let pubkey = vec![0xabu8; 32];
+        state
+            .conn_manager
+            .set_authenticated_pubkey(conn_id, pubkey.clone());
+        let sub_id = "detached-release".to_owned();
+        state
+            .sub_registry
+            .register_scoped(community, conn_id, sub_id.clone(), Vec::new(), None);
+        subscriptions.lock().await.insert(sub_id, Vec::new());
+        state
+            .pubsub
+            .retain_topic(&tenant, buzz_pubsub::EventTopic::Global)
+            .await;
+        assert_eq!(
+            state
+                .pubsub
+                .topic_refcount(&tenant, buzz_pubsub::EventTopic::Global)
+                .await,
+            1
+        );
+
+        let hook = Arc::new(DetachedTopicReleaseTestHook {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        install_detached_topic_release_test_hook(Some(Arc::clone(&hook))).await;
+
+        // The caller deadline models the self-leave bulk window. Before the
+        // fix, detachment completed and this future then waited in the topic
+        // release hook until the deadline cancelled it, losing the only
+        // `RemovedSubscription` snapshot. The fixed path returns the pending
+        // revocation while an independent task owns that snapshot.
+        let prepared = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            state.prepare_pubkey_revocation(
+                &tenant,
+                &pubkey,
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                None,
+                false,
+                None,
+            ),
+        )
+        .await;
+        let release_started =
+            tokio::time::timeout(std::time::Duration::from_secs(1), hook.entered.notified()).await;
+        hook.release.notify_one();
+        install_detached_topic_release_test_hook(None).await;
+
+        assert!(
+            release_started.is_ok(),
+            "detached release task must reach the production topic-release seam"
+        );
+        let pending = prepared.expect(
+            "revocation preparation must finish after handing topic release to an independent task",
+        );
+        assert_eq!(pending.len(), 1);
+        state
+            .finish_pubkey_revocation(
+                pending,
+                &"0".repeat(64),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                None,
+                false,
+            )
+            .await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if state
+                    .pubsub
+                    .topic_refcount(&tenant, buzz_pubsub::EventTopic::Global)
+                    .await
+                    == 0
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached topic release must finish after caller cancellation");
+        state.conn_manager.deregister(conn_id);
+    }
+
+    #[tokio::test]
+    async fn detach_cancellation_keeps_registry_snapshot_for_retry() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(4);
+        let subscriptions = Arc::new(Mutex::new(HashMap::new()));
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            CancellationToken::new(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::clone(&subscriptions),
+            3,
+        );
+        let sub_id = "lock-stalled".to_owned();
+        state
+            .sub_registry
+            .register_scoped(community, conn_id, sub_id.clone(), Vec::new(), None);
+        let local_lock = subscriptions.lock().await;
+
+        let cancelled = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            state.detach_connection_subscriptions(conn_id),
+        )
+        .await;
+        assert!(cancelled.is_err(), "the local map lock must remain stalled");
+        assert!(
+            state.sub_registry.contains(conn_id, &sub_id),
+            "cancellation while waiting for the local map must retain the registry snapshot"
+        );
+
+        drop(local_lock);
+        let removed = state.detach_connection_subscriptions(conn_id).await;
+        assert_eq!(removed.len(), 1);
+        assert!(!state.sub_registry.contains(conn_id, &sub_id));
+        state.conn_manager.deregister(conn_id);
     }
 
     #[test]
