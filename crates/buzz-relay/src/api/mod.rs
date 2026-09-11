@@ -524,6 +524,7 @@ pub mod relay_members {
                 .or_else(|_| std::env::var("REDIS_URL"))
                 .unwrap_or_else(|_| "redis://127.0.0.1:56471/13".to_owned());
             config.require_relay_membership = true;
+            config.allow_nip_oa_auth = true;
 
             let pool = sqlx::PgPool::connect(&config.database_url)
                 .await
