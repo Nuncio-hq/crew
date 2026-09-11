@@ -179,3 +179,72 @@ fn option_shaped_model_is_rejected_at_admission() {
         RecapFailure::InvalidModelSelection
     );
 }
+
+#[test]
+fn runtime_ready_proof_requires_every_admission_guard() {
+    let proof = RecapRuntimeReadyProof::for_test(
+        "fixture",
+        identity(),
+        selection(),
+        RecapGuarantees {
+            one_shot: true,
+            tool_isolation: true,
+            state_isolation: true,
+            process_containment: true,
+        },
+    );
+    let admitted = admit_runtime_ready("fixture", candidate(), &proof, &selection())
+        .expect("fully attested proof should admit");
+    assert_eq!(admitted.runtime_id, "fixture");
+
+    for field in [
+        "one_shot",
+        "tool_isolation",
+        "state_isolation",
+        "process_containment",
+    ] {
+        let mut guarantees = proof.guarantees_for_test();
+        match field {
+            "one_shot" => guarantees.one_shot = false,
+            "tool_isolation" => guarantees.tool_isolation = false,
+            "state_isolation" => guarantees.state_isolation = false,
+            "process_containment" => guarantees.process_containment = false,
+            _ => unreachable!(),
+        }
+        let proof =
+            RecapRuntimeReadyProof::for_test("fixture", identity(), selection(), guarantees);
+        let expected = match field {
+            "one_shot" => RecapFailure::UnsupportedOneShot,
+            "tool_isolation" => RecapFailure::UnsupportedToolIsolation,
+            "state_isolation" => RecapFailure::UnsupportedStateIsolation,
+            "process_containment" => RecapFailure::UnsupportedProcessContainment,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            admit_runtime_ready("fixture", candidate(), &proof, &selection()),
+            Err(expected),
+            "{field} must be explicitly attested"
+        );
+    }
+}
+
+#[test]
+fn explicit_model_contract_rejects_profile_bearing_proof() {
+    let mut selected = selection();
+    selected.profile = Some(PathBuf::from("/staging/profile"));
+    let proof = RecapRuntimeReadyProof::for_test(
+        "fixture",
+        identity(),
+        selected.clone(),
+        RecapGuarantees {
+            one_shot: true,
+            tool_isolation: true,
+            state_isolation: true,
+            process_containment: true,
+        },
+    );
+    assert_eq!(
+        admit_runtime_ready("fixture", candidate(), &proof, &selected),
+        Err(RecapFailure::ProfileMismatch)
+    );
+}

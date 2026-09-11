@@ -1,19 +1,26 @@
 //! Native staging ownership receipt. It is deliberately not a generation grant.
 
+use super::recap_capability::{
+    verify_executable, RecapExecutableIdentity, RecapGuarantees, RecapRuntimeReadyProof,
+    RecapSelection,
+};
 use super::recap_state::{
     directory_identity, private_read_file, validate_owned_base, DirectoryIdentity,
     RecapStateFailure,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub(crate) const OWNERSHIP_FILENAME: &str = "crew-staging-ownership-v1.json";
+const RUNTIME_READY_FILENAME: &str = "crew-staging-runtime-ready-v1.json";
 
 /// Constructed only from native identity and a fixed private app-data file.
 pub(crate) struct VerifiedStagingOwnership {
     app_data: PathBuf,
     document: OwnershipDocument,
+    ownership_digest: String,
     native: NativeIdentity,
     generations: Vec<DirectoryIdentity>,
 }
@@ -62,6 +69,50 @@ struct Roots {
     workspaces: PathBuf,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeReadyDocument {
+    schema: String,
+    version: u8,
+    environment_id: String,
+    ownership_sha256: String,
+    status: String,
+    owner_uid: u32,
+    home: PathBuf,
+    app_data: PathBuf,
+    bundle_id: String,
+    runtime_id: String,
+    executable: RuntimeExecutable,
+    selection: RuntimeSelection,
+    auth_reference: String,
+    guarantees: RuntimeGuarantees,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeExecutable {
+    resolved_path: PathBuf,
+    version: String,
+    fingerprint: String,
+    platform: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSelection {
+    model: String,
+    profile: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeGuarantees {
+    one_shot: bool,
+    tool_isolation: bool,
+    state_isolation: bool,
+    process_containment: bool,
+}
+
 impl VerifiedStagingOwnership {
     pub(super) fn from_native(native: NativeIdentity) -> Result<Self, RecapStateFailure> {
         validate_private_root(&native.app_data, native.uid)?;
@@ -89,6 +140,7 @@ impl VerifiedStagingOwnership {
         let mut receipt = Self {
             app_data: native.app_data.clone(),
             document,
+            ownership_digest: hex::encode(Sha256::digest(&bytes)),
             native,
             generations: Vec::new(),
         };
@@ -113,6 +165,64 @@ impl VerifiedStagingOwnership {
             Err(_) => return Err(RecapStateFailure::Ownership),
         }
         Ok(base)
+    }
+
+    /// Load a separately-issued native runtime grant. The ownership receipt
+    /// alone can never mint generation authority; the grant is tied to the
+    /// exact ownership bytes, native identity, executable and selection.
+    pub(crate) fn runtime_ready_proof(&self) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+        self.validate()?;
+        let ownership = read_private_document(&self.app_data.join(OWNERSHIP_FILENAME), 16 * 1024)?;
+        if hex::encode(Sha256::digest(&ownership)) != self.ownership_digest {
+            return Err(RecapStateFailure::Ownership);
+        }
+        let grant_bytes =
+            read_private_document(&self.app_data.join(RUNTIME_READY_FILENAME), 16 * 1024)
+                .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        let grant: RuntimeReadyDocument =
+            serde_json::from_slice(&grant_bytes).map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        if grant.schema != "crew-staging-runtime-ready"
+            || grant.version != 1
+            || grant.status != "RUNTIME_READY"
+            || grant.environment_id != self.document.environment_id
+            || grant.ownership_sha256 != self.ownership_digest
+            || grant.owner_uid != self.native.uid
+            || grant.home != self.native.home
+            || grant.app_data != self.native.app_data
+            || grant.bundle_id != self.native.bundle_id
+            // The only production adapter currently wired is the explicit
+            // model recipe; accepting a profile here would silently ignore it.
+            || grant.selection.profile.is_some()
+            || !is_sha256(&grant.ownership_sha256)
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        let executable = RecapExecutableIdentity {
+            resolved_path: grant.executable.resolved_path,
+            version: grant.executable.version,
+            fingerprint: grant.executable.fingerprint,
+            platform: grant.executable.platform,
+        };
+        let executable =
+            verify_executable(&executable).map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        let selection = RecapSelection {
+            model: grant.selection.model,
+            profile: grant.selection.profile,
+            auth_available: true,
+        };
+        RecapRuntimeReadyProof::from_grant(
+            grant.runtime_id,
+            executable,
+            selection,
+            grant.auth_reference,
+            RecapGuarantees {
+                one_shot: grant.guarantees.one_shot,
+                tool_isolation: grant.guarantees.tool_isolation,
+                state_isolation: grant.guarantees.state_isolation,
+                process_containment: grant.guarantees.process_containment,
+            },
+        )
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)
     }
 
     fn roots(&self) -> [&PathBuf; 5] {
@@ -205,6 +315,22 @@ impl VerifiedStagingOwnership {
         }
         Ok(())
     }
+}
+
+fn read_private_document(path: &Path, limit: usize) -> Result<Vec<u8>, RecapStateFailure> {
+    let mut bytes = Vec::new();
+    private_read_file(path)?
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| RecapStateFailure::Ownership)?;
+    if bytes.len() > limit {
+        return Err(RecapStateFailure::Ownership);
+    }
+    Ok(bytes)
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_private_root(path: &Path, uid: u32) -> Result<(), RecapStateFailure> {

@@ -1,5 +1,6 @@
 #![cfg(unix)]
 use super::*;
+use sha2::{Digest, Sha256};
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 
 fn fixture() -> (tempfile::TempDir, NativeIdentity, serde_json::Value) {
@@ -45,6 +46,40 @@ fn fixture() -> (tempfile::TempDir, NativeIdentity, serde_json::Value) {
 fn write(native: &NativeIdentity, doc: &serde_json::Value) {
     let path = native.app_data.join(OWNERSHIP_FILENAME);
     std::fs::write(&path, serde_json::to_vec(doc).unwrap()).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn write_runtime_grant(
+    native: &NativeIdentity,
+    doc: &serde_json::Value,
+    executable: &std::path::Path,
+    guarantees: serde_json::Value,
+) {
+    let ownership_bytes = serde_json::to_vec(doc).unwrap();
+    let executable_bytes = std::fs::read(executable).unwrap();
+    let grant = serde_json::json!({
+        "schema": "crew-staging-runtime-ready",
+        "version": 1,
+        "environment_id": "crew-staging-test",
+        "ownership_sha256": hex::encode(Sha256::digest(&ownership_bytes)),
+        "status": "RUNTIME_READY",
+        "owner_uid": native.uid,
+        "home": native.home,
+        "app_data": native.app_data,
+        "bundle_id": native.bundle_id,
+        "runtime_id": "claude",
+        "executable": {
+            "resolved_path": executable,
+            "version": "fixture-1",
+            "fingerprint": hex::encode(Sha256::digest(&executable_bytes)),
+            "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        },
+        "selection": {"model": "fixture-model", "profile": null},
+        "auth_reference": "staging-auth-reference",
+        "guarantees": guarantees,
+    });
+    let path = native.app_data.join("crew-staging-runtime-ready-v1.json");
+    std::fs::write(&path, serde_json::to_vec(&grant).unwrap()).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
 }
 
@@ -157,4 +192,33 @@ fn receipt_rejects_intermediate_agents_symlink() {
     let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
     assert_eq!(receipt.recap_base(), Err(RecapStateFailure::Ownership));
     assert!(!outside.path().join("recap-runs").exists());
+}
+
+#[test]
+fn runtime_ready_grant_is_bound_to_owned_receipt_and_current_executable() {
+    let (_temp, native, doc) = fixture();
+    write(&native, &doc);
+    let executable = native.home.join("fixture-claude");
+    std::fs::write(&executable, b"fixture executable").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_runtime_grant(
+        &native,
+        &doc,
+        &executable,
+        serde_json::json!({
+            "one_shot": true,
+            "tool_isolation": true,
+            "state_isolation": true,
+            "process_containment": true,
+        }),
+    );
+
+    let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
+    assert!(receipt.runtime_ready_proof().is_ok());
+
+    std::fs::write(&executable, b"replaced executable").unwrap();
+    assert_eq!(
+        receipt.runtime_ready_proof(),
+        Err(RecapStateFailure::RuntimeNotReady)
+    );
 }

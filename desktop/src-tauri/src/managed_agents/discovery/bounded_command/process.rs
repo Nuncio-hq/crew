@@ -125,6 +125,11 @@ impl BoundedChild {
         self.child.try_wait()
     }
 
+    /// Return the direct child PID while this owner is alive.
+    pub(super) fn id(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Timeout teardown: a graceful `SIGTERM` to the group and a bounded grace
     /// period for a clean flush on Unix, then the unconditional forced kill.
     /// Windows has no group signal, so it goes straight to the forced kill.

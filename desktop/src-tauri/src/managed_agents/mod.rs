@@ -19,6 +19,10 @@ pub(crate) mod custom_harnesses;
 mod definition_validation;
 mod discovery;
 pub(crate) use discovery::bounded_command::output_with_timeout as bounded_local_command;
+pub(crate) use discovery::bounded_command::{
+    output_with_policy_and_spawn_hook as bounded_output_with_policy_and_spawn_hook, BoundedFailure,
+    BoundedPolicy, OutputBudget,
+};
 pub(crate) mod effective_config;
 pub(crate) use cursor_startup_model::{resolve_buzz_acp_model_env, resolve_effective_agent_args};
 mod cowork_history_env;
@@ -40,16 +44,20 @@ mod personas;
 #[cfg(windows)]
 mod process_lifecycle;
 pub(crate) mod readiness;
-// Default-off source proof: no generation command or positive capability exists.
+// Default-off source proof: the catalog contains inventory and the native
+// command seam is registered, but no positive capability exists without a
+// separately issued runtime-ready grant.
 #[allow(dead_code)]
 pub(crate) mod recap_adapter;
 #[allow(dead_code)]
 pub(crate) mod recap_capability;
+pub(crate) mod recap_commands;
 #[allow(dead_code)]
 pub(crate) mod recap_ownership;
 #[allow(dead_code)]
 #[path = "recap_ownership/native.rs"]
 mod recap_ownership_native;
+pub(crate) mod recap_service;
 #[allow(dead_code)]
 pub(crate) mod recap_state;
 pub(crate) mod reconcile;
