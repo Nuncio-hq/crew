@@ -142,6 +142,12 @@
       "filesAtRecord": 1
     },
     {
+      "area": "crates/buzz-test-client/tests/e2e_nostr_interop.rs",
+      "why": "Wiki body-search WebSocket/HTTP interop and ID-allowlist regression coverage (#364).",
+      "resolve": "Keep the production search-boundary regression beside the Nostr interop suite; preserve explicit repository/snapshot scope and the falsifiable ID allowlist coverage.",
+      "filesAtRecord": 1
+    },
+    {
       "area": "crates/buzz-workflow/**",
       "why": "reply in-thread from send_message action (#6178 port).",
       "resolve": "additive.",

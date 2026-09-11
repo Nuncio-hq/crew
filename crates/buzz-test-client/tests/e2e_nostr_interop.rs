@@ -83,9 +83,37 @@ async fn create_test_channel(keys: &Keys) -> String {
 /// Send a message via a signed kind:9 event and return the event_id hex.
 async fn send_rest_message(keys: &Keys, channel_id: &str, content: &str) -> String {
     let client = reqwest::Client::new();
+    send_rest_message_at(
+        &client,
+        keys,
+        channel_id,
+        content,
+        nostr::Timestamp::now().as_secs(),
+        None,
+    )
+    .await
+}
+
+/// Send a kind:9 event with an explicit timestamp via REST and return its id.
+/// The timestamp lets the NIP-50 page-boundary regression create deterministic
+/// same-rank ordering: newer distractors fill the relay's bounded scan before
+/// the older allowlisted event.
+async fn send_rest_message_at(
+    client: &reqwest::Client,
+    keys: &Keys,
+    channel_id: &str,
+    content: &str,
+    created_at_secs: u64,
+    distinguishing_tag: Option<&str>,
+) -> String {
     let pubkey_hex = keys.public_key().to_hex();
+    let mut tags = vec![Tag::parse(["h", channel_id]).unwrap()];
+    if let Some(value) = distinguishing_tag {
+        tags.push(Tag::parse(["marker", value]).unwrap());
+    }
     let event = EventBuilder::new(Kind::Custom(9), content)
-        .tags(vec![Tag::parse(["h", channel_id]).unwrap()])
+        .tags(tags)
+        .custom_created_at(nostr::Timestamp::from(created_at_secs))
         .sign_with_keys(keys)
         .unwrap();
     let resp = client
@@ -333,6 +361,113 @@ async fn test_nip50_search_returns_results_and_eose() {
     }
 
     client.disconnect().await.expect("disconnect");
+}
+
+/// Restrict a NIP-50 search to one event id and verify the allowlist reaches
+/// both relay search surfaces. The allowlisted event is deliberately older
+/// than 1,000 same-rank matches, which fills the WS handler's ten-page scan and
+/// the HTTP bridge's one-result page. Removing SQL `ids` pushdown from either
+/// production path therefore makes its endpoint miss the allowlisted event;
+/// the existing post-filter cannot make this test pass by itself.
+#[tokio::test]
+#[ignore]
+async fn test_nip50_search_ids_allowlist_matches_ws_and_http() {
+    let url = relay_url();
+    let keys = Keys::generate();
+    let channel = create_test_channel(&keys).await;
+    let unique_token = format!("searchids_{}", uuid::Uuid::new_v4().simple());
+    let matching_content = format!("matching {unique_token}");
+    let client = reqwest::Client::new();
+    let now = nostr::Timestamp::now().as_secs();
+
+    // Keep the allowlisted event just beyond the relay's bounded 1,000-hit
+    // search scan. Every distractor has identical content (and therefore the
+    // same FTS rank), so created_at is the only ordering input.
+    let allowlisted_id = send_rest_message_at(
+        &client,
+        &keys,
+        &channel,
+        &matching_content,
+        now.saturating_sub(2),
+        None,
+    )
+    .await;
+    for offset in 1..=1_000 {
+        let marker = format!("distractor-{offset}");
+        send_rest_message_at(
+            &client,
+            &keys,
+            &channel,
+            &matching_content,
+            now.saturating_sub(1),
+            Some(&marker),
+        )
+        .await;
+    }
+
+    // Give the relay time to finish the final request before searching.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let allowlisted_event_id =
+        nostr::EventId::from_hex(&allowlisted_id).expect("allowlisted event id");
+
+    // The WS handler must push the ids allowlist into FTS before hydrating the
+    // result page, then still deliver the event through the normal filter gate.
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let sid = sub_id("nip50-search-ids");
+    let ws_filter = Filter::new()
+        .kind(Kind::Custom(9))
+        .search(&unique_token)
+        .limit(1)
+        .id(allowlisted_event_id)
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::H), [channel.as_str()]);
+    client
+        .subscribe(&sid, vec![ws_filter])
+        .await
+        .expect("subscribe to ids-restricted search");
+    let ws_events = client
+        .collect_until_eose(&sid, Duration::from_secs(10))
+        .await
+        .expect("collect WS search until EOSE");
+    assert_eq!(
+        ws_events.iter().map(|event| event.id).collect::<Vec<_>>(),
+        vec![allowlisted_event_id],
+        "WS search must return exactly the allowlisted event, even past the bounded scan"
+    );
+    client.disconnect().await.expect("disconnect");
+
+    // The HTTP bridge must apply the same ids pushdown before hydrating rows.
+    let http_filter = serde_json::json!([{
+        "kinds": [9],
+        "search": unique_token,
+        "ids": [allowlisted_id],
+        "#h": [channel],
+        "limit": 1,
+    }]);
+    let response = reqwest::Client::new()
+        .post(format!("{}/query", relay_http_url()))
+        .header("X-Pubkey", keys.public_key().to_hex())
+        .header("Content-Type", "application/json")
+        .body(serde_json::to_string(&http_filter).expect("serialize HTTP search filter"))
+        .send()
+        .await
+        .expect("submit HTTP ids-restricted search");
+    assert!(
+        response.status().is_success(),
+        "HTTP ids-restricted search failed: {}",
+        response.status()
+    );
+    let http_events: Vec<serde_json::Value> =
+        response.json().await.expect("parse HTTP search response");
+    let http_ids = http_events
+        .iter()
+        .filter_map(|event| event["id"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        http_ids,
+        vec![allowlisted_id.as_str()],
+        "HTTP search must return exactly the allowlisted event, even past the bounded scan"
+    );
 }
 
 /// Subscribe with mixed search + non-search filters.
