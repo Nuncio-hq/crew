@@ -28,6 +28,8 @@ pub enum OperationKind {
     ThreadHandoff,
     /// Channel Crew role configuration with fixed native admission policy.
     ChannelCrewConfig,
+    /// Durable local managed-agent removal and channel cleanup.
+    ManagedAgentDelete,
 }
 
 /// Observable operation phase. Reconciliation is independent of phase.
@@ -102,6 +104,30 @@ pub struct OperationSummary {
     /// Whether the consumer has reconciled all side effects.
     pub reconciled: bool,
     /// Native update time in Unix seconds.
+    pub updated_at: i64,
+}
+
+/// Redacted, app-global view of managed-agent deletion work. The payload is
+/// intentionally omitted so a workspace switch cannot expose another scope's
+/// cleanup details; callers can switch to `community` and load the operation
+/// through the normal scoped status/retry path.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ManagedAgentDeletionSummary {
+    /// Canonical operation UUID.
+    pub id: String,
+    /// Native owner public key that owns the record.
+    pub owner: String,
+    /// Canonical community origin that owns the record.
+    pub community: String,
+    /// Managed-agent public key whose local deletion is fenced.
+    pub resource_key: String,
+    /// Expected revision for the next scoped CAS.
+    pub revision: u64,
+    /// Last recorded phase.
+    pub status: OperationStatus,
+    /// Whether all domain side effects have been reconciled.
+    pub reconciled: bool,
+    /// Native last-update time in Unix seconds.
     pub updated_at: i64,
 }
 
@@ -202,8 +228,11 @@ pub struct OperationStore {
     limits: Limits,
 }
 
+mod managed_delete_claim;
 mod mutations;
 mod storage;
+
+pub(crate) use managed_delete_claim::validate_record as validate_managed_agent_delete_record;
 
 #[cfg(all(test, unix))]
 mod tests;
@@ -235,6 +264,7 @@ mod kind_policy_tests;
 fn record_byte_limit(limits: Limits, kind: OperationKind) -> usize {
     match kind {
         OperationKind::ChannelCrewConfig => limits.bytes_per_operation.min(1024 * 1024),
+        OperationKind::ManagedAgentDelete => limits.bytes_per_operation.min(64 * 1024),
         _ => limits.bytes_per_operation,
     }
 }

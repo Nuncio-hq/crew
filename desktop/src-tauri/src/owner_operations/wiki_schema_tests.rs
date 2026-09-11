@@ -1,4 +1,4 @@
-//! Schema v2 compatibility, crash atomicity, and retention-pin invariants.
+//! Schema v3 compatibility, crash atomicity, and retention-pin invariants.
 //!
 //! Every assertion here runs against a real SQLite file through the shipping
 //! `OperationStore`; the crash cases run the real transaction in an owned
@@ -99,15 +99,18 @@ fn durable_core_schema_migration_is_idempotent_and_preserves_unresolved_claims()
     for operation in &rows {
         insert_v1_row(&connection, operation);
     }
-    // Running the migration twice must leave exactly the same schema: an
-    // interrupted opener retries it on the next start.
+    // Run both versioned migrations twice. Each is idempotent, so an
+    // interrupted opener retries them on the next start.
+    connection
+        .execute_batch(include_str!("managed_delete_migration.sql"))
+        .expect("managed-delete migration");
     for _ in 0..2 {
         connection
-            .execute_batch(include_str!("migration_1_to_2.sql"))
+            .execute_batch(include_str!("migration_2_to_3.sql"))
             .expect("idempotent migration");
     }
     drop(connection);
-    assert_eq!(user_version(&path), 2);
+    assert_eq!(user_version(&path), 3);
 
     let mut store = OperationStore::open(&path, Limits::default()).expect("reopen migrated");
     for operation in &rows {
@@ -138,18 +141,18 @@ fn durable_core_schema_migration_is_idempotent_and_preserves_unresolved_claims()
     );
 }
 
-/// The opener's accepted set is the whole compatibility contract: a build
-/// without the successor relation ends that set at `1`, so it refuses a
-/// migrated journal through this very branch instead of ignoring pins it
-/// cannot honor (D-079).
+/// The opener's accepted set is the whole compatibility contract. A build
+/// without the successor relation ends its set at `2`, so it refuses a v3
+/// journal through this very branch instead of ignoring pins it cannot honor
+/// (D-079).
 #[test]
 fn durable_core_open_refuses_schema_versions_outside_its_supported_set() {
     assert_eq!(
         crate::owner_operations::storage::SUPPORTED_SCHEMA_VERSIONS.to_vec(),
-        vec![0_i64, 1, 2]
+        vec![0_i64, 1, 2, 3]
     );
-    assert_eq!(crate::owner_operations::storage::CURRENT_SCHEMA_VERSION, 2);
-    for version in [3_i64, 99] {
+    assert_eq!(crate::owner_operations::storage::CURRENT_SCHEMA_VERSION, 3);
+    for version in [4_i64, 99] {
         let dir = tempfile::tempdir().expect("fixture directory");
         let path = journal_path(&dir);
         let connection = Connection::open(&path).expect("open journal");
@@ -255,7 +258,7 @@ fn durable_core_crash_around_the_migration_commit_is_atomic() {
             if stage == "before-migration-commit" {
                 1
             } else {
-                2
+                3
             },
             "the migration commits atomically or not at all"
         );
@@ -266,7 +269,7 @@ fn durable_core_crash_around_the_migration_commit_is_atomic() {
                 .connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
         for operation in &rows {
             assert_eq!(

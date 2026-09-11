@@ -4,13 +4,23 @@ use crate::{app_state::AppState, managed_agents::*, util::now_iso};
 use std::sync::Arc;
 use tauri::AppHandle;
 
-pub(super) async fn deploy_with_scope(
-    app: &AppHandle,
+fn ensure_provider_deploy_not_pending(
+    journal: &crate::owner_operations::OperationStore,
+    pubkey: &str,
+) -> Result<(), String> {
+    if crate::managed_agent_delete::pending_in_store(journal, pubkey)? {
+        return Err(
+            "agent deletion is still unresolved; retry the durable deletion before deploying"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) async fn acquire_provider_deploy_lock(
     state: &AppState,
     pubkey: &str,
-    scope: &AgentStartScope,
-) -> Result<(), String> {
-    scope.validate()?;
+) -> Result<tokio::sync::OwnedMutexGuard<()>, String> {
     let lock = {
         let mut locks = state
             .provider_deploy_locks
@@ -22,7 +32,25 @@ pub(super) async fn deploy_with_scope(
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
         )
     };
-    let _guard = lock.lock().await;
+    Ok(lock.lock_owned().await)
+}
+
+pub(super) async fn deploy_with_scope(
+    app: &AppHandle,
+    state: &AppState,
+    pubkey: &str,
+    scope: &AgentStartScope,
+) -> Result<(), String> {
+    scope.validate()?;
+    let _guard = acquire_provider_deploy_lock(state, pubkey).await?;
+    // The native journal is opened before the transition/store locks. The
+    // transition lock serializes this preflight with a deletion claim, so a
+    // provider deploy cannot start after deletion has become authoritative.
+    let journal = crate::managed_agent_delete::open_journal_store(app)?;
+    let _transition_guard = state
+        .managed_agent_runtime_transition
+        .lock()
+        .map_err(|e| e.to_string())?;
     // Waiting for another deploy may change the saved policy, relay or identity.
     // Build once after the await and validate the exact payload passed to the provider.
     let (provider_id, config, cached_binary_path, mut agent_json) = {
@@ -45,6 +73,9 @@ pub(super) async fn deploy_with_scope(
             build_deploy_payload(app, state, record)?,
         )
     };
+    ensure_provider_deploy_not_pending(&journal, pubkey)?;
+    drop(journal);
+    drop(_transition_guard);
     prepare_scoped_payload(&mut agent_json, scope)?;
     // Resolve via discovered candidates only. Cached path must match BOTH
     // "is a discovered candidate" AND "belongs to this provider_id". A tampered
@@ -67,11 +98,20 @@ pub(super) async fn deploy_with_scope(
             .await
             .map_err(|e| format!("spawn_blocking failed: {e}"))?;
 
-    // Persist result under lock.
+    // Reacquire the same transition/store lock order before persisting. A
+    // deletion may have claimed the instance while the provider call awaited;
+    // in that case leave the delete journal authoritative and do not write a
+    // stale backend receipt into the removed local record.
+    let journal = crate::managed_agent_delete::open_journal_store(app)?;
+    let _transition_guard = state
+        .managed_agent_runtime_transition
+        .lock()
+        .map_err(|e| e.to_string())?;
     let _store_guard = state
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
+    ensure_provider_deploy_not_pending(&journal, pubkey)?;
     let mut records = load_managed_agents(app)?;
     let rec = records
         .iter_mut()

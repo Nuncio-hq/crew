@@ -155,7 +155,7 @@ fn durable_core_v1_migration_preserves_scoped_rows_and_is_reopenable() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     for operation in &operations {
         assert_eq!(

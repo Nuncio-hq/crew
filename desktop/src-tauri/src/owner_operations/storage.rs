@@ -13,13 +13,14 @@ use super::{
 };
 
 /// Schema versions this binary can open. `0` is an empty file this opener
-/// initializes. A build without the Wiki successor relation ends its set at
-/// `1` and therefore refuses a migrated journal through the same branch,
-/// rather than ignoring retention pins it cannot honor (D-079).
-pub(super) const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[0, 1, 2];
+/// initializes. Version 2 is the managed-agent deletion journal; version 3
+/// adds the Wiki successor relation on top of it. Keeping the intermediate
+/// version in the accepted set lets an existing journal upgrade atomically
+/// without treating an older, valid file as corrupt.
+pub(super) const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[0, 1, 2, 3];
 
 /// Version written by the newest migration in this binary.
-pub(super) const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub(super) const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 pub(super) fn sql_error(error: rusqlite::Error) -> StoreError {
     if let rusqlite::Error::SqliteFailure(code, _) = &error {
@@ -43,6 +44,7 @@ pub(super) fn kind_key(kind: OperationKind) -> &'static str {
         OperationKind::ProjectChange => "project-change",
         OperationKind::ThreadHandoff => "thread-handoff",
         OperationKind::ChannelCrewConfig => "channel-crew-config",
+        OperationKind::ManagedAgentDelete => "managed-agent-delete",
     }
 }
 
@@ -188,17 +190,36 @@ impl OperationStore {
             }
             tx.execute_batch(include_str!("schema.sql"))
                 .map_err(sql_error)?;
-            tx.execute_batch(include_str!("migration_1_to_2.sql"))
+        }
+        let version: i64 = tx
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(sql_error)?;
+        if version <= 1 {
+            // Version 2 is the durable managed-agent deletion claim. This is
+            // kept as a separate step so an existing v1 journal can be
+            // upgraded without losing its rows.
+            tx.execute_batch(include_str!("managed_delete_migration.sql"))
                 .map_err(sql_error)?;
-        } else if version == 1 {
-            tx.execute_batch(include_str!("migration_1_to_2.sql"))
+        }
+        let version: i64 = tx
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(sql_error)?;
+        if version == 2 {
+            // Version 3 adds the Wiki successor relation and repeats the
+            // managed-delete index creation defensively for v2 journals that
+            // were produced by the pre-merge Wiki branch.
+            tx.execute_batch(include_str!("migration_2_to_3.sql"))
                 .map_err(sql_error)?;
-        } else if version != CURRENT_SCHEMA_VERSION {
+        }
+        let final_version: i64 = tx
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(sql_error)?;
+        if final_version != CURRENT_SCHEMA_VERSION {
             return Err(StoreError::Version);
         }
-        // The migration is one immediate transaction: an interrupted opener
-        // leaves the previous version intact and the idempotent script runs
-        // again on the next open.
+        // Migrations are one immediate transaction: an interrupted opener
+        // leaves the previous version intact and retries the idempotent
+        // scripts on the next open.
         #[cfg(all(test, unix))]
         super::tests::crash_checkpoint("before-migration-commit");
         tx.commit().map_err(sql_error)?;

@@ -21,6 +21,7 @@ mod link_preview_tags;
 mod linux_media;
 #[cfg(target_os = "macos")]
 mod macos_notifications;
+mod managed_agent_delete;
 mod managed_agents;
 mod media_proxy;
 #[cfg(feature = "mesh-llm")]

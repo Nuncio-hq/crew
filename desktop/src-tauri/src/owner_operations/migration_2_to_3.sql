@@ -1,7 +1,10 @@
--- Schema v2 adds only the direct Wiki successor relation. Existing operation
--- rows, payloads, revisions, initial claims, and retention metadata remain
--- byte-for-byte untouched. This script is run inside BEGIN IMMEDIATE and is
--- idempotent so an interrupted opener can safely retry it.
+-- Schema v3 adds the direct Wiki successor relation. The managed-agent claim
+-- index is repeated here so journals created by either pre-merge v2 branch
+-- converge on the same v3 schema before the opener commits user_version.
+CREATE UNIQUE INDEX IF NOT EXISTS unresolved_managed_agent_delete
+    ON operations(resource_key)
+    WHERE kind = 'managed-agent-delete' AND reconciled = 0;
+
 CREATE TABLE IF NOT EXISTS wiki_publication_successors (
     owner TEXT NOT NULL,
     community TEXT NOT NULL,
@@ -15,4 +18,4 @@ CREATE TABLE IF NOT EXISTS wiki_publication_successors (
 );
 CREATE INDEX IF NOT EXISTS wiki_successor_by_owner
     ON wiki_publication_successors(owner, community, successor_id);
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;

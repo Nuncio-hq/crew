@@ -1,6 +1,54 @@
 use super::*;
 use serde_json::json;
 
+fn delete_request(pubkey: &str) -> crate::owner_operations::NewOperation {
+    crate::owner_operations::NewOperation {
+        id: uuid::Uuid::new_v4().to_string(),
+        kind: crate::owner_operations::OperationKind::ManagedAgentDelete,
+        resource_key: pubkey.to_string(),
+        payload: json!({
+            "version": 1,
+            "fence": {
+                "pubkey": pubkey,
+                "name": "agent",
+                "created_at": "created",
+                "relay_url": "wss://relay.example",
+                "backend_agent_id": null
+            },
+            "channels": [],
+            "local_removed": false,
+            "key_removed": false,
+            "tombstone_enqueued": false,
+            "failures": 0,
+            "last_error": null
+        }),
+    }
+}
+
+#[test]
+fn provider_deploy_fence_rejects_a_claimed_deletion() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("owner-operations/recovery.db");
+    let mut journal = crate::owner_operations::OperationStore::open(
+        &path,
+        crate::owner_operations::Limits::default(),
+    )
+    .unwrap();
+    let scope = crate::owner_operations::OperationScope {
+        owner: "a".repeat(64),
+        community: "https://example.com".into(),
+    };
+    let pubkey = "b".repeat(64);
+    journal.create(&scope, delete_request(&pubkey), 1).unwrap();
+
+    let error = ensure_provider_deploy_not_pending(&journal, &pubkey).unwrap_err();
+    assert!(error.contains("deletion is still unresolved"));
+}
+
 fn scope() -> AgentStartScope {
     AgentStartScope {
         expected_relay_url: Some("wss://tenant-a.example".into()),
