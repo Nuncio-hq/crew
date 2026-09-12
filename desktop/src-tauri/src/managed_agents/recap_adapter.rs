@@ -8,12 +8,13 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::recap_capability::RecapToolProbeEvidence;
 
@@ -114,6 +115,8 @@ pub(crate) struct RecapLaunchPlan {
     cwd: PathBuf,
     requested_model: String,
     profile_source: Option<PathBuf>,
+    profile_digest: Option<String>,
+    profile_identity: Option<super::recap_capability::RecapProfileIdentity>,
     usage_file: Option<PathBuf>,
     /// On macOS this is a fixed process-fork denial policy. The policy is
     /// passed to `/usr/bin/sandbox-exec`; the installed runtime and all of its
@@ -146,6 +149,28 @@ impl RecapLaunchPlan {
         &self.executable
     }
 
+    /// Recheck the source profile immediately before spawning the child.
+    pub(crate) fn profile_matches_admission(
+        &self,
+        admission: &super::recap_capability::RecapAdmission,
+    ) -> bool {
+        match (&self.profile_source, &self.profile_digest) {
+            (None, None) => {
+                admission.selection.profile.is_none()
+                    && admission.selection.profile_digest.is_none()
+                    && admission.selection.profile_identity.is_none()
+            }
+            (Some(source), Some(expected)) => {
+                admission.selection.profile.as_deref() == Some(source.as_path())
+                    && admission.selection.profile_digest.as_deref() == Some(expected.as_str())
+                    && admission.selection.profile_identity == self.profile_identity
+                    && profile_identity(source).ok().as_ref() == self.profile_identity.as_ref()
+                    && profile_tree_digest(source).ok().as_deref() == Some(expected.as_str())
+            }
+            _ => false,
+        }
+    }
+
     /// Ensure a plan still names the exact admitted executable, runtime,
     /// model and profile. This check is repeated at the production seam.
     pub(crate) fn matches_admission(
@@ -156,6 +181,8 @@ impl RecapLaunchPlan {
             && self.executable == admission.executable.resolved_path
             && self.requested_model == admission.selection.model
             && self.profile_source == admission.selection.profile
+            && self.profile_digest == admission.selection.profile_digest
+            && self.profile_identity == admission.selection.profile_identity
     }
 
     /// Validate a native final result without retaining raw output on error.
@@ -310,6 +337,8 @@ pub(crate) fn claude_recap_plan(
         cwd: root.to_owned(),
         requested_model: model.to_owned(),
         profile_source: None,
+        profile_digest: None,
+        profile_identity: None,
         usage_file: None,
         sandbox_profile: None,
     })
@@ -339,6 +368,8 @@ pub(crate) fn hermes_recap_plan(
         return Err(RecapRunFailure::InvalidSelection);
     }
     let source = canonical_profile_source(profile)?;
+    let source_identity = profile_identity(&source)?;
+    let profile_digest = profile_tree_digest(&source)?;
     let profile_name = hermes_profile_ref(&source).ok_or(RecapRunFailure::InvalidSelection)?;
     let destination = if profile_name == super::hermes_profile::HERMES_HOME_PROFILE_NAME {
         root.join("hermes")
@@ -347,6 +378,12 @@ pub(crate) fn hermes_recap_plan(
     };
     let mut budget = ProfileCopyBudget::default();
     copy_profile_tree(&source, &destination, &mut budget, 0)?;
+    if profile_tree_digest(&source)? != profile_digest
+        || profile_tree_digest(&destination)? != profile_digest
+    {
+        return Err(RecapRunFailure::ProfileUnavailable);
+    }
+    profile_identity(&destination)?;
 
     let usage_file = root.join("usage.json");
     prepare_usage_file(&usage_file)?;
@@ -382,6 +419,8 @@ pub(crate) fn hermes_recap_plan(
         cwd: root.to_owned(),
         requested_model: model.to_owned(),
         profile_source: Some(profile.to_owned()),
+        profile_digest: Some(profile_digest),
+        profile_identity: Some(source_identity),
         usage_file: Some(usage_file),
         sandbox_profile,
     })
@@ -517,6 +556,178 @@ pub(crate) fn hermes_profile_ref(source: &Path) -> Option<String> {
     Some(name.to_string())
 }
 
+/// Hash the bounded, canonical Hermes profile tree used by a recap grant.
+///
+/// The digest includes relative entry names, directory/file markers and file
+/// bytes. Symlinks and changes during the walk fail closed, and the same
+/// limits as profile copying apply so certification cannot turn into an
+/// unbounded filesystem read.
+pub(crate) fn profile_tree_digest(source: &Path) -> Result<String, RecapRunFailure> {
+    let canonical = canonical_profile_source(source)?;
+    let mut budget = ProfileCopyBudget::default();
+    let mut hasher = Sha256::new();
+    hash_profile_tree(&canonical, &canonical, &mut budget, 0, &mut hasher)?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Capture the canonical directory identity used alongside the content hash.
+pub(crate) fn profile_identity(
+    source: &Path,
+) -> Result<super::recap_capability::RecapProfileIdentity, RecapRunFailure> {
+    let canonical = canonical_profile_source(source)?;
+    let metadata =
+        std::fs::symlink_metadata(&canonical).map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+    if !metadata.is_dir() {
+        return Err(RecapRunFailure::ProfileUnavailable);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.mode() & 0o777 != 0o700 || metadata.uid() != rustix::process::geteuid().as_raw()
+        {
+            return Err(RecapRunFailure::ProfileUnavailable);
+        }
+        Ok(super::recap_capability::RecapProfileIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            owner: metadata.uid(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        Err(RecapRunFailure::UnsupportedContainment)
+    }
+}
+
+fn hash_profile_tree(
+    root: &Path,
+    current: &Path,
+    budget: &mut ProfileCopyBudget,
+    depth: usize,
+    hasher: &mut Sha256,
+) -> Result<(), RecapRunFailure> {
+    if depth > HERMES_PROFILE_DEPTH_LIMIT {
+        return Err(RecapRunFailure::ProfileCopyLimit);
+    }
+    budget.entries = budget
+        .entries
+        .checked_add(1)
+        .ok_or(RecapRunFailure::ProfileCopyLimit)?;
+    if budget.entries > HERMES_PROFILE_ENTRY_LIMIT {
+        return Err(RecapRunFailure::ProfileCopyLimit);
+    }
+    let metadata =
+        std::fs::symlink_metadata(current).map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+    if metadata.file_type().is_symlink() {
+        return Err(RecapRunFailure::ProfileUnavailable);
+    }
+    let relative = current
+        .strip_prefix(root)
+        .map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+    hasher.update(if metadata.is_dir() { b"D\0" } else { b"F\0" });
+    let relative_bytes = relative
+        .to_str()
+        .ok_or(RecapRunFailure::ProfileUnavailable)?;
+    hasher.update(relative_bytes.as_bytes());
+    hasher.update([0]);
+    if metadata.is_dir() {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(current).map_err(|_| RecapRunFailure::ProfileUnavailable)? {
+            if entries.len() >= HERMES_PROFILE_ENTRY_LIMIT {
+                return Err(RecapRunFailure::ProfileCopyLimit);
+            }
+            entries.push(entry.map_err(|_| RecapRunFailure::ProfileUnavailable)?);
+        }
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            hash_profile_tree(root, &entry.path(), budget, depth + 1, hasher)?;
+        }
+        return Ok(());
+    }
+    if !metadata.is_file() {
+        return Err(RecapRunFailure::ProfileUnavailable);
+    }
+    budget.files = budget
+        .files
+        .checked_add(1)
+        .ok_or(RecapRunFailure::ProfileCopyLimit)?;
+    budget.bytes = budget
+        .bytes
+        .checked_add(metadata.len())
+        .ok_or(RecapRunFailure::ProfileCopyLimit)?;
+    if budget.files > HERMES_PROFILE_FILE_LIMIT || budget.bytes > HERMES_PROFILE_BYTES_LIMIT {
+        return Err(RecapRunFailure::ProfileCopyLimit);
+    }
+    hasher.update(metadata.len().to_le_bytes());
+    let mut file = open_profile_file(current)?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+    if !same_profile_file_identity(&metadata, &opened_metadata) {
+        return Err(RecapRunFailure::ProfileUnavailable);
+    }
+    let mut buffer = [0u8; 64 * 1024];
+    let mut remaining = metadata.len();
+    while remaining > 0 {
+        let chunk = remaining.min(buffer.len() as u64) as usize;
+        let read = file
+            .read(&mut buffer[..chunk])
+            .map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+        if read == 0 {
+            return Err(RecapRunFailure::ProfileUnavailable);
+        }
+        hasher.update(&buffer[..read]);
+        remaining -= read as u64;
+    }
+    let mut extra = [0u8; 1];
+    if file
+        .read(&mut extra)
+        .map_err(|_| RecapRunFailure::ProfileUnavailable)?
+        != 0
+    {
+        return Err(RecapRunFailure::ProfileUnavailable);
+    }
+    let final_metadata = file
+        .metadata()
+        .map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+    if !same_profile_file_identity(&metadata, &final_metadata) {
+        return Err(RecapRunFailure::ProfileUnavailable);
+    }
+    Ok(())
+}
+
+fn open_profile_file(path: &Path) -> Result<File, RecapRunFailure> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|_| RecapRunFailure::ProfileUnavailable)
+    }
+    #[cfg(not(unix))]
+    {
+        File::open(path).map_err(|_| RecapRunFailure::ProfileUnavailable)
+    }
+}
+
+fn same_profile_file_identity(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
+    if !before.is_file() || !after.is_file() || before.len() != after.len() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        before.dev() == after.dev() && before.ino() == after.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 fn copy_profile_tree(
     source: &Path,
     destination: &Path,
@@ -540,10 +751,19 @@ fn copy_profile_tree(
     }
     if metadata.is_dir() {
         std::fs::create_dir_all(destination).map_err(|_| RecapRunFailure::ProfileUnavailable)?;
-        let mut entries = std::fs::read_dir(source)
-            .map_err(|_| RecapRunFailure::ProfileUnavailable)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| RecapRunFailure::ProfileUnavailable)?;
+        }
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(source).map_err(|_| RecapRunFailure::ProfileUnavailable)? {
+            if entries.len() >= HERMES_PROFILE_ENTRY_LIMIT {
+                return Err(RecapRunFailure::ProfileCopyLimit);
+            }
+            entries.push(entry.map_err(|_| RecapRunFailure::ProfileUnavailable)?);
+        }
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
             copy_profile_tree(

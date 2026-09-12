@@ -28,6 +28,8 @@ fn admission(executable: &std::path::Path, model: &str) -> RecapAdmission {
         selection: super::super::recap_capability::RecapSelection {
             model: model.to_string(),
             profile: None,
+            profile_digest: None,
+            profile_identity: None,
             auth_available: true,
         },
     }

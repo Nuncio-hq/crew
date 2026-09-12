@@ -524,7 +524,8 @@ of one-shot support. `classify_recap` still returns only failure states;
 discovery cannot create a positive capability. A typed bounded-probe
 certification is the only input to the native producer, which persists a
 redacted row in the existing scoped managed-agent retention DB (keyed by
-runtime, executable fingerprint/version/platform) and atomically projects the
+runtime, executable fingerprint/version/platform, with a bounded Hermes
+profile-tree digest when a profile is selected) and atomically projects the
 strict runtime-ready grant. Production consumers require both the grant and
 its matching retention row, so the registered command remains fail-closed
 until an actual native probe and auth binding exist.
@@ -537,12 +538,18 @@ grant loader/producer, and the existing bounded discovery process helper
 extended with caller-owned stdin, cancellation and per-stream budgets. The
 registered recap service binds those pieces at one production seam and keeps
 its command unavailable without the grant and matching retention row.
-Hermes copies the selected profile into the disposable run, disables its
-configured MCP path and rule injection, binds a one-shot prompt, and checks the
-written usage model before accepting output. Empty toolsets, `--safe-mode`, or
-an ACP read-only session do not certify tool isolation: the producer requires
-typed hostile-tool evidence showing an observed request was denied before
-effect and a controlled sentinel was unchanged. On macOS its plan is launched
+Hermes binds the selected profile path, canonical directory device/inode
+identity and bounded content digest, rechecking all three when a grant is
+loaded and immediately before launch, then copies the selected profile into
+the disposable run. It disables its configured MCP
+path and rule injection, binds a one-shot prompt, and checks the written usage
+model before accepting output. Empty toolsets, `--safe-mode`, or an ACP
+read-only session do not certify tool isolation: the producer requires an
+actual native observer rather than provider output claims; that observer must
+bind the executed plan and report hostile-tool denial before effect plus an
+unchanged controlled sentinel. No observer is wired yet, so the
+certification entrypoint rejects the parsed envelope and cannot project a
+positive grant. On macOS its plan is launched
 through the fixed `sandbox-exec` process-fork denial policy; the ordinary Unix
 process-group limitation and any escaped-descendant caveat still apply to the
 bounded owner. Neither recipe has a positive staging grant in the current
@@ -558,6 +565,11 @@ the recap state parent. A manifest claiming generation permission or containing
 auth references is rejected. Ownership does not imply authentication readiness;
 the producer still requires a native keyring binding, a completed bounded
 probe, and the matching scoped retention row before it can project a grant.
+
+Owner-local recap settings keep a safe Off value when their JSON is corrupt,
+but the settings snapshot carries `settings_error: "invalid_settings"` so the
+command caller can offer repair instead of treating the fallback as
+authoritative.
 
 The derived `agents` base must be canonical and owned before any run-directory
 creation or recovery; an intermediate symlink is rejected, and active runs fence

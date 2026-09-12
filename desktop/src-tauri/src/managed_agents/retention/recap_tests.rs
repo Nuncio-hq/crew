@@ -18,6 +18,8 @@ fn parts(version: &str, fingerprint: &str, platform: &str) -> RecapCertification
         selection: RecapSelection {
             model: "fixture-model".into(),
             profile: None,
+            profile_digest: None,
+            profile_identity: None,
             auth_available: true,
         },
         auth: RecapAuthBinding {

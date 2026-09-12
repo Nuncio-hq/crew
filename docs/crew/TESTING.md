@@ -961,15 +961,21 @@ integration. Run `just ci` before the PR and require the immutable head's
 NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-10)
 for the current unsupported inventory.
 
-Test boundaries include explicit model/profile admission, identity invalidation,
-fixed Claude and Hermes argv with a fake tool sentinel, native final-result and
+Test boundaries include explicit model/profile admission, executable and
+profile content identity invalidation, and provider envelopes rejected without
+a native observer. Fixed Claude and Hermes argv with a fake tool sentinel,
+native final-result and
 usage-model parsing, copied-profile and symlink rejection, private unlinked
 stdin and size limits, durable process-pending state, copied/symlinked ownership
 records, root-generation replacement, UID/build/profile/exclusion mismatch,
 rejection of generation/auth claims in an ownership-only manifest, and
 production-seam execution with a fake native executable, private stdin and
 finished-run cleanup. The ownership loader also binds a future runtime-ready
-grant to the exact ownership receipt bytes and executable fingerprint.
+grant to the exact ownership receipt bytes, executable fingerprint, profile
+directory identity and profile-tree digest; changing or replacing a retained
+Hermes profile fails closed before admission or launch. Corrupt saved settings
+retain safe Off rendering while
+surfacing `settings_error: "invalid_settings"` for recovery.
 The source seam is tested for chronological cursor pagination, newest-window
 selection, auxiliary-event exclusion, and the persisted `source_overflow`
 watermark when the bounded relay scan cannot prove EOF; an overflowed source is
@@ -983,14 +989,14 @@ fixture; it must never be reported as whole-tree containment.
 Keep RED, mutation and restored-GREEN evidence separate. Removing the fixed
 no-tool Claude/Hermes recipe arguments, prompt cap, pending-process cleanup
 guard, source overflow watermark, or EPERM reap condition must fail the
-corresponding production-seam regression. Synthetic
-argv/output tests and authorized design reviews do not establish provider auth,
-effective generation model, native tool isolation or a working recap. The
-native producer now accepts only a typed bounded-probe attestation, including
-hostile-tool denial and unchanged sentinels, then records its redacted evidence
-in the existing scoped retention DB before atomically projecting the grant.
-Real staging generation remains blocked until one exact runtime combination
-proves all those properties and #348 supplies the native auth/profile binding.
+corresponding production-seam regression. Synthetic argv/output tests and
+authorized design reviews do not establish provider auth, effective generation
+model, native tool isolation or a working recap. The provider envelope parser
+is deliberately insufficient for certification: until a native observer binds
+it to the actual plan and independently records state/process outcomes, the
+producer returns `UnverifiedCapability` and does not write a grant. Real
+staging generation remains blocked until one exact runtime combination proves
+all those properties and #348 supplies the native auth/profile binding.
 Evidence screenshots must label a source/tooling summary as such; they cannot
 substitute for the designated staging runtime acceptance required by #351/#356.
 

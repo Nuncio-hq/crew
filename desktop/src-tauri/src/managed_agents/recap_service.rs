@@ -90,6 +90,7 @@ pub(crate) fn execute_admitted_recap(
     };
     if !same_executable_proof(&verified_executable, &admission.executable)
         || plan.executable_path() != admission.executable.resolved_path
+        || !plan.profile_matches_admission(&admission)
     {
         return abort_after_pending_before_spawn(
             run,

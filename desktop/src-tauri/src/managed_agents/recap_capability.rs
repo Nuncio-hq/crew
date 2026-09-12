@@ -9,9 +9,12 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::recap_adapter::{RecapAdapterObservation, RECAP_OUTPUT_LIMIT};
+use super::recap_adapter::RecapAdapterObservation;
+#[cfg(test)]
+use super::recap_adapter::RECAP_OUTPUT_LIMIT;
 
 /// Runtime-owned selection contract, separate from employee session settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,11 +39,29 @@ pub(crate) struct RecapExecutableIdentity {
     pub platform: String,
 }
 
+/// Native identity of the profile directory bound by a runtime proof.
+/// Content hashing detects edits; this identity also detects replacing the
+/// directory with another same-content inode under the retained path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecapProfileIdentity {
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+    pub(crate) owner: u32,
+}
+
 /// Explicit selection supplied by staging; an empty model cannot mean auto.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecapSelection {
     pub model: String,
     pub profile: Option<PathBuf>,
+    /// Bounded digest of the profile tree observed by the native probe.
+    ///
+    /// This is separate from the path because a Hermes profile is mutable
+    /// state. A retained path without its content binding could authorize a
+    /// later replacement under the same name.
+    pub profile_digest: Option<String>,
+    /// Device/inode identity of the canonical profile directory.
+    pub profile_identity: Option<RecapProfileIdentity>,
     pub auth_available: bool,
 }
 
@@ -75,6 +96,7 @@ pub(crate) struct RecapToolProbeEvidence {
 /// [`RecapRuntimeCertification::from_probe`] before it can be persisted or
 /// used for admission. Raw output is consumed and reduced to a digest by the
 /// certification constructor.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecapProbeAttestation {
     runtime_id: String,
@@ -252,6 +274,22 @@ impl RecapRuntimeReadyProof {
         if !valid_recap_model(&selection.model) {
             return Err(RecapFailure::InvalidModelSelection);
         }
+        if selection.profile.is_some()
+            && !selection.profile_digest.as_deref().is_some_and(is_sha256)
+        {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        if selection.profile.is_none() && selection.profile_digest.is_some() {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        if selection.profile.is_none() && selection.profile_identity.is_some() {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        if selection.profile.is_some()
+            && (selection.profile_digest.is_none() || selection.profile_identity.is_none())
+        {
+            return Err(RecapFailure::ProfileMismatch);
+        }
         if !valid_auth_reference(&auth_reference) {
             return Err(RecapFailure::AuthRequired);
         }
@@ -310,32 +348,43 @@ impl RecapRuntimeReadyProof {
 }
 
 impl RecapRuntimeCertification {
-    /// Build the attestation at the adapter boundary. The adapter observation
-    /// must have come from [`super::recap_adapter::RecapLaunchPlan::parse_probe_output`];
-    /// callers do not provide individual output/model/tool booleans.
+    /// Refuse provider output until a native observer binds it to the executed
+    /// plan and independently records state/process outcomes.
+    ///
+    /// `parse_probe_output` only validates a bounded provider envelope. It is
+    /// not evidence that the declared command, executable, selection, state or
+    /// process observations actually occurred, so this seam intentionally
+    /// cannot mint a positive certification today.
     pub(crate) fn from_adapter_observation(
         target: RecapProbeTarget,
         adapter: RecapAdapterObservation,
         state: RecapStateObservation,
         process: RecapProcessObservation,
     ) -> Result<Self, RecapFailure> {
-        Self::from_probe(
-            target.contract,
-            RecapProbeAttestation {
-                runtime_id: target.runtime_id,
-                executable: target.executable,
-                selection: target.selection,
-                auth: target.auth,
-                adapter,
-                state,
-                process,
-            },
-        )
+        let _ = (target, adapter, state, process);
+        Err(RecapFailure::UnverifiedCapability)
+    }
+
+    /// Construct a synthetic certificate for module tests only. Production
+    /// code must use a future native observer rather than this fixture seam.
+    #[cfg(test)]
+    pub(crate) fn for_test_from_parts(parts: RecapCertificationParts) -> Self {
+        Self {
+            runtime_id: parts.runtime_id,
+            executable: parts.executable,
+            selection: parts.selection,
+            auth: parts.auth,
+            guarantees: parts.guarantees,
+            effective_model: parts.effective_model,
+            output_digest: parts.output_digest,
+            tool_probe_digest: parts.tool_probe_digest,
+        }
     }
 
     /// Consume one adapter probe and create the sole positive certification
     /// value. Every positive property is supplied as explicit evidence; this
     /// function never infers tool, state, or process guarantees from flags.
+    #[cfg(test)]
     fn from_probe(
         contract: RecapRuntimeContract,
         probe: RecapProbeAttestation,
@@ -354,6 +403,21 @@ impl RecapRuntimeCertification {
         }
         if !valid_recap_model(&probe.selection.model) {
             return Err(RecapFailure::InvalidModelSelection);
+        }
+        if probe.selection.profile.is_some()
+            && !probe
+                .selection
+                .profile_digest
+                .as_deref()
+                .is_some_and(is_sha256)
+        {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        if probe.selection.profile.is_none() && probe.selection.profile_digest.is_some() {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        if probe.selection.profile.is_none() && probe.selection.profile_identity.is_some() {
+            return Err(RecapFailure::ProfileMismatch);
         }
         if !probe.selection.auth_available {
             return Err(RecapFailure::AuthRequired);
@@ -375,7 +439,32 @@ impl RecapRuntimeCertification {
             {
                 return Err(RecapFailure::MissingProfile);
             }
+            RecapSelectionContract::StagingProfile if probe.selection.profile_digest.is_none() => {
+                return Err(RecapFailure::ProfileMismatch);
+            }
+            RecapSelectionContract::StagingProfile
+                if probe.selection.profile_identity.is_none() =>
+            {
+                return Err(RecapFailure::ProfileMismatch);
+            }
             _ => {}
+        }
+        if let (Some(profile), Some(expected_digest)) = (
+            probe.selection.profile.as_deref(),
+            probe.selection.profile_digest.as_deref(),
+        ) {
+            let observed_digest = super::recap_adapter::profile_tree_digest(profile)
+                .map_err(|_| RecapFailure::ProfileMismatch)?;
+            if observed_digest != expected_digest {
+                return Err(RecapFailure::ProfileMismatch);
+            }
+            if super::recap_adapter::profile_identity(profile)
+                .ok()
+                .as_ref()
+                != probe.selection.profile_identity.as_ref()
+            {
+                return Err(RecapFailure::ProfileMismatch);
+            }
         }
         if probe.adapter.output().is_empty() {
             return Err(RecapFailure::EmptyProbeOutput);
@@ -472,6 +561,21 @@ pub(crate) fn admit_runtime_ready(
     if !valid_recap_model(&proof.selection.model) {
         return Err(RecapFailure::InvalidModelSelection);
     }
+    if proof.selection.profile.is_some()
+        && !proof
+            .selection
+            .profile_digest
+            .as_deref()
+            .is_some_and(is_sha256)
+    {
+        return Err(RecapFailure::ProfileMismatch);
+    }
+    if proof.selection.profile.is_none() && proof.selection.profile_digest.is_some() {
+        return Err(RecapFailure::ProfileMismatch);
+    }
+    if proof.selection.profile.is_none() && proof.selection.profile_identity.is_some() {
+        return Err(RecapFailure::ProfileMismatch);
+    }
     match contract.selection {
         RecapSelectionContract::ExplicitModel if proof.selection.profile.is_some() => {
             // The explicit-model adapter has no profile argument. Accepting
@@ -487,6 +591,12 @@ pub(crate) fn admit_runtime_ready(
         {
             return Err(RecapFailure::MissingProfile);
         }
+        RecapSelectionContract::StagingProfile if proof.selection.profile_digest.is_none() => {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        RecapSelectionContract::StagingProfile if proof.selection.profile_identity.is_none() => {
+            return Err(RecapFailure::ProfileMismatch);
+        }
         _ => {}
     }
     if requested.auth_available != proof.selection.auth_available {
@@ -496,6 +606,12 @@ pub(crate) fn admit_runtime_ready(
         return Err(RecapFailure::InvalidModelSelection);
     }
     if requested.profile != proof.selection.profile {
+        return Err(RecapFailure::ProfileMismatch);
+    }
+    if requested.profile_digest != proof.selection.profile_digest {
+        return Err(RecapFailure::ProfileMismatch);
+    }
+    if requested.profile_identity != proof.selection.profile_identity {
         return Err(RecapFailure::ProfileMismatch);
     }
     Ok(RecapAdmission {

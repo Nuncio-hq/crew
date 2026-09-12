@@ -1,8 +1,8 @@
 #![cfg(unix)]
 use super::*;
 use crate::managed_agents::recap_capability::{
-    RecapAuthBinding, RecapExecutableIdentity, RecapProbeTarget, RecapProcessObservation,
-    RecapRuntimeCertification, RecapSelection, RecapStateObservation,
+    RecapAuthBinding, RecapCertificationParts, RecapExecutableIdentity, RecapRuntimeCertification,
+    RecapSelection,
 };
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
@@ -117,33 +117,37 @@ fn certification(executable: &std::path::Path, auth_service: &str) -> RecapRunti
     let adapter = plan
         .parse_probe_output(true, &serde_json::to_vec(&envelope).unwrap(), b"")
         .unwrap();
-    RecapRuntimeCertification::from_adapter_observation(
-        RecapProbeTarget {
-            contract: super::super::known_acp_runtime_exact("claude")
-                .unwrap()
-                .recap_contract(),
-            runtime_id: "claude".into(),
-            executable: RecapExecutableIdentity {
-                resolved_path: executable.to_owned(),
-                version: "fixture-1".into(),
-                fingerprint: hex::encode(Sha256::digest(&executable_bytes)),
-                platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
-            },
-            selection: RecapSelection {
-                model: "fixture-model".into(),
-                profile: None,
-                auth_available: true,
-            },
-            auth: RecapAuthBinding {
-                service: auth_service.into(),
-                reference: "staging-auth-reference".into(),
-            },
+    let executable = RecapExecutableIdentity {
+        resolved_path: executable.to_owned(),
+        version: "fixture-1".into(),
+        fingerprint: hex::encode(Sha256::digest(&executable_bytes)),
+        platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+    };
+    let _ = adapter;
+    RecapRuntimeCertification::for_test_from_parts(RecapCertificationParts {
+        runtime_id: "claude".into(),
+        executable,
+        selection: RecapSelection {
+            model: "fixture-model".into(),
+            profile: None,
+            profile_digest: None,
+            profile_identity: None,
+            auth_available: true,
         },
-        adapter,
-        RecapStateObservation::Unchanged,
-        RecapProcessObservation::ReapedAndContained,
-    )
-    .unwrap()
+        auth: RecapAuthBinding {
+            service: auth_service.into(),
+            reference: "staging-auth-reference".into(),
+        },
+        guarantees: RecapGuarantees {
+            one_shot: true,
+            tool_isolation: true,
+            state_isolation: true,
+            process_containment: true,
+        },
+        effective_model: "fixture-model".into(),
+        output_digest: "a".repeat(64),
+        tool_probe_digest: "b".repeat(64),
+    })
 }
 
 #[test]
@@ -280,6 +284,37 @@ fn runtime_ready_grant_is_bound_to_owned_receipt_and_current_executable() {
     assert!(receipt.runtime_ready_proof().is_ok());
 
     std::fs::write(&executable, b"replaced executable").unwrap();
+    assert_eq!(
+        receipt.runtime_ready_proof(),
+        Err(RecapStateFailure::RuntimeNotReady)
+    );
+}
+
+#[test]
+fn loader_rejects_grant_with_wrong_auth_service() {
+    let (_temp, native, doc) = fixture();
+    write(&native, &doc);
+    let executable = native.home.join("fixture-claude");
+    std::fs::write(&executable, b"fixture executable").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_runtime_grant(
+        &native,
+        &doc,
+        &executable,
+        serde_json::json!({
+            "one_shot": true,
+            "tool_isolation": true,
+            "state_isolation": true,
+            "process_containment": true,
+        }),
+    );
+    let grant_path = native.app_data.join("crew-staging-runtime-ready-v1.json");
+    let mut grant: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&grant_path).unwrap()).unwrap();
+    grant["auth_service"] = "different-keyring-service".into();
+    std::fs::write(&grant_path, serde_json::to_vec(&grant).unwrap()).unwrap();
+
+    let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
     assert_eq!(
         receipt.runtime_ready_proof(),
         Err(RecapStateFailure::RuntimeNotReady)

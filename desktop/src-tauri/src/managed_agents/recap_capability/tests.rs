@@ -21,6 +21,8 @@ fn selection() -> RecapSelection {
     RecapSelection {
         model: "configured-model".into(),
         profile: None,
+        profile_digest: None,
+        profile_identity: None,
         auth_available: true,
     }
 }
@@ -304,9 +306,9 @@ fn explicit_model_contract_rejects_profile_bearing_proof() {
 }
 
 #[test]
-fn bounded_probe_is_the_only_path_to_a_positive_certification() {
+fn provider_probe_output_without_native_observer_stays_unsupported() {
     let raw = probe();
-    let certification = RecapRuntimeCertification::from_adapter_observation(
+    let result = RecapRuntimeCertification::from_adapter_observation(
         RecapProbeTarget {
             contract: known_contract(),
             runtime_id: raw.runtime_id,
@@ -317,17 +319,8 @@ fn bounded_probe_is_the_only_path_to_a_positive_certification() {
         raw.adapter,
         raw.state,
         raw.process,
-    )
-    .expect("complete adapter evidence should certify");
-    let parts = certification.parts();
-    assert_eq!(parts.runtime_id, "claude");
-    assert_eq!(parts.effective_model, parts.selection.model);
-    assert_eq!(parts.output_digest.len(), 64);
-    assert_eq!(parts.tool_probe_digest.len(), 64);
-    assert!(parts.guarantees.one_shot);
-    assert!(parts.guarantees.tool_isolation);
-    assert!(parts.guarantees.state_isolation);
-    assert!(parts.guarantees.process_containment);
+    );
+    assert_eq!(result, Err(RecapFailure::UnverifiedCapability));
 }
 
 #[test]

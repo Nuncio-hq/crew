@@ -19,6 +19,8 @@ pub(crate) struct StoredRecapCertification {
     pub(crate) platform: String,
     pub(crate) model: String,
     pub(crate) profile: Option<String>,
+    pub(crate) profile_digest: Option<String>,
+    pub(crate) profile_identity: Option<String>,
     pub(crate) auth_service: String,
     pub(crate) auth_reference: String,
     pub(crate) effective_model: String,
@@ -43,6 +45,8 @@ CREATE TABLE IF NOT EXISTS recap_runtime_certifications (
     platform TEXT NOT NULL,
     model TEXT NOT NULL,
     profile TEXT,
+    profile_digest TEXT,
+    profile_identity TEXT,
     auth_service TEXT NOT NULL,
     auth_reference TEXT NOT NULL,
     effective_model TEXT NOT NULL,
@@ -78,18 +82,27 @@ pub(crate) fn persist_recap_certification(
         .profile
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
+    let profile_identity = certification
+        .selection
+        .profile_identity
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|_| "failed to encode recap profile identity".to_string())?;
     conn.execute(
         "INSERT INTO recap_runtime_certifications (
             runtime_id, executable_path, executable_version, executable_fingerprint,
-            platform, model, profile, auth_service, auth_reference, effective_model,
+            platform, model, profile, profile_digest, profile_identity, auth_service, auth_reference, effective_model,
             output_digest, tool_probe_digest, ownership_sha256, one_shot, tool_isolation, state_isolation,
             process_containment, certified_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
          ON CONFLICT(runtime_id, executable_fingerprint, executable_version, platform)
          DO UPDATE SET
             executable_path = excluded.executable_path,
             model = excluded.model,
             profile = excluded.profile,
+            profile_digest = excluded.profile_digest,
+            profile_identity = excluded.profile_identity,
             auth_service = excluded.auth_service,
             auth_reference = excluded.auth_reference,
             effective_model = excluded.effective_model,
@@ -109,6 +122,8 @@ pub(crate) fn persist_recap_certification(
             certification.executable.platform,
             certification.selection.model,
             profile,
+            certification.selection.profile_digest,
+            profile_identity,
             certification.auth.service,
             certification.auth.reference,
             certification.effective_model,
@@ -136,7 +151,7 @@ pub(crate) fn get_recap_certification(
 ) -> Result<Option<StoredRecapCertification>, String> {
     conn.query_row(
         "SELECT runtime_id, executable_path, executable_version,
-                executable_fingerprint, platform, model, profile, auth_service,
+                executable_fingerprint, platform, model, profile, profile_digest, profile_identity, auth_service,
                 auth_reference, effective_model, output_digest, tool_probe_digest, ownership_sha256,
                 one_shot, tool_isolation, state_isolation, process_containment,
                 certified_at
@@ -158,17 +173,19 @@ pub(crate) fn get_recap_certification(
                 platform: row.get(4)?,
                 model: row.get(5)?,
                 profile: row.get(6)?,
-                auth_service: row.get(7)?,
-                auth_reference: row.get(8)?,
-                effective_model: row.get(9)?,
-                output_digest: row.get(10)?,
-                tool_probe_digest: row.get(11)?,
-                ownership_sha256: row.get(12)?,
-                one_shot: row.get::<_, i32>(13)? != 0,
-                tool_isolation: row.get::<_, i32>(14)? != 0,
-                state_isolation: row.get::<_, i32>(15)? != 0,
-                process_containment: row.get::<_, i32>(16)? != 0,
-                certified_at: row.get(17)?,
+                profile_digest: row.get(7)?,
+                profile_identity: row.get(8)?,
+                auth_service: row.get(9)?,
+                auth_reference: row.get(10)?,
+                effective_model: row.get(11)?,
+                output_digest: row.get(12)?,
+                tool_probe_digest: row.get(13)?,
+                ownership_sha256: row.get(14)?,
+                one_shot: row.get::<_, i32>(15)? != 0,
+                tool_isolation: row.get::<_, i32>(16)? != 0,
+                state_isolation: row.get::<_, i32>(17)? != 0,
+                process_containment: row.get::<_, i32>(18)? != 0,
+                certified_at: row.get(19)?,
             })
         },
     )
@@ -195,6 +212,13 @@ impl StoredRecapCertification {
                     .profile
                     .as_deref()
                     .map(|path| path.to_string_lossy().into_owned())
+            && self.profile_digest == certification.selection.profile_digest
+            && self.profile_identity
+                == certification
+                    .selection
+                    .profile_identity
+                    .as_ref()
+                    .and_then(|identity| serde_json::to_string(identity).ok())
             && self.auth_service == certification.auth.service
             && self.auth_reference == certification.auth.reference
             && self.effective_model == certification.effective_model

@@ -3,8 +3,8 @@
 use super::recap_adapter::RecapAdapterObservation;
 use super::recap_capability::{
     verify_executable, RecapCertificationParts, RecapExecutableIdentity, RecapGuarantees,
-    RecapProbeTarget, RecapProcessObservation, RecapRuntimeCertification, RecapRuntimeReadyProof,
-    RecapSelection, RecapStateObservation,
+    RecapProbeTarget, RecapProcessObservation, RecapProfileIdentity, RecapRuntimeCertification,
+    RecapRuntimeReadyProof, RecapSelection, RecapStateObservation,
 };
 use super::recap_state::{
     directory_identity, private_read_file, validate_owned_base, DirectoryIdentity,
@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
 
 pub(crate) const OWNERSHIP_FILENAME: &str = "crew-staging-ownership-v1.json";
 const RUNTIME_READY_FILENAME: &str = "crew-staging-runtime-ready-v1.json";
@@ -110,6 +109,8 @@ struct RuntimeExecutable {
 struct RuntimeSelection {
     model: String,
     profile: Option<PathBuf>,
+    profile_digest: Option<String>,
+    profile_identity: Option<RecapProfileIdentity>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -214,6 +215,7 @@ impl VerifiedStagingOwnership {
             || grant.home != self.native.home
             || grant.app_data != self.native.app_data
             || grant.bundle_id != self.native.bundle_id
+            || grant.auth_service != self.native.keyring_service
             || grant.effective_model != grant.selection.model
             || !is_sha256(&grant.output_digest)
             || !is_sha256(&grant.tool_probe_digest)
@@ -232,8 +234,11 @@ impl VerifiedStagingOwnership {
         let selection = RecapSelection {
             model: grant.selection.model,
             profile: grant.selection.profile,
+            profile_digest: grant.selection.profile_digest,
+            profile_identity: grant.selection.profile_identity,
             auth_available: true,
         };
+        self.validate_current_profile(&grant.runtime_id, &selection)?;
         let auth_service = grant.auth_service;
         let guarantees = RecapGuarantees {
             one_shot: grant.guarantees.one_shot,
@@ -326,6 +331,8 @@ impl VerifiedStagingOwnership {
             selection: RuntimeSelection {
                 model: parts.selection.model,
                 profile: parts.selection.profile,
+                profile_digest: parts.selection.profile_digest,
+                profile_identity: parts.selection.profile_identity,
             },
             auth_reference: parts.auth.reference,
             auth_service: parts.auth.service,
@@ -387,14 +394,29 @@ impl VerifiedStagingOwnership {
         {
             return Err(RecapStateFailure::RuntimeNotReady);
         }
-        match contract.selection {
+        self.validate_current_profile(&parts.runtime_id, &parts.selection)?;
+        Ok(())
+    }
+
+    fn validate_current_profile(
+        &self,
+        runtime_id: &str,
+        selection: &RecapSelection,
+    ) -> Result<(), RecapStateFailure> {
+        let Some(runtime) = super::known_acp_runtime_exact(runtime_id) else {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        };
+        match runtime.recap_contract().selection {
             super::recap_capability::RecapSelectionContract::ExplicitModel => {
-                if parts.selection.profile.is_some() {
+                if selection.profile.is_some()
+                    || selection.profile_digest.is_some()
+                    || selection.profile_identity.is_some()
+                {
                     return Err(RecapStateFailure::RuntimeNotReady);
                 }
             }
             super::recap_capability::RecapSelectionContract::StagingProfile => {
-                let Some(profile) = parts.selection.profile.as_deref() else {
+                let Some(profile) = selection.profile.as_deref() else {
                     return Err(RecapStateFailure::RuntimeNotReady);
                 };
                 let Some(name) = super::recap_adapter::hermes_profile_ref(profile) else {
@@ -411,6 +433,23 @@ impl VerifiedStagingOwnership {
                     return Err(RecapStateFailure::RuntimeNotReady);
                 }
                 directory_identity(profile).map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+                let Some(expected_digest) = selection.profile_digest.as_deref() else {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                };
+                let observed_digest = super::recap_adapter::profile_tree_digest(profile)
+                    .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+                if observed_digest != expected_digest {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                }
+                let Some(expected_identity) = selection.profile_identity.as_ref() else {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                };
+                if super::recap_adapter::profile_identity(profile)
+                    .map_err(|_| RecapStateFailure::RuntimeNotReady)?
+                    != *expected_identity
+                {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                }
             }
         }
         Ok(())
@@ -549,16 +588,12 @@ pub(crate) fn certify_runtime_probe_for_app<R: tauri::Runtime>(
     process: RecapProcessObservation,
     certified_at: u64,
 ) -> Result<(), RecapStateFailure> {
-    let certification =
-        RecapRuntimeCertification::from_adapter_observation(target, adapter, state, process)
-            .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
-    let ownership = VerifiedStagingOwnership::load(app)?;
-    let state = app.state::<crate::app_state::AppState>();
-    let scope = super::retention::active_retention_scope(app, &state)
-        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
-    let store = super::retention::open_retention_db(&scope.db_path)
-        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
-    ownership.issue_runtime_ready_grant(&store, &certification, certified_at)
+    // No native observer currently binds provider output to the executed
+    // command, executable, selection, state snapshot and process reaping.
+    // Keep this entrypoint present for the eventual observer wiring, but never
+    // turn self-reported adapter fields into a runtime-ready grant.
+    let _ = (app, target, adapter, state, process, certified_at);
+    Err(RecapStateFailure::RuntimeNotReady)
 }
 
 fn atomic_write_runtime_grant(app_data: &Path, bytes: &[u8]) -> Result<(), RecapStateFailure> {

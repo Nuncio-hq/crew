@@ -108,6 +108,10 @@ pub(crate) struct RecapRuntimeOption {
 pub(crate) struct RecapSettingsSnapshot {
     pub settings: RecapSettings,
     pub runtimes: Vec<RecapRuntimeOption>,
+    /// Recoverable owner-local settings read/validation error. The settings
+    /// value remains safe to render (usually Off) while the command caller can
+    /// offer repair.
+    pub settings_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -291,19 +295,40 @@ fn read_private_json(path: &std::path::Path, limit: usize) -> Result<Option<Vec<
     Ok(Some(bytes))
 }
 
+struct LoadedRecapSettings {
+    settings: RecapSettings,
+    error: Option<String>,
+}
+
+fn decode_settings(bytes: &[u8]) -> LoadedRecapSettings {
+    match serde_json::from_slice(bytes) {
+        Ok(settings) => LoadedRecapSettings {
+            settings,
+            error: None,
+        },
+        Err(_) => LoadedRecapSettings {
+            settings: default_settings(),
+            error: Some("invalid_settings".to_string()),
+        },
+    }
+}
+
 fn load_settings<R: tauri::Runtime>(
     app: &AppHandle<R>,
     viewer_pubkey: &str,
     relay_origin: &str,
-) -> Result<RecapSettings, String> {
+) -> Result<LoadedRecapSettings, String> {
     let path = settings_path(app, viewer_pubkey, relay_origin)?;
     let Some(bytes) = read_private_json(&path, MAX_SETTINGS_BYTES)? else {
-        return Ok(default_settings());
+        return Ok(LoadedRecapSettings {
+            settings: default_settings(),
+            error: None,
+        });
     };
-    // Corrupt owner-local settings fail closed to the safe default. Keeping
-    // the command usable lets the manager select Off and replace the damaged
-    // snapshot; no malformed selection reaches a runtime adapter.
-    Ok(serde_json::from_slice(&bytes).unwrap_or_else(|_| default_settings()))
+    // Corrupt owner-local settings fail closed to the safe default, but the
+    // read result carries an explicit repair signal instead of silently
+    // presenting that fallback as an authoritative user choice.
+    Ok(decode_settings(&bytes))
 }
 
 fn write_settings<R: tauri::Runtime>(
@@ -785,10 +810,17 @@ fn recoverable_settings(
 #[tauri::command]
 pub(crate) async fn get_recap_settings(app: AppHandle) -> Result<RecapSettingsSnapshot, String> {
     let (_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
-    let settings = load_settings(&app, &viewer_pubkey, &relay_origin)?;
+    let loaded = load_settings(&app, &viewer_pubkey, &relay_origin)?;
     let runtimes = runtime_inventory(&app);
-    let (settings, _) = recoverable_settings(settings, &runtimes);
-    Ok(RecapSettingsSnapshot { settings, runtimes })
+    let (settings, valid) = recoverable_settings(loaded.settings, &runtimes);
+    let settings_error = loaded
+        .error
+        .or_else(|| (!valid).then(|| "settings_unavailable".to_string()));
+    Ok(RecapSettingsSnapshot {
+        settings,
+        runtimes,
+        settings_error,
+    })
 }
 
 /// Validate and atomically persist one owner-local settings snapshot.
@@ -802,7 +834,11 @@ pub(crate) async fn save_recap_settings(
     let settings = validate_settings(&settings, &runtimes)?;
     write_settings(&app, &viewer_pubkey, &relay_origin, &settings)?;
     cancel_scope_generations(&relay_origin, &viewer_pubkey);
-    Ok(RecapSettingsSnapshot { settings, runtimes })
+    Ok(RecapSettingsSnapshot {
+        settings,
+        runtimes,
+        settings_error: None,
+    })
 }
 
 fn canonical_channel_id(value: &str) -> Result<String, String> {
@@ -1126,7 +1162,11 @@ pub(crate) async fn get_thread_recap(
     let channel_id = canonical_channel_id(&channel_id)?;
     let root_event_id = canonical_event_id(&root_event_id)?;
     let (owner_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
-    let settings = load_settings(&app, &viewer_pubkey, &relay_origin)?;
+    let loaded = load_settings(&app, &viewer_pubkey, &relay_origin)?;
+    if loaded.error.is_some() {
+        return Err("invalid_settings".to_string());
+    }
+    let settings = loaded.settings;
     let runtimes = runtime_inventory(&app);
     let (settings, settings_is_valid) = recoverable_settings(settings, &runtimes);
     let settings_fingerprint = settings_fingerprint(&settings)?;
@@ -1256,7 +1296,11 @@ pub(crate) async fn generate_thread_recap(
     let channel_id = canonical_channel_id(&channel_id)?;
     let root_event_id = canonical_event_id(&root_event_id)?;
     let (owner_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
-    let settings = load_settings(&app, &viewer_pubkey, &relay_origin)?;
+    let loaded = load_settings(&app, &viewer_pubkey, &relay_origin)?;
+    if loaded.error.is_some() {
+        return Err("invalid_settings".to_string());
+    }
+    let settings = loaded.settings;
     let runtimes = runtime_inventory(&app);
     let settings = validate_settings(&settings, &runtimes)?;
     let Some(runtime_id) = settings.runtime_id.clone() else {
@@ -1387,6 +1431,13 @@ mod tests {
         let settings = default_settings();
         assert_eq!(settings.mode, RecapMode::Off);
         assert_eq!(settings.bounds, default_bounds());
+    }
+
+    #[test]
+    fn corrupt_saved_settings_keep_safe_off_and_surface_repair_error() {
+        let loaded = decode_settings(b"{not-json");
+        assert_eq!(loaded.settings.mode, RecapMode::Off);
+        assert_eq!(loaded.error.as_deref(), Some("invalid_settings"));
     }
 
     #[test]
