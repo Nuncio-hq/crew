@@ -490,13 +490,19 @@ external secret sources, and managed dotenv before its startup guard reapplies
 safe mode; its `hermes_cli/oneshot.py` path still loads the selected profile
 config directly to resolve provider/model. The adapter validates staged
 `config.yaml` as missing/empty or a YAML mapping before launch, rejecting
-malformed/non-mapping config with a fixed error. Missing or failed runtime
+malformed/non-mapping config with a fixed error. It also rejects profile
+`.env`/`.op.env` routing assignments for `HERMES_HOME` or
+`HERMES_MANAGED_DIR`, invalid or ambiguous dotenv bytes, and every enabled
+external secret source. Accepted dotenv bytes remain unchanged, a missing
+`.env` is created empty, and `HERMES_MANAGED_DIR` is bound to a fresh empty
+directory under the disposable state root. Missing or failed runtime
 execution is a failed generation with no heuristic or HTTP fallback; the
 unsigned legacy preview remains deterministic for compatibility. The adapter's
 state, prompt input, stdout/stderr, deadline, and cancellation are bounded, and
 selection is independent from employee sessions and recap settings. The source
-guard and config gate are covered by a production-command fake-process
-regression; they do not certify a native Hermes launch, provider/auth path,
+guard, config gate, and profile-binding boundary are covered by production
+seam tests in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
+they do not certify a native Hermes launch, provider/auth path,
 effective model, or installed tool isolation. The #363 installed-runtime
 acceptance must run in the #348 staging environment; #348 owns that environment
 and #363 owns the runtime acceptance result. #364 owns scoped full-body
