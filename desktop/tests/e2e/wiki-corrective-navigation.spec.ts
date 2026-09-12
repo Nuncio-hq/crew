@@ -6,6 +6,11 @@ import { installMockBridge } from "../helpers/bridge";
 const SHOTS = "test-results/wiki-corrective-navigation";
 const OWNER = "deadbeef".repeat(8);
 const SOURCE_PATH = "desktop/src/features/projects/ui/ProjectDetailScreen.tsx";
+const LONG_WIKI_BODY = Array.from(
+  { length: 18 },
+  (_, index) =>
+    `Scroll restoration proof section ${index + 1}: this seeded article keeps the reading surface long enough to exercise real overflow at both target viewports.`,
+).join("\n\n");
 
 test.describe.configure({ timeout: 90_000 });
 test.use({ video: "on" });
@@ -19,12 +24,19 @@ async function openSeededRepoWiki(page: Page) {
   await expect(page).toHaveURL(/#\/wiki$/);
   await expect(page.getByTestId("wiki-library")).toBeVisible();
 
-  await page.evaluate((owner) => {
-    window.__BUZZ_E2E_SEED_WIKI__?.({ owner, repoD: "buzz" });
-    window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
-      queryKey: ["crew-wiki-events"],
-    });
-  }, OWNER);
+  await page.evaluate(
+    ({ owner, contentSuffix }) => {
+      window.__BUZZ_E2E_SEED_WIKI__?.({
+        owner,
+        repoD: "buzz",
+        contentSuffix,
+      });
+      window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+        queryKey: ["crew-wiki-events"],
+      });
+    },
+    { owner: OWNER, contentSuffix: LONG_WIKI_BODY },
+  );
   await expect(page.getByTestId("wiki-repo-card-buzz")).toContainText(
     "minutes",
   );
