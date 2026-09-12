@@ -630,9 +630,15 @@ losing head replay. Reads verify the signed IDs and canonical digests, then
 reread the head to fence the graph to one revision. The harness bounds each
 signed event to 192 KiB, each query response to 1 MiB, the descriptor to 64 KiB,
 and the full graph to 64 MiB and 256 pages; page queries use batches of four.
-This is an independent protocol client, not a second native app. Native
-restart/recovery proof remains a separate acceptance requirement. Never point
-the harness at a shared or production relay; it intentionally leaves its
+This is an independent protocol client, not a second native app. The ignored
+native owned-relay lane, via
+`commands::wiki_publication_native_owned_relay_tests::native_wiki_publication_roundtrip_against_owned_relay`,
+covers a fresh headless native app context restart/recovery: native A leaves a
+durable unresolved row, a fresh native B AppHandle resumes it, the exact signed
+graph and revision are verified, and an independent cold Protocol-B reader
+checks the receipt. This is headless owned-relay evidence, not an installed
+OS-process restart, GUI evidence, or installed-runtime proof.
+Never point the harness at a shared or production relay; it intentionally leaves its
 disposable repository data in place.
 
 ## Wiki journal v3 recovery
@@ -666,8 +672,9 @@ fences are covered separately from the proof decision: identity generation,
 durable revision and worker lease are each moved against a real captured
 scope, a real journal row and a real transport, before the first request and
 while each of the two reads is held, so a pre-send refusal and a post-response
-refusal are independently observable. Native A restart and independent signed
-protocol B acceptance remain pending and separately allocated. On real PostgreSQL: an
+refusal are independently observable. The fresh headless native app recovery
+case is covered by the owned-relay lane above; the independent signed
+Protocol-B CAS matrix remains pending and separately allocated. On real PostgreSQL: an
 accepted-then-deleted head must classify as retired while its exact live replay
 still ACKs as a duplicate first; an accepted-then-deleted non-absent
 `expected-revision` with no live head must classify as a retired precondition;
