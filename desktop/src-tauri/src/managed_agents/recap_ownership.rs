@@ -13,11 +13,67 @@ use super::recap_state::{
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 
 pub(crate) const OWNERSHIP_FILENAME: &str = "crew-staging-ownership-v1.json";
 const RUNTIME_READY_FILENAME: &str = "crew-staging-runtime-ready-v1.json";
+
+#[cfg(test)]
+fn test_recap_base_override() -> &'static Mutex<Option<PathBuf>> {
+    static BASE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+    BASE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_recap_base(base: Option<PathBuf>) {
+    *test_recap_base_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = base;
+}
+
+#[cfg(test)]
+pub(crate) fn current_test_recap_base() -> Option<PathBuf> {
+    test_recap_base_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+#[cfg(test)]
+fn test_runtime_proofs() -> &'static Mutex<HashMap<PathBuf, RecapRuntimeReadyProof>> {
+    static PROOFS: OnceLock<Mutex<HashMap<PathBuf, RecapRuntimeReadyProof>>> = OnceLock::new();
+    PROOFS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_runtime_proof(path: PathBuf, proof: RecapRuntimeReadyProof) {
+    test_runtime_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(path, proof);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_runtime_proofs() {
+    test_runtime_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+}
+
+#[cfg(test)]
+fn test_runtime_proof_for_path(path: &Path) -> Option<RecapRuntimeReadyProof> {
+    test_runtime_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(path)
+        .cloned()
+}
 
 /// Constructed only from native identity and a fixed private app-data file.
 pub(crate) struct VerifiedStagingOwnership {
@@ -26,6 +82,8 @@ pub(crate) struct VerifiedStagingOwnership {
     ownership_digest: String,
     native: NativeIdentity,
     generations: Vec<DirectoryIdentity>,
+    #[cfg(test)]
+    test_recap_base: Option<PathBuf>,
 }
 
 pub(super) struct NativeIdentity {
@@ -152,6 +210,8 @@ impl VerifiedStagingOwnership {
             ownership_digest: hex::encode(Sha256::digest(&bytes)),
             native,
             generations: Vec::new(),
+            #[cfg(test)]
+            test_recap_base: None,
         };
         receipt.validate()?;
         receipt.generations = receipt
@@ -164,6 +224,10 @@ impl VerifiedStagingOwnership {
 
     /// Resolve only an owned disposable-state parent. No runtime/profile launch.
     pub(crate) fn recap_base(&self) -> Result<PathBuf, RecapStateFailure> {
+        #[cfg(test)]
+        if let Some(base) = self.test_recap_base.as_ref() {
+            return Ok(base.clone());
+        }
         self.validate()?;
         let base = self.app_data.join("agents");
         match std::fs::symlink_metadata(&base) {
@@ -174,6 +238,54 @@ impl VerifiedStagingOwnership {
             Err(_) => return Err(RecapStateFailure::Ownership),
         }
         Ok(base)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_recap_base(base: PathBuf) -> Self {
+        let native = NativeIdentity {
+            home: PathBuf::from("/test-home"),
+            app_data: base.clone(),
+            config_home: PathBuf::from("/test-config"),
+            config_base: PathBuf::from("/test-config-base"),
+            slug: "test".to_string(),
+            bundle_id: "com.nuncio.crew.test".to_string(),
+            keyring_service: "test-keyring-service".to_string(),
+            scheme: "buzz-test".to_string(),
+            uid: 0,
+        };
+        let roots = Roots {
+            app_data: base.clone(),
+            config_home: native.config_home.clone(),
+            nest: native.home.join(".buzz-demo-test"),
+            profiles: native.home.join("crew-test/profiles"),
+            workspaces: native.home.join("crew-test/workspaces"),
+        };
+        let document = OwnershipDocument {
+            schema: "crew-staging-ownership".to_string(),
+            version: 1,
+            environment_id: "crew-test".to_string(),
+            status: "OWNERSHIP_ONLY_NOT_RUNTIME_READY".to_string(),
+            mac: MacOwnership {
+                owner_uid: 0,
+                home: native.home.clone(),
+                build_demo_slug: native.slug.clone(),
+                bundle_id: native.bundle_id.clone(),
+                keyring_service: native.keyring_service.clone(),
+                deep_link_scheme: native.scheme.clone(),
+                roots,
+                excluded_roots: Vec::new(),
+                auth_references: Vec::new(),
+                runtime_generation_allowed: false,
+            },
+        };
+        Self {
+            app_data: base.clone(),
+            document,
+            ownership_digest: String::new(),
+            native,
+            generations: Vec::new(),
+            test_recap_base: Some(base),
+        }
     }
 
     /// Load a separately-issued native runtime grant. The ownership receipt
@@ -570,7 +682,28 @@ pub(crate) fn runtime_ready_proof_for_ownership<R: tauri::Runtime>(
     let state = app.state::<crate::app_state::AppState>();
     let scope = super::retention::active_retention_scope(app, &state)
         .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    #[cfg(test)]
+    if let Some(proof) = test_runtime_proof_for_path(&scope.db_path) {
+        return Ok(proof);
+    }
     let store = super::retention::open_retention_db(&scope.db_path)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    ownership.runtime_ready_proof_with_store(&store)
+}
+
+/// Load a runtime grant from the retention database captured with the
+/// originating owner scope. This deliberately does not resolve
+/// `active_retention_scope`: the caller may be running after a workspace
+/// switch, and re-resolving it would authorize the wrong owner or relay.
+pub(crate) fn runtime_ready_proof_for_captured_scope(
+    ownership: &VerifiedStagingOwnership,
+    retention_db_path: &Path,
+) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+    #[cfg(test)]
+    if let Some(proof) = test_runtime_proof_for_path(retention_db_path) {
+        return Ok(proof);
+    }
+    let store = super::retention::open_retention_db(retention_db_path)
         .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
     ownership.runtime_ready_proof_with_store(&store)
 }

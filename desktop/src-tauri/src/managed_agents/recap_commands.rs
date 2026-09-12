@@ -7,17 +7,17 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use super::recap_capability::admit_runtime_ready;
-use super::recap_service::{run_recap_sync_with_cancel, RecapRequest};
+use super::recap_service::{run_recap_sync_with_cancel, RecapExecutionScope, RecapRequest};
 use super::KNOWN_ACP_RUNTIMES;
 
 const SETTINGS_FILENAME: &str = "recap-settings.json";
@@ -36,6 +36,8 @@ const MAX_GENERATION_ID_BYTES: usize = 128;
 const MAX_TEXT_FIELD_BYTES: usize = 256;
 const MAX_ACTIVE_GENERATIONS: usize = 2;
 const RECAP_WALL_TIME_MS: u64 = 120_000;
+const RECAP_SCOPE_POLL_MS: u64 = 50;
+const RECAP_CANCEL_POLL_MS: u64 = 10;
 const RECAP_CLEANUP_GRACE_MS: u64 = 5_000;
 const RECAP_PROMPT_VERSION: u8 = 1;
 const RECAP_PROMPT_PREFIX: &str =
@@ -165,6 +167,154 @@ struct ThreadSource {
     source_overflow: bool,
     oldest_included_event_id: Option<String>,
     newest_included_event_id: Option<String>,
+}
+
+#[cfg(test)]
+struct TestSourceBarrier {
+    source: ThreadSource,
+    after_assert: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+struct TestCommitBarrier {
+    after_provider: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+struct TestSettingsLoadBarrier {
+    after_register: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+fn test_source_barrier() -> &'static Mutex<Option<TestSourceBarrier>> {
+    static BARRIER: OnceLock<Mutex<Option<TestSourceBarrier>>> = OnceLock::new();
+    BARRIER.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+fn test_commit_barrier() -> &'static Mutex<Option<TestCommitBarrier>> {
+    static BARRIER: OnceLock<Mutex<Option<TestCommitBarrier>>> = OnceLock::new();
+    BARRIER.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+fn test_settings_load_barrier() -> &'static Mutex<Option<TestSettingsLoadBarrier>> {
+    static BARRIER: OnceLock<Mutex<Option<TestSettingsLoadBarrier>>> = OnceLock::new();
+    BARRIER.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+fn install_test_source_barrier(
+    source: ThreadSource,
+) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+    let after_assert = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    *test_source_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(TestSourceBarrier {
+        source,
+        after_assert: after_assert.clone(),
+        release: release.clone(),
+    });
+    (after_assert, release)
+}
+
+#[cfg(test)]
+fn clear_test_source_barrier() {
+    *test_source_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
+#[cfg(test)]
+fn install_test_commit_barrier() -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+    let after_provider = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    *test_commit_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(TestCommitBarrier {
+        after_provider: after_provider.clone(),
+        release: release.clone(),
+    });
+    (after_provider, release)
+}
+
+#[cfg(test)]
+fn clear_test_commit_barrier() {
+    *test_commit_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
+#[cfg(test)]
+fn install_test_settings_load_barrier() -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+    let after_register = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    *test_settings_load_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(TestSettingsLoadBarrier {
+        after_register: after_register.clone(),
+        release: release.clone(),
+    });
+    (after_register, release)
+}
+
+#[cfg(test)]
+fn clear_test_settings_load_barrier() {
+    *test_settings_load_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
+#[cfg(test)]
+fn test_source_override() -> Option<ThreadSource> {
+    test_source_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|barrier| barrier.source.clone())
+}
+
+#[cfg(test)]
+async fn wait_for_test_source_after_assert() {
+    let signals = test_source_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|barrier| (barrier.after_assert.clone(), barrier.release.clone()));
+    if let Some((after_assert, release)) = signals {
+        after_assert.notify_one();
+        release.notified().await;
+    }
+}
+
+#[cfg(test)]
+async fn wait_for_test_commit_before_persist() {
+    let signals = test_commit_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|barrier| (barrier.after_provider.clone(), barrier.release.clone()));
+    if let Some((after_provider, release)) = signals {
+        after_provider.notify_one();
+        release.notified().await;
+    }
+}
+
+#[cfg(test)]
+async fn wait_for_test_settings_load() {
+    let signals = test_settings_load_barrier()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|barrier| (barrier.after_register.clone(), barrier.release.clone()));
+    if let Some((after_register, release)) = signals {
+        after_register.notify_one();
+        release.notified().await;
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -650,9 +800,53 @@ async fn capture_owner_scope<R: tauri::Runtime>(
     Ok((scope, viewer_pubkey, relay_origin))
 }
 
-fn runtime_inventory<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<RecapRuntimeOption> {
-    let proof = super::recap_ownership::runtime_ready_proof_for_app(app).ok();
+async fn capture_recap_scope<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<
+    (
+        crate::app_state::owner_scope::CapturedOwnerScope,
+        String,
+        String,
+        PathBuf,
+        PathBuf,
+    ),
+    String,
+> {
+    let (scope, viewer_pubkey, relay_origin) = capture_owner_scope(app).await?;
+    let base_dir = super::storage::managed_agents_base_dir(app)?;
+    let retention_db_path = recap_retention_db_path(&base_dir, &scope);
+    Ok((
+        scope,
+        viewer_pubkey,
+        relay_origin,
+        retention_db_path,
+        base_dir,
+    ))
+}
 
+fn recap_retention_db_path(
+    base_dir: &Path,
+    owner_scope: &crate::app_state::owner_scope::CapturedOwnerScope,
+) -> PathBuf {
+    super::retention::scoped_retention_db_path(
+        base_dir,
+        &owner_scope.relay_url,
+        &owner_scope.token.scope.owner,
+    )
+}
+
+fn runtime_proof_for_scope<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    retention_db_path: &Path,
+) -> Option<super::recap_capability::RecapRuntimeReadyProof> {
+    let ownership = super::recap_ownership::VerifiedStagingOwnership::load(app).ok()?;
+    super::recap_ownership::runtime_ready_proof_for_captured_scope(&ownership, retention_db_path)
+        .ok()
+}
+
+fn runtime_inventory_from_proof(
+    proof: Option<super::recap_capability::RecapRuntimeReadyProof>,
+) -> Vec<RecapRuntimeOption> {
     KNOWN_ACP_RUNTIMES
         .iter()
         .map(|runtime| {
@@ -809,13 +1003,15 @@ fn recoverable_settings(
 /// Return the owner-local settings and current catalogued recap inventory.
 #[tauri::command]
 pub(crate) async fn get_recap_settings(app: AppHandle) -> Result<RecapSettingsSnapshot, String> {
-    let (_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
+    let (scope, viewer_pubkey, relay_origin, retention_db_path, _recap_base) =
+        capture_recap_scope(&app).await?;
     let loaded = load_settings(&app, &viewer_pubkey, &relay_origin)?;
-    let runtimes = runtime_inventory(&app);
+    let runtimes = runtime_inventory_from_proof(runtime_proof_for_scope(&app, &retention_db_path));
     let (settings, valid) = recoverable_settings(loaded.settings, &runtimes);
     let settings_error = loaded
         .error
         .or_else(|| (!valid).then(|| "settings_unavailable".to_string()));
+    crate::app_state::owner_scope::assert_current(app.clone(), &scope.token).await?;
     Ok(RecapSettingsSnapshot {
         settings,
         runtimes,
@@ -829,11 +1025,24 @@ pub(crate) async fn save_recap_settings(
     app: AppHandle,
     settings: RecapSettings,
 ) -> Result<RecapSettingsSnapshot, String> {
-    let (_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
-    let runtimes = runtime_inventory(&app);
+    save_recap_settings_for_runtime(app, settings).await
+}
+
+/// Runtime-generic implementation of [`save_recap_settings`]. Keeping the
+/// command wrapper concrete lets Tauri register the Wry handler while the same
+/// production path can be exercised with Tauri's mock runtime in unit tests.
+pub(crate) async fn save_recap_settings_for_runtime<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    settings: RecapSettings,
+) -> Result<RecapSettingsSnapshot, String> {
+    let (scope, viewer_pubkey, relay_origin, retention_db_path, _recap_base) =
+        capture_recap_scope(&app).await?;
+    let runtimes = runtime_inventory_from_proof(runtime_proof_for_scope(&app, &retention_db_path));
     let settings = validate_settings(&settings, &runtimes)?;
+    crate::app_state::owner_scope::assert_current(app.clone(), &scope.token).await?;
     write_settings(&app, &viewer_pubkey, &relay_origin, &settings)?;
     cancel_scope_generations(&relay_origin, &viewer_pubkey);
+    crate::app_state::owner_scope::assert_current(app.clone(), &scope.token).await?;
     Ok(RecapSettingsSnapshot {
         settings,
         runtimes,
@@ -1035,8 +1244,49 @@ async fn collect_thread_source(
     channel_id: &str,
     root_event_id: &str,
 ) -> Result<ThreadSource, String> {
+    collect_thread_source_with_cancel(state, owner_scope, channel_id, root_event_id, None).await
+}
+
+async fn wait_for_source_cancellation(cancelled: &AtomicBool) {
+    while !cancelled.load(Ordering::Acquire) {
+        tokio::time::sleep(std::time::Duration::from_millis(RECAP_CANCEL_POLL_MS)).await;
+    }
+}
+
+async fn query_thread_source_page(
+    state: &super::super::app_state::AppState,
+    relay_http: &str,
+    filters: &[serde_json::Value],
+    keys: &nostr::Keys,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Vec<nostr::Event>, String> {
+    let query =
+        super::super::relay::query_relay_at_with_keys(state, relay_http, filters, keys, None);
+    match cancelled {
+        Some(cancelled) => tokio::select! {
+            result = query => result.map_err(|_| "source_unavailable".to_string()),
+            _ = wait_for_source_cancellation(cancelled) => Err("cancelled".to_string()),
+        },
+        None => query.await.map_err(|_| "source_unavailable".to_string()),
+    }
+}
+
+async fn collect_thread_source_with_cancel(
+    state: &super::super::app_state::AppState,
+    owner_scope: &crate::app_state::owner_scope::CapturedOwnerScope,
+    channel_id: &str,
+    root_event_id: &str,
+    cancelled: Option<&AtomicBool>,
+) -> Result<ThreadSource, String> {
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err("cancelled".to_string());
+    }
+    #[cfg(test)]
+    if let Some(source) = test_source_override() {
+        return Ok(source);
+    }
     let relay_http = super::super::relay::relay_http_base_url(&owner_scope.relay_url);
-    let root_events = super::super::relay::query_relay_at_with_keys(
+    let root_events = query_thread_source_page(
         state,
         &relay_http,
         &[serde_json::json!({
@@ -1045,10 +1295,12 @@ async fn collect_thread_source(
             "limit": 1,
         })],
         &owner_scope.keys,
-        None,
+        cancelled,
     )
-    .await
-    .map_err(|_| "source_unavailable".to_string())?;
+    .await?;
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err("cancelled".to_string());
+    }
     let Some(root) = root_events
         .into_iter()
         .find(|event| event.id.to_hex() == root_event_id && event_in_channel(event, channel_id))
@@ -1068,6 +1320,9 @@ async fn collect_thread_source(
     let mut last_page_tail: Option<String> = None;
 
     loop {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err("cancelled".to_string());
+        }
         let mut filter = serde_json::json!({
             "#e": [root_event_id],
             "#h": [channel_id],
@@ -1081,15 +1336,12 @@ async fn collect_thread_source(
             filter["thread_cursor_id"] = serde_json::json!(event_id);
         }
 
-        let page = super::super::relay::query_relay_at_with_keys(
-            state,
-            &relay_http,
-            &[filter],
-            &owner_scope.keys,
-            None,
-        )
-        .await
-        .map_err(|_| "source_unavailable".to_string())?;
+        let page =
+            query_thread_source_page(state, &relay_http, &[filter], &owner_scope.keys, cancelled)
+                .await?;
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err("cancelled".to_string());
+        }
         let page_len = page.len();
         let page_tail = page.last().map(|event| event.id.to_hex());
         if page_len == 0 {
@@ -1161,13 +1413,14 @@ pub(crate) async fn get_thread_recap(
 ) -> Result<ThreadRecapLookup, String> {
     let channel_id = canonical_channel_id(&channel_id)?;
     let root_event_id = canonical_event_id(&root_event_id)?;
-    let (owner_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
+    let (owner_scope, viewer_pubkey, relay_origin, retention_db_path, _recap_base) =
+        capture_recap_scope(&app).await?;
     let loaded = load_settings(&app, &viewer_pubkey, &relay_origin)?;
     if loaded.error.is_some() {
         return Err("invalid_settings".to_string());
     }
     let settings = loaded.settings;
-    let runtimes = runtime_inventory(&app);
+    let runtimes = runtime_inventory_from_proof(runtime_proof_for_scope(&app, &retention_db_path));
     let (settings, settings_is_valid) = recoverable_settings(settings, &runtimes);
     let settings_fingerprint = settings_fingerprint(&settings)?;
     let artifact = load_artifact(
@@ -1178,13 +1431,19 @@ pub(crate) async fn get_thread_recap(
         &root_event_id,
     )?;
     let Some(artifact) = artifact else {
+        crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await?;
         return Ok(ThreadRecapLookup {
             status: "no_recap".to_string(),
             recap: None,
             reason: None,
         });
     };
-    let source = collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id).await?;
+    let source = tokio::time::timeout(
+        std::time::Duration::from_millis(RECAP_WALL_TIME_MS),
+        collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id),
+    )
+    .await
+    .map_err(|_| "source_timeout".to_string())??;
     crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await?;
     let (status, reason) = recap_status(
         source.source_overflow,
@@ -1204,8 +1463,12 @@ fn generation_key(
     viewer_pubkey: &str,
     channel_id: &str,
     root_event_id: &str,
+    scope: &crate::app_state::owner_scope::OwnerScopeToken,
 ) -> String {
-    format!("{relay_origin}\0{viewer_pubkey}\0{channel_id}\0{root_event_id}")
+    format!(
+        "{relay_origin}\0{viewer_pubkey}\0{channel_id}\0{root_event_id}\0w{}\0i{}",
+        scope.workspace_generation, scope.identity_generation
+    )
 }
 
 fn active_generations_guard() -> MutexGuard<'static, HashMap<String, ActiveGeneration>> {
@@ -1281,10 +1544,62 @@ fn commit_artifact<R: tauri::Runtime>(
     Ok(artifact.recap.clone())
 }
 
+async fn commit_artifact_if_current<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    expected: &crate::app_state::owner_scope::OwnerScopeToken,
+    key: &str,
+    generation_id: &str,
+    artifact: &RecapArtifact,
+) -> Result<ThreadRecap, String> {
+    // Keep the existing workspace-before-identity order through the final
+    // synchronous fence and the one durable artifact write. Otherwise an
+    // owner switch could commit between `assert_current` and `write_artifact`.
+    let state = app.state::<super::super::app_state::AppState>();
+    let workspace_guard = state.workspace_apply_lock.clone().lock_owned().await;
+    let app_for_commit = app.clone();
+    let expected = expected.clone();
+    let key = key.to_string();
+    let generation_id = generation_id.to_string();
+    let artifact = artifact.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_commit.state::<super::super::app_state::AppState>();
+        let identity_guard = state
+            .identity_mutation
+            .lock()
+            .map_err(|_| crate::app_state::owner_scope::OWNER_SCOPE_STALE.to_string())?;
+        let result = (|| {
+            crate::app_state::owner_scope::assert_current_blocking(
+                app_for_commit.clone(),
+                &expected,
+            )?;
+            commit_artifact(&app_for_commit, &key, &generation_id, &artifact)
+        })();
+        drop(identity_guard);
+        drop(workspace_guard);
+        result
+    })
+    .await
+    .map_err(|_| "recap_task_failed".to_string())?;
+    result
+}
+
 /// Generate one bounded recap from the caller's current thread source.
 #[tauri::command]
 pub(crate) async fn generate_thread_recap(
     app: AppHandle,
+    channel_id: String,
+    root_event_id: String,
+    generation_id: String,
+    state: State<'_, super::super::app_state::AppState>,
+) -> Result<ThreadRecap, String> {
+    generate_thread_recap_for_runtime(app, channel_id, root_event_id, generation_id, state).await
+}
+
+/// Runtime-generic implementation of [`generate_thread_recap`]. Keeping the
+/// command wrapper concrete lets Tauri register the Wry handler while the same
+/// production path can be exercised with Tauri's mock runtime in unit tests.
+pub(crate) async fn generate_thread_recap_for_runtime<R: tauri::Runtime>(
+    app: AppHandle<R>,
     channel_id: String,
     root_event_id: String,
     generation_id: String,
@@ -1295,13 +1610,28 @@ pub(crate) async fn generate_thread_recap(
     }
     let channel_id = canonical_channel_id(&channel_id)?;
     let root_event_id = canonical_event_id(&root_event_id)?;
-    let (owner_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
+    let (owner_scope, viewer_pubkey, relay_origin, retention_db_path, recap_base) =
+        capture_recap_scope(&app).await?;
+    let key = generation_key(
+        &relay_origin,
+        &viewer_pubkey,
+        &channel_id,
+        &root_event_id,
+        &owner_scope.token,
+    );
+    // Register before reading settings so a concurrent settings commit cannot
+    // land in the load/validate/register gap and leave this generation using
+    // the old model or profile.
+    let generation = GenerationGuard::register(&key, &generation_id)?;
+    #[cfg(test)]
+    wait_for_test_settings_load().await;
     let loaded = load_settings(&app, &viewer_pubkey, &relay_origin)?;
     if loaded.error.is_some() {
         return Err("invalid_settings".to_string());
     }
     let settings = loaded.settings;
-    let runtimes = runtime_inventory(&app);
+    let proof = runtime_proof_for_scope(&app, &retention_db_path);
+    let runtimes = runtime_inventory_from_proof(proof.clone());
     let settings = validate_settings(&settings, &runtimes)?;
     let Some(runtime_id) = settings.runtime_id.clone() else {
         return Err("runtime_not_ready".to_string());
@@ -1320,8 +1650,6 @@ pub(crate) async fn generate_thread_recap(
         .clone()
         .ok_or_else(|| "invalid_model_selection".to_string())?;
     let settings_fingerprint = settings_fingerprint(&settings)?;
-    let key = generation_key(&relay_origin, &viewer_pubkey, &channel_id, &root_event_id);
-    let generation = GenerationGuard::register(&key, &generation_id)?;
     // Close the capture/register race: a settings, identity, or relay change
     // that lands before or during source collection must still prevent this
     // generation from reaching the provider. The guard unregisters it on all
@@ -1332,8 +1660,21 @@ pub(crate) async fn generate_thread_recap(
         generation.cancelled().store(true, Ordering::Release);
         return Err(error);
     }
-    let source = collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id).await?;
+    let source = tokio::time::timeout(
+        std::time::Duration::from_millis(RECAP_WALL_TIME_MS),
+        collect_thread_source_with_cancel(
+            &state,
+            &owner_scope,
+            &channel_id,
+            &root_event_id,
+            Some(generation.cancelled()),
+        ),
+    )
+    .await
+    .map_err(|_| "source_timeout".to_string())??;
     crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await?;
+    #[cfg(test)]
+    wait_for_test_source_after_assert().await;
     let runner_cancelled = generation.cancelled().clone();
     let request = RecapRequest {
         runtime_id: runtime_id.clone(),
@@ -1342,10 +1683,46 @@ pub(crate) async fn generate_thread_recap(
         input: source.prompt.clone(),
     };
     let app_for_run = app.clone();
+    let proof = proof.ok_or_else(|| "runtime_not_ready".to_string())?;
+    // Serialize the final scope check and child spawn against workspace apply.
+    // The guard is released by the blocking service immediately after the
+    // process owner records the child PID, so a long provider run never blocks
+    // later workspace changes.
+    let launch_workspace_guard = state.workspace_apply_lock.clone().lock_owned().await;
+    let owner_scope_token = owner_scope.token.clone();
+    let execution_scope = RecapExecutionScope {
+        owner: owner_scope,
+        recap_base,
+        retention_db_path,
+        proof,
+        launch_workspace_guard: Some(launch_workspace_guard),
+    };
+    let scope_watch_app = app.clone();
+    let scope_watch_token = owner_scope_token.clone();
+    let scope_watch_cancel = runner_cancelled.clone();
+    let scope_watch = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(RECAP_SCOPE_POLL_MS)).await;
+            if scope_watch_cancel.load(Ordering::Acquire) {
+                break;
+            }
+            if crate::app_state::owner_scope::assert_current(
+                scope_watch_app.clone(),
+                &scope_watch_token,
+            )
+            .await
+            .is_err()
+            {
+                scope_watch_cancel.store(true, Ordering::Release);
+                break;
+            }
+        }
+    });
     let task_result = tauri::async_runtime::spawn_blocking(move || {
-        run_recap_sync_with_cancel(app_for_run, request, runner_cancelled)
+        run_recap_sync_with_cancel(app_for_run, execution_scope, request, runner_cancelled)
     })
     .await;
+    scope_watch.abort();
     match task_result {
         Err(_) => Err("recap_task_failed".to_string()),
         Ok(Err(error)) => Err(error),
@@ -1374,7 +1751,13 @@ pub(crate) async fn generate_thread_recap(
                 settings_fingerprint,
                 recap,
             };
-            commit_artifact(&app, &key, &generation_id, &artifact)
+            // The provider may finish after an owner/workspace switch. Fence
+            // the completion against the original capture, including A-B-A
+            // identity changes, immediately before persistence.
+            #[cfg(test)]
+            wait_for_test_commit_before_persist().await;
+            commit_artifact_if_current(&app, &owner_scope_token, &key, &generation_id, &artifact)
+                .await
         }
     }
 }
@@ -1392,8 +1775,14 @@ pub(crate) async fn cancel_thread_recap(
     }
     let channel_id = canonical_channel_id(&channel_id)?;
     let root_event_id = canonical_event_id(&root_event_id)?;
-    let (_owner_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
-    let key = generation_key(&relay_origin, &viewer_pubkey, &channel_id, &root_event_id);
+    let (scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
+    let key = generation_key(
+        &relay_origin,
+        &viewer_pubkey,
+        &channel_id,
+        &root_event_id,
+        &scope.token,
+    );
     let active = active_generations_guard();
     let Some(entry) = active.get(&key) else {
         return Err("generation_not_found".to_string());
@@ -1415,8 +1804,152 @@ fn now_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::{
+        build_app_state, owner_scope::CapturedOwnerScope, AppState, IdentityStorage,
+    };
+    use crate::managed_agents::recap_capability::{
+        RecapExecutableIdentity, RecapGuarantees, RecapRuntimeReadyProof, RecapSelection,
+    };
+    use crate::owner_operations::OperationScope;
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::PermissionsExt;
+    use tauri::Manager;
+    use tokio::net::TcpListener;
 
     static REGISTRY_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    struct RecapTestApp {
+        app: tauri::App<tauri::test::MockRuntime>,
+        app_data_dir: PathBuf,
+    }
+
+    impl RecapTestApp {
+        fn new() -> Self {
+            let identifier = format!(
+                "xyz.nuncio.crew.test.recap-{}",
+                uuid::Uuid::new_v4().simple()
+            );
+            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+            context.config_mut().identifier = identifier;
+            let app = tauri::test::mock_builder()
+                .manage(build_app_state())
+                .build(context)
+                .unwrap();
+            let app_data_dir = app.path().app_data_dir().unwrap();
+            assert!(!app_data_dir.exists());
+            Self { app, app_data_dir }
+        }
+    }
+
+    impl std::ops::Deref for RecapTestApp {
+        type Target = tauri::App<tauri::test::MockRuntime>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.app
+        }
+    }
+
+    impl Drop for RecapTestApp {
+        fn drop(&mut self) {
+            if self.app_data_dir.exists() {
+                std::fs::remove_dir_all(&self.app_data_dir).unwrap();
+            }
+        }
+    }
+
+    struct RecapTestHooksGuard;
+
+    impl Drop for RecapTestHooksGuard {
+        fn drop(&mut self) {
+            clear_test_source_barrier();
+            clear_test_commit_barrier();
+            clear_test_settings_load_barrier();
+            crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+            crate::managed_agents::recap_ownership::set_test_recap_base(None);
+            crate::managed_agents::recap_service::clear_test_execution_observers();
+        }
+    }
+
+    fn test_source(root_event_id: &str) -> ThreadSource {
+        ThreadSource {
+            prompt: "fixture recap input".to_string(),
+            manifest_hash: "a".repeat(64),
+            event_ids: vec![root_event_id.to_string()],
+            omitted_message_count: 0,
+            source_overflow: false,
+            oldest_included_event_id: Some(root_event_id.to_string()),
+            newest_included_event_id: Some(root_event_id.to_string()),
+        }
+    }
+
+    fn test_executable(root: &std::path::Path, name: &str) -> RecapExecutableIdentity {
+        let path = root.join(name);
+        std::fs::write(
+            &path,
+            b"#!/bin/sh\nprintf '%s' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"fixture recap\",\"modelUsage\":{\"fixture-model\":{}}}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let fingerprint = hex::encode(Sha256::digest(std::fs::read(&path).unwrap()));
+        RecapExecutableIdentity {
+            resolved_path: path.canonicalize().unwrap(),
+            version: "fixture-1".to_string(),
+            fingerprint,
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        }
+    }
+
+    fn test_proof(executable: RecapExecutableIdentity) -> RecapRuntimeReadyProof {
+        RecapRuntimeReadyProof::for_test(
+            "claude",
+            executable,
+            RecapSelection {
+                model: "fixture-model".to_string(),
+                profile: None,
+                profile_digest: None,
+                profile_identity: None,
+                auth_available: true,
+            },
+            RecapGuarantees {
+                one_shot: true,
+                tool_isolation: true,
+                state_isolation: true,
+                process_containment: true,
+            },
+        )
+    }
+
+    async fn switch_identity<R: tauri::Runtime>(
+        app: &tauri::App<R>,
+        directory: &std::path::Path,
+        keys: nostr::Keys,
+    ) {
+        let state = app.state::<AppState>();
+        let guard = state.identity_mutation.lock().unwrap();
+        crate::commands::commit_imported_identity(&state, &guard, directory, keys, |_| {
+            Ok(IdentityStorage::LocalFile)
+        })
+        .unwrap();
+    }
+
+    async fn switch_identity_and_workspace<R: tauri::Runtime>(
+        app: &tauri::App<R>,
+        directory: &std::path::Path,
+        keys: nostr::Keys,
+        relay_url: &str,
+    ) {
+        let state = app.state::<AppState>();
+        let _workspace_guard = state.workspace_apply_lock.clone().lock_owned().await;
+        state
+            .workspace_apply_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let guard = state.identity_mutation.lock().unwrap();
+        crate::commands::commit_imported_identity(&state, &guard, directory, keys, |_| {
+            Ok(IdentityStorage::LocalFile)
+        })
+        .unwrap();
+        *state.relay_url_override.lock().unwrap() = Some(relay_url.to_string());
+    }
 
     fn event(content: impl Into<String>, created_at: u64, channel_id: &str) -> nostr::Event {
         nostr::EventBuilder::new(nostr::Kind::Custom(9), content)
@@ -1424,6 +1957,437 @@ mod tests {
             .custom_created_at(nostr::Timestamp::from_secs(created_at))
             .sign_with_keys(&nostr::Keys::generate())
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn cancelled_source_read_stops_before_first_relay_request() {
+        let state = build_app_state();
+        let keys = nostr::Keys::generate();
+        let owner = keys.public_key().to_hex();
+        let scope = CapturedOwnerScope {
+            token: crate::app_state::owner_scope::OwnerScopeToken {
+                scope: OperationScope {
+                    owner,
+                    community: "http://127.0.0.1:9".to_string(),
+                },
+                workspace_generation: 0,
+                identity_generation: 0,
+            },
+            keys,
+            relay_url: "ws://127.0.0.1:9".to_string(),
+        };
+        let cancelled = AtomicBool::new(true);
+        let result = collect_thread_source_with_cancel(
+            &state,
+            &scope,
+            "550e8400-e29b-41d4-a716-446655440000",
+            &"a".repeat(64),
+            Some(&cancelled),
+        )
+        .await;
+        assert!(matches!(result, Err(error) if error == "cancelled"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_source_read_aborts_a_pending_relay_request() {
+        let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let accepted = Arc::new(tokio::sync::Notify::new());
+        let server_accepted = accepted.clone();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            server_accepted.notify_one();
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        });
+        let state = build_app_state();
+        *state.relay_url_override.lock().unwrap() = Some(format!("ws://{address}"));
+        let keys = nostr::Keys::generate();
+        let owner = keys.public_key().to_hex();
+        let scope = CapturedOwnerScope {
+            token: crate::app_state::owner_scope::OwnerScopeToken {
+                scope: OperationScope {
+                    owner,
+                    community: format!("http://{address}"),
+                },
+                workspace_generation: 0,
+                identity_generation: 0,
+            },
+            keys,
+            relay_url: format!("ws://{address}"),
+        };
+        let cancelled = AtomicBool::new(false);
+        let root_event_id = "a".repeat(64);
+        let started = std::time::Instant::now();
+        let query = collect_thread_source_with_cancel(
+            &state,
+            &scope,
+            "550e8400-e29b-41d4-a716-446655440000",
+            &root_event_id,
+            Some(&cancelled),
+        );
+        tokio::pin!(query);
+        let accepted_wait = accepted.notified();
+        tokio::pin!(accepted_wait);
+        let result = tokio::select! {
+            result = &mut query => result,
+            _ = &mut accepted_wait => {
+                cancelled.store(true, Ordering::Release);
+                query.await
+            },
+        };
+        server.abort();
+        assert!(matches!(result, Err(error) if error == "cancelled"));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "cancellation must not wait for the relay request's long timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn recap_scope_snapshot_keeps_a_path_and_rejects_aba_token_reuse() {
+        let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+        let _hooks = RecapTestHooksGuard;
+        let app = RecapTestApp::new();
+        let first = capture_recap_scope(app.handle()).await.unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let state = app.state::<AppState>();
+        let first_keys = first.0.keys.clone();
+        {
+            let guard = state.identity_mutation.lock().unwrap();
+            crate::commands::commit_imported_identity(
+                &state,
+                &guard,
+                directory.path(),
+                nostr::Keys::generate(),
+                |_| Ok(IdentityStorage::LocalFile),
+            )
+            .unwrap();
+        }
+        let second = capture_recap_scope(app.handle()).await.unwrap();
+        assert_ne!(
+            first.3, second.3,
+            "owner B must use a different retention DB"
+        );
+        {
+            let guard = state.identity_mutation.lock().unwrap();
+            crate::commands::commit_imported_identity(
+                &state,
+                &guard,
+                directory.path(),
+                first_keys,
+                |_| Ok(IdentityStorage::LocalFile),
+            )
+            .unwrap();
+        }
+        let aba = capture_recap_scope(app.handle()).await.unwrap();
+        assert_eq!(first.3, aba.3, "A-B-A returns to A's retention path");
+        assert_ne!(
+            first.0.token, aba.0.token,
+            "ABA must still fence the old run"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generate_recap_uses_captured_a_proof_when_b_is_active() {
+        let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+        let _hooks = RecapTestHooksGuard;
+        let app = RecapTestApp::new();
+        let state = app.state::<AppState>();
+        *state.relay_url_override.lock().unwrap() = Some("ws://127.0.0.1:9".to_string());
+        let first = capture_recap_scope(app.handle()).await.unwrap();
+        let base = first.4.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let executable_root = tempfile::tempdir().unwrap();
+        let executable_a = test_executable(executable_root.path(), "claude-a");
+        assert!(super::super::recap_capability::verify_executable(&executable_a).is_ok());
+        let proof_a = test_proof(executable_a);
+        let proof_b = test_proof(test_executable(executable_root.path(), "claude-b"));
+        let runtimes = runtime_inventory_from_proof(Some(proof_a.clone()));
+        let capability_fingerprint = runtimes
+            .iter()
+            .find(|runtime| runtime.id == "claude")
+            .and_then(|runtime| runtime.capability_fingerprint.clone())
+            .unwrap();
+        let settings = RecapSettings {
+            version: 1,
+            mode: RecapMode::Manual,
+            runtime_id: Some("claude".to_string()),
+            requested_model: Some("fixture-model".to_string()),
+            profile_ref: None,
+            capability_fingerprint: Some(capability_fingerprint),
+            bounds: default_bounds(),
+        };
+        let first_keys = first.0.keys.clone();
+        let root_event_id = "a".repeat(64);
+
+        crate::managed_agents::recap_ownership::set_test_recap_base(Some(base.clone()));
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_runtime_proof(
+            first.3.clone(),
+            proof_a.clone(),
+        );
+        write_settings(app.handle(), &first.1, &first.2, &settings).unwrap();
+        crate::managed_agents::recap_service::clear_test_execution_observers();
+        let (after_assert, release) = install_test_source_barrier(test_source(&root_event_id));
+
+        let root_event_id_for_generation = root_event_id.clone();
+        let (result, ()) = tokio::join!(
+            generate_thread_recap_for_runtime(
+                app.handle().clone(),
+                "550e8400-e29b-41d4-a716-446655440000".to_string(),
+                root_event_id_for_generation,
+                "generation-a".to_string(),
+                app.state(),
+            ),
+            async {
+                after_assert.notified().await;
+                switch_identity(&app, directory.path(), nostr::Keys::generate()).await;
+                let second = capture_recap_scope(app.handle()).await.unwrap();
+                crate::managed_agents::recap_ownership::set_test_runtime_proof(second.3, proof_b);
+                release.notify_one();
+            },
+        );
+        clear_test_source_barrier();
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_recap_base(None);
+
+        assert_eq!(result, Err("runtime_not_ready".to_string()));
+        assert_eq!(
+            crate::managed_agents::recap_service::observed_test_scoped_proofs(),
+            vec![proof_a],
+            "the blocking service must reload the captured A retention scope, not active B"
+        );
+        assert_eq!(
+            crate::managed_agents::recap_service::observed_test_provider_launches(),
+            0,
+            "a stale owner scope must fail before the provider is invoked"
+        );
+        assert!(
+            !base.join("recaps").exists(),
+            "a stale generation must not persist a recap artifact"
+        );
+        assert_ne!(
+            first_keys.public_key(),
+            app.state::<AppState>().keys.lock().unwrap().public_key()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generate_recap_rejects_aba_after_returning_to_same_owner() {
+        let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+        let _hooks = RecapTestHooksGuard;
+        let app = RecapTestApp::new();
+        let state = app.state::<AppState>();
+        *state.relay_url_override.lock().unwrap() = Some("ws://127.0.0.1:9".to_string());
+        let first = capture_recap_scope(app.handle()).await.unwrap();
+        let base = first.4.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let executable_root = tempfile::tempdir().unwrap();
+        let executable_a = test_executable(executable_root.path(), "claude-a");
+        assert!(super::super::recap_capability::verify_executable(&executable_a).is_ok());
+        let proof_a = test_proof(executable_a);
+        let runtimes = runtime_inventory_from_proof(Some(proof_a.clone()));
+        let capability_fingerprint = runtimes
+            .iter()
+            .find(|runtime| runtime.id == "claude")
+            .and_then(|runtime| runtime.capability_fingerprint.clone())
+            .unwrap();
+        let settings = RecapSettings {
+            version: 1,
+            mode: RecapMode::Manual,
+            runtime_id: Some("claude".to_string()),
+            requested_model: Some("fixture-model".to_string()),
+            profile_ref: None,
+            capability_fingerprint: Some(capability_fingerprint),
+            bounds: default_bounds(),
+        };
+        let first_keys = first.0.keys.clone();
+        let root_event_id = "b".repeat(64);
+
+        crate::managed_agents::recap_ownership::set_test_recap_base(Some(base.clone()));
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_runtime_proof(
+            first.3.clone(),
+            proof_a.clone(),
+        );
+        write_settings(app.handle(), &first.1, &first.2, &settings).unwrap();
+        crate::managed_agents::recap_service::clear_test_execution_observers();
+        let (after_assert, release) = install_test_source_barrier(test_source(&root_event_id));
+
+        let root_event_id_for_generation = root_event_id.clone();
+        let (result, ()) = tokio::join!(
+            generate_thread_recap_for_runtime(
+                app.handle().clone(),
+                "550e8400-e29b-41d4-a716-446655440000".to_string(),
+                root_event_id_for_generation,
+                "generation-aba".to_string(),
+                app.state(),
+            ),
+            async {
+                after_assert.notified().await;
+                switch_identity(&app, directory.path(), nostr::Keys::generate()).await;
+                switch_identity(&app, directory.path(), first_keys.clone()).await;
+                release.notify_one();
+            },
+        );
+        clear_test_source_barrier();
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_recap_base(None);
+
+        assert_eq!(result, Err("runtime_not_ready".to_string()));
+        assert_eq!(
+            crate::managed_agents::recap_service::observed_test_provider_launches(),
+            0,
+            "returning to the same owner must not make the stale A generation current"
+        );
+        assert_eq!(
+            crate::managed_agents::recap_service::observed_test_scoped_proofs(),
+            vec![proof_a]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generate_recap_rejects_completion_after_workspace_switch_before_commit() {
+        let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+        let _hooks = RecapTestHooksGuard;
+        let app = RecapTestApp::new();
+        let state = app.state::<AppState>();
+        *state.relay_url_override.lock().unwrap() = Some("ws://127.0.0.1:9".to_string());
+        let first = capture_recap_scope(app.handle()).await.unwrap();
+        let base = first.4.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let executable_root = tempfile::tempdir().unwrap();
+        let proof_a = test_proof(test_executable(executable_root.path(), "claude-a"));
+        let runtimes = runtime_inventory_from_proof(Some(proof_a.clone()));
+        let capability_fingerprint = runtimes
+            .iter()
+            .find(|runtime| runtime.id == "claude")
+            .and_then(|runtime| runtime.capability_fingerprint.clone())
+            .unwrap();
+        let settings = RecapSettings {
+            version: 1,
+            mode: RecapMode::Manual,
+            runtime_id: Some("claude".to_string()),
+            requested_model: Some("fixture-model".to_string()),
+            profile_ref: None,
+            capability_fingerprint: Some(capability_fingerprint),
+            bounds: default_bounds(),
+        };
+        let root_event_id = "c".repeat(64);
+
+        crate::managed_agents::recap_ownership::set_test_recap_base(Some(base.clone()));
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_runtime_proof(first.3.clone(), proof_a);
+        write_settings(app.handle(), &first.1, &first.2, &settings).unwrap();
+        crate::managed_agents::recap_service::clear_test_execution_observers();
+        let (after_assert, source_release) =
+            install_test_source_barrier(test_source(&root_event_id));
+        let (after_provider, commit_release) = install_test_commit_barrier();
+
+        let root_event_id_for_generation = root_event_id.clone();
+        let (result, ()) = tokio::join!(
+            generate_thread_recap_for_runtime(
+                app.handle().clone(),
+                "550e8400-e29b-41d4-a716-446655440000".to_string(),
+                root_event_id_for_generation,
+                "generation-before-commit".to_string(),
+                app.state(),
+            ),
+            async {
+                after_assert.notified().await;
+                source_release.notify_one();
+                after_provider.notified().await;
+                switch_identity_and_workspace(
+                    &app,
+                    directory.path(),
+                    nostr::Keys::generate(),
+                    "ws://127.0.0.1:10",
+                )
+                .await;
+                commit_release.notify_one();
+            },
+        );
+        clear_test_source_barrier();
+        clear_test_commit_barrier();
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_recap_base(None);
+
+        assert_eq!(
+            result,
+            Err(crate::app_state::owner_scope::OWNER_SCOPE_STALE.to_string())
+        );
+        assert_eq!(
+            crate::managed_agents::recap_service::observed_test_provider_launches(),
+            1,
+            "the provider must complete before the final persistence fence runs"
+        );
+        assert!(
+            !base.join("recaps").exists(),
+            "a completion after an owner/workspace switch must not persist"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn settings_save_cancels_generation_registered_before_settings_load() {
+        let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+        let _hooks = RecapTestHooksGuard;
+        let app = RecapTestApp::new();
+        let state = app.state::<AppState>();
+        *state.relay_url_override.lock().unwrap() = Some("ws://127.0.0.1:9".to_string());
+        let first = capture_recap_scope(app.handle()).await.unwrap();
+        let executable_root = tempfile::tempdir().unwrap();
+        let proof_a = test_proof(test_executable(executable_root.path(), "claude-a"));
+        let runtimes = runtime_inventory_from_proof(Some(proof_a.clone()));
+        let capability_fingerprint = runtimes
+            .iter()
+            .find(|runtime| runtime.id == "claude")
+            .and_then(|runtime| runtime.capability_fingerprint.clone())
+            .unwrap();
+        let settings = RecapSettings {
+            version: 1,
+            mode: RecapMode::Manual,
+            runtime_id: Some("claude".to_string()),
+            requested_model: Some("fixture-model".to_string()),
+            profile_ref: None,
+            capability_fingerprint: Some(capability_fingerprint),
+            bounds: default_bounds(),
+        };
+
+        crate::managed_agents::recap_ownership::set_test_recap_base(Some(first.4.clone()));
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_runtime_proof(first.3.clone(), proof_a);
+        write_settings(app.handle(), &first.1, &first.2, &settings).unwrap();
+        crate::managed_agents::recap_service::clear_test_execution_observers();
+        let (after_register, release) = install_test_settings_load_barrier();
+
+        let (result, save_result) = tokio::join!(
+            generate_thread_recap_for_runtime(
+                app.handle().clone(),
+                "550e8400-e29b-41d4-a716-446655440000".to_string(),
+                "d".repeat(64),
+                "generation-settings-race".to_string(),
+                app.state(),
+            ),
+            async {
+                after_register.notified().await;
+                let result = save_recap_settings_for_runtime(app.handle().clone(), settings).await;
+                release.notify_one();
+                result
+            },
+        );
+
+        clear_test_settings_load_barrier();
+        crate::managed_agents::recap_ownership::clear_test_runtime_proofs();
+        crate::managed_agents::recap_ownership::set_test_recap_base(None);
+
+        assert!(save_result.is_ok());
+        assert_eq!(result, Err("cancelled".to_string()));
+        assert_eq!(
+            crate::managed_agents::recap_service::observed_test_provider_launches(),
+            0,
+            "a settings save racing generation startup must cancel the registered run"
+        );
     }
 
     #[test]

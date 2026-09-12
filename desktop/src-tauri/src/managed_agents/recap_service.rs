@@ -6,27 +6,79 @@
 //! process owner for execution. The current staging receipt has no runtime
 //! grant, so the command remains unavailable until one is issued.
 
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
+use tauri::Manager;
 
 use super::recap_adapter::{
     bind_hermes_prompt, claude_recap_plan, hermes_recap_plan, RecapLaunchPlan, RecapRunFailure,
 };
 use super::recap_capability::{
     admit_runtime_ready, same_executable_proof, verify_executable, RecapAdmission, RecapFailure,
-    RecapRuntimeContract, RecapSelection, RecapSelectionContract,
+    RecapRuntimeContract, RecapRuntimeReadyProof, RecapSelection, RecapSelectionContract,
 };
 use super::recap_ownership::VerifiedStagingOwnership;
 use super::recap_state::{recover_recap_runs, OwnedRecapRun, RecapStateFailure};
 use super::{
     bounded_output_with_policy_and_spawn_hook, BoundedFailure, BoundedPolicy, OutputBudget,
 };
+use crate::app_state::owner_scope::CapturedOwnerScope;
 
 const RECAP_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[cfg(test)]
+fn test_scoped_proofs() -> &'static Mutex<Vec<RecapRuntimeReadyProof>> {
+    static PROOFS: OnceLock<Mutex<Vec<RecapRuntimeReadyProof>>> = OnceLock::new();
+    PROOFS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(test)]
+fn record_test_scoped_proof(proof: &RecapRuntimeReadyProof) {
+    test_scoped_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push(proof.clone());
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_execution_observers() {
+    test_scoped_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+    test_provider_launches().store(0, std::sync::atomic::Ordering::Release);
+}
+
+#[cfg(test)]
+pub(crate) fn observed_test_scoped_proofs() -> Vec<RecapRuntimeReadyProof> {
+    test_scoped_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+#[cfg(test)]
+fn test_provider_launches() -> &'static std::sync::atomic::AtomicUsize {
+    static LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    &LAUNCHES
+}
+
+#[cfg(test)]
+pub(crate) fn observed_test_provider_launches() -> usize {
+    test_provider_launches().load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[cfg(test)]
+fn record_test_provider_launch() {
+    test_provider_launches().fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+}
 
 /// Renderer request for one recap. The profile and authentication selection
 /// are always read from the native runtime grant and cannot be supplied here.
@@ -37,6 +89,19 @@ pub(crate) struct RecapRequest {
     pub(crate) model: String,
     pub(crate) profile_ref: Option<String>,
     pub(crate) input: String,
+}
+
+/// Immutable native execution context captured for one recap generation.
+/// The retention path and proof belong to the same owner/relay snapshot as
+/// the source; the service never resolves the active workspace again.
+pub(crate) struct RecapExecutionScope {
+    pub(crate) owner: CapturedOwnerScope,
+    pub(crate) recap_base: PathBuf,
+    pub(crate) retention_db_path: PathBuf,
+    pub(crate) proof: RecapRuntimeReadyProof,
+    /// Held only through the final child spawn, so workspace replacement
+    /// cannot commit between the captured-scope check and process ownership.
+    pub(crate) launch_workspace_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 /// Typed failures kept free of provider output and paths.
@@ -57,11 +122,26 @@ pub(crate) enum RecapServiceFailure {
 /// future adapter cannot accidentally pair a valid grant with another recipe.
 pub(crate) fn execute_admitted_recap(
     admission: RecapAdmission,
+    run: OwnedRecapRun,
+    plan: RecapLaunchPlan,
+    input: &[u8],
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<String, RecapServiceFailure> {
+    execute_admitted_recap_with_release(admission, run, plan, input, timeout, cancelled, || {})
+}
+
+/// Execute a plan while releasing a scope-launch lease after the child has
+/// been secured. The lease is also dropped on every pre-spawn failure, so a
+/// failed admission or spawn cannot strand the owner/workspace mutation locks.
+fn execute_admitted_recap_with_release(
+    admission: RecapAdmission,
     mut run: OwnedRecapRun,
     plan: RecapLaunchPlan,
     input: &[u8],
     timeout: Duration,
     cancelled: &AtomicBool,
+    on_spawn_release: impl FnOnce(),
 ) -> Result<String, RecapServiceFailure> {
     if !plan.matches_admission(&admission) {
         return abort_before_start(run, RecapServiceFailure::PlanMismatch);
@@ -105,6 +185,8 @@ pub(crate) fn execute_admitted_recap(
 
     let mut command = plan.command();
     command.stdin(Stdio::from(stdin));
+    #[cfg(test)]
+    record_test_provider_launch();
     let result = bounded_output_with_policy_and_spawn_hook(
         command,
         BoundedPolicy {
@@ -116,8 +198,13 @@ pub(crate) fn execute_admitted_recap(
         },
         cancelled,
         |pid| {
-            run.mark_process_started(pid)
-                .map_err(|_| BoundedFailure::Cleanup)
+            let result = run
+                .mark_process_started(pid)
+                .map_err(|_| BoundedFailure::Cleanup);
+            // The process owner has now secured the child. Release the
+            // captured scope lease before any potentially long output wait.
+            on_spawn_release();
+            result
         },
     );
     let (result, process_state_is_known) = match result {
@@ -317,18 +404,47 @@ pub(crate) fn recover_recap_runs_at_boot<R: tauri::Runtime>(app: &tauri::AppHand
     }
 }
 
-pub(crate) fn run_recap_sync_with_cancel(
-    app: tauri::AppHandle,
+pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    scope: RecapExecutionScope,
     request: RecapRequest,
     cancelled: Arc<AtomicBool>,
 ) -> Result<String, String> {
+    let mut launch_workspace_guard = scope.launch_workspace_guard;
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return Err("cancelled".to_string());
     }
+    if scope.owner.token.scope.owner != scope.owner.keys.public_key().to_hex() {
+        return Err(error_code(RecapServiceFailure::State(
+            RecapStateFailure::RuntimeNotReady,
+        ))
+        .to_string());
+    }
     let ownership = VerifiedStagingOwnership::load(&app)
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
-    let proof = super::recap_ownership::runtime_ready_proof_for_ownership(&app, &ownership)
+    let captured_base = ownership
+        .recap_base()
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
+    if captured_base != scope.recap_base {
+        return Err(error_code(RecapServiceFailure::State(
+            RecapStateFailure::RuntimeNotReady,
+        ))
+        .to_string());
+    }
+    let scoped_proof = super::recap_ownership::runtime_ready_proof_for_captured_scope(
+        &ownership,
+        &scope.retention_db_path,
+    )
+    .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
+    #[cfg(test)]
+    record_test_scoped_proof(&scoped_proof);
+    if scoped_proof != scope.proof {
+        return Err(error_code(RecapServiceFailure::State(
+            RecapStateFailure::RuntimeNotReady,
+        ))
+        .to_string());
+    }
+    let proof = scoped_proof;
     let contract = contract_for_runtime(&request.runtime_id).ok_or_else(|| {
         error_code(RecapServiceFailure::Admission(
             RecapFailure::RuntimeMismatch,
@@ -396,10 +512,7 @@ pub(crate) fn run_recap_sync_with_cancel(
     }
     admission.executable = executable;
 
-    let base = ownership
-        .recap_base()
-        .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
-    let run = OwnedRecapRun::create(&base, now_seconds())
+    let run = OwnedRecapRun::create(&scope.recap_base, now_seconds())
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
     let input = request.input.into_bytes();
     let plan = match match contract.selection {
@@ -433,13 +546,39 @@ pub(crate) fn run_recap_sync_with_cancel(
                 .map_err(|error| error_code(error).to_string())
         }
     };
-    execute_admitted_recap(
+    let state = app.state::<crate::app_state::AppState>();
+    // Identity imports use this mutex for every key replacement. Hold it
+    // together with the workspace guard through the synchronous final scope
+    // check and child spawn, then release both from the runner's on-spawn hook.
+    let identity_guard = state.identity_mutation.lock().map_err(|_| {
+        error_code(RecapServiceFailure::State(
+            RecapStateFailure::RuntimeNotReady,
+        ))
+        .to_string()
+    })?;
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return abort_before_start(run, RecapServiceFailure::Runner(BoundedFailure::Cancelled))
+            .map_err(|error| error_code(error).to_string());
+    }
+    crate::app_state::owner_scope::assert_current_blocking(app.clone(), &scope.owner.token)
+        .map_err(|_| {
+            error_code(RecapServiceFailure::State(
+                RecapStateFailure::RuntimeNotReady,
+            ))
+            .to_string()
+        })?;
+    let release_launch_lease = move || {
+        drop(identity_guard);
+        drop(launch_workspace_guard.take());
+    };
+    execute_admitted_recap_with_release(
         admission,
         run,
         plan,
         &input,
         RECAP_TIMEOUT,
         cancelled.as_ref(),
+        release_launch_lease,
     )
     .map_err(|error| error_code(error).to_string())
 }

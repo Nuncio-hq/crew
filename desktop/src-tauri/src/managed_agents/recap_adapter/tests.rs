@@ -353,6 +353,64 @@ fn hermes_profile_binding_helpers_reject_content_and_identity_changes() {
     assert_ne!(profile_identity(&profile).unwrap(), identity);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn equal_profile_names_in_other_scopes_do_not_match_the_captured_profile() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let profile_a = fixture.path().join("scope-a/.hermes/profiles/scout");
+    let profile_b = fixture.path().join("scope-b/.hermes/profiles/scout");
+    for profile in [&profile_a, &profile_b] {
+        std::fs::create_dir_all(profile).unwrap();
+        std::fs::set_permissions(profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    }
+    assert_eq!(hermes_profile_ref(&profile_a), Some("scout".to_string()));
+    assert_eq!(hermes_profile_ref(&profile_b), Some("scout".to_string()));
+    let executable = fixture.path().join("hermes");
+    std::fs::write(&executable, b"fixture").unwrap();
+    let root_a = fixture.path().join("run-a");
+    let root_b = fixture.path().join("run-b");
+    std::fs::create_dir_all(&root_a).unwrap();
+    std::fs::create_dir_all(&root_b).unwrap();
+    let plan_a = hermes_recap_plan(
+        &executable,
+        &root_a,
+        "hermes-low",
+        &profile_a,
+        b"thread input",
+    )
+    .unwrap();
+    let plan_b = hermes_recap_plan(
+        &executable,
+        &root_b,
+        "hermes-low",
+        &profile_b,
+        b"thread input",
+    )
+    .unwrap();
+    assert_ne!(plan_a.profile_identity, plan_b.profile_identity);
+    let admission = RecapAdmission {
+        runtime_id: "hermes".into(),
+        executable: RecapExecutableIdentity {
+            resolved_path: executable,
+            version: "fixture-1".into(),
+            fingerprint: "a".repeat(64),
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        },
+        selection: RecapSelection {
+            model: "hermes-low".into(),
+            profile: Some(profile_a),
+            profile_digest: plan_a.profile_digest.clone(),
+            profile_identity: plan_a.profile_identity.clone(),
+            auth_available: true,
+        },
+    };
+    assert!(plan_a.profile_matches_admission(&admission));
+    assert!(!plan_b.profile_matches_admission(&admission));
+}
+
 #[test]
 fn hermes_profile_ref_accepts_only_home_or_named_profile_shape() {
     assert_eq!(

@@ -23,6 +23,41 @@ pub(crate) async fn assert_current<R: tauri::Runtime>(
     Ok(())
 }
 
+/// Check a captured scope without awaiting the workspace lock.
+///
+/// Callers use this only while holding the workspace-apply guard and the
+/// identity-mutation guard that protect the final launch seam. The synchronous
+/// check lets that seam run on a blocking worker immediately before it hands a
+/// command to the child-process owner; an async capture there would yield and
+/// reopen the very race this fence closes.
+pub(crate) fn assert_current_blocking<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    expected: &OwnerScopeToken,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if state.workspace_apply_generation.load(Ordering::Acquire) != expected.workspace_generation
+        || state.identity_generation.load(Ordering::Acquire) != expected.identity_generation
+    {
+        return Err(OWNER_SCOPE_STALE.into());
+    }
+
+    let owner = state
+        .keys
+        .lock()
+        .map_err(|_| OWNER_SCOPE_STALE.to_string())?
+        .public_key()
+        .to_hex();
+    if owner != expected.scope.owner {
+        return Err(OWNER_SCOPE_STALE.into());
+    }
+
+    let relay_url = crate::relay::relay_ws_url_with_override(&state);
+    if canonical_origin(&relay_url)? != expected.scope.community {
+        return Err(OWNER_SCOPE_STALE.into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 thread_local! {
     static KEY_LOCK_SIGNAL: std::cell::RefCell<Option<std::sync::mpsc::Sender<()>>> = const { std::cell::RefCell::new(None) };
