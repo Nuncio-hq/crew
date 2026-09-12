@@ -124,7 +124,10 @@ pub(super) fn status_for_with<R: tauri::Runtime>(
     }
 }
 
-pub(super) fn emit_status(app: &AppHandle, status: &ManagedAgentRuntimeStatus) {
+pub(super) fn emit_status<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    status: &ManagedAgentRuntimeStatus,
+) {
     let _ = app.emit(STATUS_EVENT, status);
 }
 
