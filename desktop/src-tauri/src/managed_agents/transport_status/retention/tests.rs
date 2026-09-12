@@ -241,3 +241,45 @@ fn shared_directory_lock_blocks_cleanup_until_the_writer_releases_it() {
     fixture.run(&HashSet::new()).unwrap();
     assert!(!old.exists());
 }
+
+#[test]
+fn lock_guard_releases_an_inherited_open_file_description() {
+    use std::process::{Command, Stdio};
+
+    let fixture = Fixture::new();
+    let lock_path = fixture.opaque(".spool.lock", b"");
+    let directory = super::super::reader::open_owned_directory(&fixture.directory, false).unwrap();
+    let lock = super::platform::lock(&directory).unwrap();
+    let inherited = lock.try_clone_file().unwrap();
+    // Use an absolute system path: the Hermit toolchain PATH used by the
+    // Linux CI lane intentionally omits host utilities such as `cat`.
+    let mut child = Command::new("/bin/cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(inherited))
+        .spawn()
+        .unwrap();
+    let child_stdin = child.stdin.take().unwrap();
+    assert!(child.try_wait().unwrap().is_none());
+
+    let probe = std::fs::File::open(&lock_path).unwrap();
+    assert!(
+        fs4::fs_std::FileExt::try_lock_exclusive(&probe).is_err(),
+        "the cloned descriptor must still conflict while the guard is live"
+    );
+    drop(probe);
+    drop(lock);
+
+    let probe = std::fs::File::open(&lock_path).unwrap();
+    let released = fs4::fs_std::FileExt::try_lock_exclusive(&probe).is_ok();
+    drop(probe);
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "the child must retain the cloned descriptor through the assertions"
+    );
+    drop(child_stdin);
+    let _ = child.wait();
+    assert!(
+        released,
+        "the guard must unlock before an inherited descriptor is closed"
+    );
+}
