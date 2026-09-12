@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 
 use super::storage::recap_key_digest;
 
-static REGISTRY_TEST_MUTEX: Mutex<()> = Mutex::new(());
+static REGISTRY_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct RecapTestApp {
     app: tauri::App<tauri::test::MockRuntime>,
@@ -198,7 +198,7 @@ async fn cancelled_source_read_stops_before_first_relay_request() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_source_read_aborts_a_pending_relay_request() {
-    let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _serial = REGISTRY_TEST_MUTEX.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let accepted = Arc::new(tokio::sync::Notify::new());
@@ -254,7 +254,7 @@ async fn cancelled_source_read_aborts_a_pending_relay_request() {
 
 #[tokio::test]
 async fn recap_scope_snapshot_keeps_a_path_and_rejects_aba_token_reuse() {
-    let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _serial = REGISTRY_TEST_MUTEX.lock().await;
     let _hooks = RecapTestHooksGuard;
     let app = RecapTestApp::new();
     let first = capture_recap_scope(app.handle()).await.unwrap();
@@ -298,7 +298,7 @@ async fn recap_scope_snapshot_keeps_a_path_and_rejects_aba_token_reuse() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn generate_recap_uses_captured_a_proof_when_b_is_active() {
-    let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _serial = REGISTRY_TEST_MUTEX.lock().await;
     let _hooks = RecapTestHooksGuard;
     let app = RecapTestApp::new();
     let state = app.state::<AppState>();
@@ -384,7 +384,7 @@ async fn generate_recap_uses_captured_a_proof_when_b_is_active() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn generate_recap_rejects_aba_after_returning_to_same_owner() {
-    let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _serial = REGISTRY_TEST_MUTEX.lock().await;
     let _hooks = RecapTestHooksGuard;
     let app = RecapTestApp::new();
     let state = app.state::<AppState>();
@@ -459,7 +459,7 @@ async fn generate_recap_rejects_aba_after_returning_to_same_owner() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn generate_recap_rejects_completion_after_workspace_switch_before_commit() {
-    let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _serial = REGISTRY_TEST_MUTEX.lock().await;
     let _hooks = RecapTestHooksGuard;
     let app = RecapTestApp::new();
     let state = app.state::<AppState>();
@@ -539,7 +539,7 @@ async fn generate_recap_rejects_completion_after_workspace_switch_before_commit(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn settings_save_cancels_generation_registered_before_settings_load() {
-    let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _serial = REGISTRY_TEST_MUTEX.lock().await;
     let _hooks = RecapTestHooksGuard;
     let app = RecapTestApp::new();
     let state = app.state::<AppState>();
@@ -601,7 +601,7 @@ async fn settings_save_cancels_generation_registered_before_settings_load() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn settings_save_rejects_aba_before_persisting_or_cancelling() {
-    let _serial = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _serial = REGISTRY_TEST_MUTEX.lock().await;
     let _hooks = RecapTestHooksGuard;
     let app = RecapTestApp::new();
     let state = app.state::<AppState>();
@@ -685,7 +685,7 @@ fn corrupt_saved_settings_keep_safe_off_and_surface_repair_error() {
 
 #[test]
 fn generation_registry_fences_stale_cancellation() {
-    let _guard = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _guard = REGISTRY_TEST_MUTEX.blocking_lock();
     let key = "test-channel\0test-root";
     let generation = register_generation(key, "g-1").unwrap();
     assert!(generation_is_current(key, "g-1"));
@@ -699,7 +699,7 @@ fn generation_registry_fences_stale_cancellation() {
 
 #[test]
 fn settings_change_cancels_only_the_current_owner_scope() {
-    let _guard = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _guard = REGISTRY_TEST_MUTEX.blocking_lock();
     let owner_generation =
         register_generation("https://relay\0viewer\0channel\0root", "g-owner").unwrap();
     let other_generation =
@@ -713,7 +713,7 @@ fn settings_change_cancels_only_the_current_owner_scope() {
 
 #[test]
 fn generation_guard_unregisters_on_every_drop_path() {
-    let _guard = REGISTRY_TEST_MUTEX.lock().unwrap();
+    let _guard = REGISTRY_TEST_MUTEX.blocking_lock();
     let key = "guard-relay\0guard-viewer\0channel\0root";
     let cancelled = {
         let generation = GenerationGuard::register(key, "g-guard").unwrap();

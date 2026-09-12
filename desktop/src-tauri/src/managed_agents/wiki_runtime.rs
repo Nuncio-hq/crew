@@ -627,7 +627,7 @@ fn validate_hermes_dotenv_bytes(contents: &[u8]) -> Result<(), WikiRuntimeFailur
         return Err(WikiRuntimeFailure::ProfileBinding);
     }
     if text
-        .split(|character| character == '\n' || character == '\r')
+        .split(['\n', '\r'])
         .any(dotenv_line_has_hermes_binding_assignment)
     {
         return Err(WikiRuntimeFailure::ProfileBinding);
