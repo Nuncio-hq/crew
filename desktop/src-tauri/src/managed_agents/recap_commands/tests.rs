@@ -715,11 +715,14 @@ fn settings_change_cancels_only_the_current_owner_scope() {
 fn generation_guard_unregisters_on_every_drop_path() {
     let _guard = REGISTRY_TEST_MUTEX.lock().unwrap();
     let key = "guard-relay\0guard-viewer\0channel\0root";
-    {
+    let cancelled = {
         let generation = GenerationGuard::register(key, "g-guard").unwrap();
         assert!(generation_is_current(key, "g-guard"));
-        generation.cancelled().store(true, Ordering::Release);
-    }
+        let cancelled = generation.cancelled().clone();
+        assert!(!cancelled.load(Ordering::Acquire));
+        cancelled
+    };
+    assert!(cancelled.load(Ordering::Acquire));
     assert!(!generation_is_current(key, "g-guard"));
 }
 

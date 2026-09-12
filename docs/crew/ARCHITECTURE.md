@@ -483,13 +483,29 @@ runbook](TESTING.md#wiki-journal-v3-recovery) and
 snapshot handoff. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
 caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
-profile; Claude/Codex receive an explicit model selection. Missing or failed
-runtime execution is a failed generation with no heuristic or HTTP fallback;
-the unsigned legacy preview remains deterministic for compatibility. The
-adapter's state, prompt input, stdout/stderr, deadline, and cancellation are
-bounded, and selection is independent from employee sessions and recap
-settings. #348's real installed-runtime staging evidence is still required
-before any runtime combination is called certified. #364 owns scoped full-body
+profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Claude/Codex
+receive an explicit model selection. For Hermes Agent v0.21.2 (source HEAD
+`eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads profile dotenv,
+external secret sources, and managed dotenv before its startup guard reapplies
+safe mode; its `hermes_cli/oneshot.py` path still loads the selected profile
+config directly to resolve provider/model. The adapter validates staged
+`config.yaml` as missing/empty or a YAML mapping before launch, rejecting
+malformed/non-mapping config with a fixed error. It also rejects profile
+`.env`/`.op.env` routing assignments for `HERMES_HOME` or
+`HERMES_MANAGED_DIR`, invalid or ambiguous dotenv bytes, and every enabled
+external secret source. Accepted dotenv bytes remain unchanged, a missing
+`.env` is created empty, and `HERMES_MANAGED_DIR` is bound to a fresh empty
+directory under the disposable state root. Missing or failed runtime
+execution is a failed generation with no heuristic or HTTP fallback; the
+unsigned legacy preview remains deterministic for compatibility. The adapter's
+state, prompt input, stdout/stderr, deadline, and cancellation are bounded, and
+selection is independent from employee sessions and recap settings. The source
+guard, config gate, and profile-binding boundary are covered by production
+seam tests in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
+they do not certify a native Hermes launch, provider/auth path,
+effective model, or installed tool isolation. The #363 installed-runtime
+acceptance must run in the #348 staging environment; #348 owns that environment
+and #363 owns the runtime acceptance result. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
 selected page and bounded scroll position under the captured owner/community,
 parent Project, repository coordinate, and door; when a saved page is gone, it

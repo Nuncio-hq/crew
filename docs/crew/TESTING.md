@@ -967,6 +967,35 @@ run one exact staged runtime with a disposable copied profile/config and
 record source revision, runtime/model/profile, output and no employee-session
 mutation.
 
+The Hermes child command sets `HERMES_SAFE_MODE=1` and passes Hermes'
+top-level `--safe-mode` flag, while retaining the copied profile's
+provider/model configuration for the one-shot path. In Hermes Agent v0.21.2
+(source HEAD `eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads
+profile dotenv, external secret sources, and managed dotenv before
+`_prepare_agent_startup` reapplies the safe-mode environment. The installed
+`hermes_cli/oneshot.py` path then loads the selected profile config directly to
+resolve its provider/model. The adapter validates a staged `config.yaml` before
+launch: missing and empty files remain valid first-run states, while malformed
+YAML and non-mapping roots fail with a fixed error before a provider process can
+start. Profile `.env` and `.op.env` routing assignments for `HERMES_HOME` or
+`HERMES_MANAGED_DIR`, invalid or ambiguous dotenv bytes, and every enabled
+external secret source fail with one fixed profile-binding error. Accepted
+dotenv bytes remain byte-identical, a missing `.env` is created empty, and the
+child receives a fresh empty private managed directory. The production-bound
+fake-process regression stages a real profile copy, preserves safe dotenv
+bytes, verifies the private directory, and emulates native reassertion at the
+child boundary; it catches removal of the CLI guard or profile-binding seam
+without claiming that an installed Hermes provider or model has run. These
+tests live in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs` so
+the runtime implementation remains under the repository file-size gate.
+
+This source-level guard does not close the installed-runtime acceptance gap.
+No native Hermes launch, provider/auth check, effective-model receipt, or
+staging generation is implied. The #363 installed-runtime acceptance must run
+in the #348 staging environment; #348 owns that environment and #363 owns the
+runtime acceptance result. Mutable Hermes source or wrappers require
+revalidation.
+
 ## Recap capability source proof (#351)
 
 The default-off native recap slice is tested through its production modules:
