@@ -413,6 +413,14 @@ fn hermes_secret_gate_rejects_enabled_yaml_forms_and_merges() {
         reject_enabled_hermes_secret_sources(&merged),
         Err(WikiRuntimeFailure::ProfileBinding)
     );
+    let tagged = serde_yaml::from_str::<serde_yaml::Value>(
+        "secrets:\n  onepassword:\n    enabled: !unsafe true\n",
+    )
+    .expect("tagged secret config");
+    assert_eq!(
+        reject_enabled_hermes_secret_sources(&tagged),
+        Err(WikiRuntimeFailure::ProfileBinding)
+    );
 }
 
 #[cfg(unix)]

@@ -560,6 +560,7 @@ fn yaml_contains_merge_key(value: &serde_yaml::Value) -> bool {
                 || yaml_contains_merge_key(value)
         }),
         serde_yaml::Value::Sequence(sequence) => sequence.iter().any(yaml_contains_merge_key),
+        serde_yaml::Value::Tagged(_) => true,
         _ => false,
     }
 }
