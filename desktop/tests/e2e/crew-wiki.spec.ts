@@ -242,6 +242,68 @@ test.describe("Crew Wiki (#200)", () => {
       .getByTestId("wiki-project-tab")
       .screenshot({ path: `${SHOTS}/11-project-wiki-tab.png` });
 
+    const projectDetailScroll = page.getByTestId("project-detail-scroll");
+    const projectTabGeometry = await page.evaluate(() => {
+      const tab = document.querySelector<HTMLElement>(
+        '[data-testid="project-wiki-tab"]',
+      );
+      const header = document.querySelector<HTMLElement>(
+        '[data-testid="wiki-header-bar"]',
+      );
+      if (!tab || !header) {
+        throw new Error("Project Wiki tab geometry targets are missing");
+      }
+      return {
+        scrollTop: document.querySelector<HTMLElement>(
+          '[data-testid="project-detail-scroll"]',
+        )?.scrollTop,
+        tabTop: tab.getBoundingClientRect().top,
+        headerTop: header.getBoundingClientRect().top,
+      };
+    });
+    await projectDetailScroll.evaluate(
+      (element, scrollTop) => {
+        element.scrollTop = Math.max(1, Math.ceil(scrollTop));
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      },
+      (projectTabGeometry.scrollTop ?? 0) +
+        projectTabGeometry.headerTop -
+        projectTabGeometry.tabTop,
+    );
+    await expect
+      .poll(() => projectDetailScroll.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    const overlap = await page.evaluate(() => {
+      const tab = document.querySelector<HTMLElement>(
+        '[data-testid="project-wiki-tab"]',
+      );
+      const header = document.querySelector<HTMLElement>(
+        '[data-testid="wiki-header-bar"]',
+      );
+      if (!tab || !header) {
+        throw new Error("Project Wiki tab geometry targets are missing");
+      }
+      const tabRect = tab.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const point = {
+        x: tabRect.left + tabRect.width / 2,
+        y: tabRect.top + tabRect.height / 2,
+      };
+      const hit = document.elementFromPoint(point.x, point.y);
+      return {
+        tabRect,
+        headerRect,
+        hitTestId: hit?.closest<HTMLElement>("[data-testid]")?.dataset.testid,
+      };
+    });
+    expect(overlap.headerRect.top).toBeLessThan(overlap.tabRect.bottom);
+    expect(overlap.headerRect.bottom).toBeGreaterThan(overlap.tabRect.top);
+    expect(overlap.hitTestId).toBe("project-wiki-tab");
+    await waitForAnimations(page);
+    await projectDetailScroll.screenshot({
+      path: `${SHOTS}/15-project-tab-outer-scroll.png`,
+    });
+
     await openWiki(page);
     await page.getByTestId("wiki-company-card").getByRole("button").click();
     await expect(page.getByTestId("wiki-company-empty")).toBeVisible();
