@@ -285,6 +285,13 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     // production archive/unarchive publish through the guarded boundary-1
     // funnel via `submit_event`.
     ("src/commands/identity_archive.rs", 1, 0),
+    // Loopback submit relay in the native wiki publication acceptance tests;
+    // production publication still goes through the guarded relay funnel.
+    (
+        "src/commands/wiki_publication_native_headless_tests.rs",
+        1,
+        0,
+    ),
     // Mock-relay routes in team-sharing tests (accept/reject stub +
     // recording stub for the delete-then-share gate + gated recording stub for
     // the two-flush serialization gate + stalling stub for the per-scope
