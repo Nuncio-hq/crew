@@ -39,10 +39,8 @@ relay if staging is unavailable.
 The stable lifecycle environment is `/home/oscar/crew-staging-348` with
 baseline `initial-a1fe2c6`. Its stop → restore cycle was verified with real
 authentication against the currently pinned relay revision `a1fe2c6` and
-schema `45`; the deployed production CLI's nine critical files remained
-byte-identical, four owned services were running, and 107 signed baseline and
-daily sentinels were unchanged. Re-run the server-side verification from the
-tooling checkout with:
+schema `45`; the stop → restore → verify lifecycle passed. Re-run the
+server-side verification from the tooling checkout with:
 
 ```sh
 cd /home/oscar/crew-staging-348/tooling-launch-candidate/scripts
