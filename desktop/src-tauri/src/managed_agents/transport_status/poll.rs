@@ -68,7 +68,7 @@ pub(crate) fn start(app: AppHandle) {
     });
 }
 
-fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
+fn poll_once<R: tauri::Runtime>(app: &AppHandle<R>, cursor: usize) -> Result<usize, String> {
     let state = app.state::<AppState>();
     let owner = state
         .keys
@@ -102,7 +102,12 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
         );
         tickets
     };
-    if tickets.is_empty() {
+    // Retired final reads are removed from `tickets` once they set
+    // `final_applied`, but their registration and AUTH markers are still
+    // drained below. Keep the export-enabled worker alive for that
+    // retired-only phase; otherwise the first marker can be emitted on the
+    // final-read tick and the following AUTH marker is stranded forever.
+    if tickets.is_empty() && !export::enabled() {
         return Ok(cursor);
     }
     tickets.sort_by(|left, right| {
@@ -357,6 +362,98 @@ fn apply_with_current_owner<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managed_agents::transport_status::{Monitor, ReadTicket};
+    use buzz_core_pkg::transport_status::{
+        TransportAuthClassification, TransportCode, TransportConnectionAttempt,
+        TransportReceivedAuth, TransportRecordEnvelope, TransportRecordV2, TransportState,
+        TransportStatus,
+    };
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    fn poll_test_app() -> tauri::App<tauri::test::MockRuntime> {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        // Storage-backed poll_once tests must never resolve the production
+        // application-data directory from the mock context's empty default
+        // identifier.
+        context.config_mut().identifier = "xyz.nuncio.crew.test.transport-status-poll".into();
+        tauri::test::mock_builder()
+            .manage(crate::app_state::build_app_state())
+            .build(context)
+            .expect("mock app")
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn retired_auth_ticket(owner: String) -> ReadTicket {
+        ReadTicket {
+            key: crate::managed_agents::ManagedAgentRuntimeKey::new("a".repeat(64), "ws://fixture")
+                .unwrap(),
+            nonce: uuid::Uuid::from_u128(7).to_string(),
+            path: PathBuf::from("/fixture/status.json"),
+            owner,
+            epoch: 0,
+            process_id: 7,
+            spawn_started_at_ms: 90_000,
+            wire_version: 2,
+        }
+    }
+
+    fn retired_auth_record(ticket: &ReadTicket) -> TransportRecordV2 {
+        let attempt_id = uuid::Uuid::from_u128(8).to_string();
+        TransportRecordV2 {
+            version: 2,
+            runtime_id: ticket.key.runtime_id(),
+            start_nonce: ticket.nonce.clone(),
+            sequence: 1,
+            timestamp_ms: 100_000,
+            terminal: true,
+            transport: TransportStatus {
+                state: TransportState::AuthRejected,
+                code: TransportCode::AuthDenied,
+                attempts: 1,
+                elapsed_ms: 1,
+                next_retry_at_ms: None,
+                last_error: TransportCode::AuthDenied.message().map(str::to_owned),
+            },
+            process_id: ticket.process_id,
+            spawn_started_at_ms: ticket.spawn_started_at_ms,
+            connection_attempt: Some(TransportConnectionAttempt {
+                sequence: 1,
+                id: attempt_id.clone(),
+                started_at_ms: 91_000,
+            }),
+            received_auth: Some(TransportReceivedAuth {
+                auth_event_id: "c".repeat(64),
+                attempt_id,
+                attempt_sequence: 1,
+                accepted: false,
+                classification: TransportAuthClassification::CommunityBanned,
+                received_at_ms: 92_000,
+            }),
+        }
+    }
 
     #[test]
     fn owner_switch_between_read_and_apply_drops_the_whole_batch() {
@@ -388,5 +485,70 @@ mod tests {
         .unwrap()
         .is_none());
         assert!(!applied);
+    }
+
+    #[test]
+    fn retired_only_ticks_drain_registration_then_auth_without_read_tickets() {
+        let _env = crate::managed_agents::lock_env_mutex();
+        let _export = EnvVarGuard::set(export::NATIVE_AUTH_EVIDENCE_EXPORT_ENV, "1");
+
+        let app = poll_test_app();
+        let state = app.state::<AppState>();
+        let owner = state.keys.lock().unwrap().public_key().to_hex();
+        let ticket = retired_auth_ticket(owner.clone());
+        let record = retired_auth_record(&ticket);
+        let now = Instant::now();
+        let diagnostics = Arc::clone(&state.managed_transport_diagnostics);
+        let mut monitor = Monitor::new(ticket.clone(), &diagnostics);
+        assert!(monitor.apply(
+            &ticket,
+            Ok(TransportRecordEnvelope::V2(record.clone())),
+            true,
+            now,
+            100_000,
+        ));
+        monitor.retire(true, now);
+        diagnostics.lock().unwrap().apply(
+            &ticket,
+            TransportRecordEnvelope::V2(record),
+            false,
+            now,
+            100_000,
+        );
+        assert_eq!(
+            diagnostics
+                .lock()
+                .unwrap()
+                .export_tickets(&owner, Instant::now())
+                .len(),
+            1,
+            "the final retired read must be applied before export polling"
+        );
+
+        // The final retired read is already applied, so this worker tick has
+        // no file-read tickets. It must still emit registration and leave AUTH
+        // queued for the next tick.
+        assert_eq!(poll_once(app.handle(), 0).unwrap(), 0);
+        let auth = diagnostics
+            .lock()
+            .unwrap()
+            .take_export_candidate(&ticket, Instant::now())
+            .expect("registration must have emitted before AUTH becomes due");
+        assert!(matches!(auth, ExportCandidate::Auth(_)));
+        diagnostics.lock().unwrap().finish_export(
+            &auth,
+            false,
+            Instant::now() - std::time::Duration::from_secs(5),
+        );
+
+        // A second retired-only tick must reach the export phase and retry the
+        // failed AUTH marker. With the old early return, this take would find
+        // the still-due candidate and fail the assertion.
+        assert_eq!(poll_once(app.handle(), 0).unwrap(), 0);
+        assert!(diagnostics
+            .lock()
+            .unwrap()
+            .take_export_candidate(&ticket, Instant::now())
+            .is_none());
     }
 }
