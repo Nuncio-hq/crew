@@ -878,9 +878,10 @@ run_fixture -- --ignored --exact --nocapture
 The marker assertion proves the selected path used the inert provider stub only
 as a poison guard; any accidental provider launch fails the proof. The isolated
 environment intentionally excludes inherited relay, identity, provider and
-desktop configuration. The command proves local producer/reader attribution;
-it does not establish installed staging or live relay health, which remain the
-separate #348 gate.
+desktop configuration. The loopback proof does not establish installed
+managed-runtime or in-flight turn/receipt acceptance for #337/#338, or release
+acceptance for #357. See the [D-077 staging section](#test-environments-and-real-data-staging-d-077)
+for verified environment readiness.
 
 ## CompanyOS grouped evidence (#344)
 
