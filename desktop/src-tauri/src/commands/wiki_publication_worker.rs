@@ -11,16 +11,16 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use super::owner_operations::owner_operation_load;
-use super::wiki_publication_commands::wiki_operation_summaries;
+use super::owner_operations::owner_operation_load_at_path;
+use super::wiki_publication_commands::wiki_operation_summaries_at_path;
 use super::wiki_publication_driver::drive;
+use super::wiki_publication_native_reads::{NativeClock, NativeJournal};
 use super::wiki_publication_record::WikiPublicationRecord;
-use super::wiki_publication_runtime::now;
 use super::wiki_publication_runtime::NativeWikiPublication;
 use crate::app_state::owner_scope::capture;
 use crate::owner_operations::{Operation, OperationStatus};
 use nostr::PublicKey;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 const MAX_FAILURES: u8 = 5;
 const MAX_PER_TICK: usize = 5;
@@ -268,10 +268,27 @@ async fn run_due(
     app: AppHandle,
     scope: crate::app_state::owner_scope::OwnerScopeToken,
 ) -> Result<(), String> {
+    run_due_with_context(app, scope, NativeJournal::FromApp, NativeClock::System).await
+}
+
+/// Run one bounded recovery tick with an explicit native journal context.
+///
+/// The shipped worker calls this with the trusted app-data journal and system
+/// clock. Tests use the same scan, lock, reload, lease and `drive` path with a
+/// temporary journal and deterministic clock, so a headless app can exercise
+/// restart recovery without relying on renderer IPC or a GUI profile.
+pub(super) async fn run_due_with_context<R: Runtime>(
+    app: AppHandle<R>,
+    scope: crate::app_state::owner_scope::OwnerScopeToken,
+    journal: NativeJournal,
+    clock: NativeClock,
+) -> Result<(), String> {
+    let path = journal.resolve(&app)?;
     // Only bounded metadata is read outside the serialized lock: one summary
     // per repository coordinate. Signed payloads are loaded for the rows this
     // tick actually considers, after the lock is held.
-    let summaries = wiki_operation_summaries(app.clone(), scope.clone(), false).await?;
+    let summaries =
+        wiki_operation_summaries_at_path(app.clone(), path.clone(), scope.clone(), false).await?;
     let mut processed = 0;
     for summary in summaries {
         if processed >= MAX_PER_TICK {
@@ -294,10 +311,15 @@ async fn run_due(
             // The summary was read before waiting for the foreground mutex.
             // Reload the row after acquiring it so a foreground CAS cannot be
             // followed by a stale worker dispatch for the same resource.
-            let current =
-                owner_operation_load(app.clone(), scope.clone(), summary.id.clone(), None)
-                    .await?
-                    .value;
+            let current = owner_operation_load_at_path(
+                app.clone(),
+                path.clone(),
+                scope.clone(),
+                summary.id.clone(),
+                None,
+            )
+            .await?
+            .value;
             if current.resource_key != summary.resource_key {
                 return Err("Wiki recovery row changed coordinate; reload.".into());
             }
@@ -316,12 +338,17 @@ async fn run_due(
             if current.resource_key != record.coordinate {
                 return Err("Wiki recovery row does not match its signed coordinate.".into());
             }
-            if !is_due(&current, &record, now()?) {
+            if !is_due(&current, &record, clock.now()?) {
                 continue;
             }
-            let runtime =
-                NativeWikiPublication::new(app.clone(), scope.clone(), &current.resource_key)
-                    .await?;
+            let runtime = NativeWikiPublication::new_with_context(
+                app.clone(),
+                scope.clone(),
+                &current.resource_key,
+                journal.clone(),
+                clock.clone(),
+            )
+            .await?;
             drive(&runtime, current, owner, false, false).await
         };
         // Every unrecorded failure ends the tick and reaches the outer bounded

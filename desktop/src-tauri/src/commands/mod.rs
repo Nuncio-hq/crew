@@ -109,6 +109,8 @@ mod wiki_publication_driver_tests;
 mod wiki_publication_head_proof_tests;
 #[cfg(all(test, unix))]
 mod wiki_publication_native_fence_tests;
+#[cfg(all(test, unix))]
+mod wiki_publication_native_headless_tests;
 mod wiki_publication_native_reads;
 mod wiki_publication_record;
 mod wiki_publication_runtime;

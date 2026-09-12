@@ -1,31 +1,33 @@
 //! Captured desktop runtime for the Wiki publication driver.
 
 use super::owner_operation_transport::{OperationTransportError, OwnerOperationTransport};
-use super::owner_operations::owner_operation_update;
+use super::owner_operations::owner_operation_update_at_path;
 use super::wiki_publication_driver::{
     WikiDependencyState, WikiHead, WikiHeadRetirementProof, WikiPublicationRuntime,
     WikiPublishError,
 };
-use super::wiki_publication_native_reads::NativeReadContext;
+use super::wiki_publication_native_reads::{NativeClock, NativeJournal, NativeReadContext};
 use super::wiki_publication_record::{WikiHeadRetirement, WikiPublicationRecord};
 use crate::app_state::owner_scope::{capture, OwnerScopeToken};
 use crate::owner_operations::{Operation, OperationStatus, OperationUpdate};
 use nostr::{Event, Keys, PublicKey};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 pub(super) const WIKI_KIND: u16 = 30623;
 // Four maximum-size events stay below the transport's 1 MiB response cap.
 const MAX_QUERY_BATCH: usize = 4;
 
-pub(super) struct NativeWikiPublication {
-    app: AppHandle,
+pub(super) struct NativeWikiPublication<R: Runtime> {
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     pub(super) owner: PublicKey,
     pub(super) repo_d: String,
     keys: Keys,
     transport: OwnerOperationTransport,
+    journal: NativeJournal,
+    clock: NativeClock,
 }
 
 pub(super) fn now() -> Result<i64, String> {
@@ -36,11 +38,34 @@ pub(super) fn now() -> Result<i64, String> {
     i64::try_from(seconds).map_err(|_| "System clock overflow".into())
 }
 
-impl NativeWikiPublication {
+impl<R: Runtime> NativeWikiPublication<R> {
     pub(super) async fn new(
-        app: AppHandle,
+        app: AppHandle<R>,
         expected: OwnerScopeToken,
         coordinate: &str,
+    ) -> Result<Self, String> {
+        Self::new_with_context(
+            app,
+            expected,
+            coordinate,
+            NativeJournal::FromApp,
+            NativeClock::System,
+        )
+        .await
+    }
+
+    /// Construct a publication with explicit journal and clock context.
+    ///
+    /// The production constructor above supplies the trusted app-data journal
+    /// and system clock. Tests use this same captured runtime with an owned
+    /// temporary journal and deterministic clock so the worker/recovery path
+    /// can run without a GUI profile or keychain.
+    pub(super) async fn new_with_context(
+        app: AppHandle<R>,
+        expected: OwnerScopeToken,
+        coordinate: &str,
+        journal: NativeJournal,
+        clock: NativeClock,
     ) -> Result<Self, String> {
         let (owner, repo_d) = coordinate_parts(coordinate)?;
         let owner_key = PublicKey::from_hex(owner).map_err(|_| "Wiki owner is invalid")?;
@@ -66,23 +91,24 @@ impl NativeWikiPublication {
             repo_d: repo_d.to_owned(),
             keys,
             transport,
+            journal,
+            clock,
         })
     }
 
     /// Borrow this publication's captured identity, transport and coordinate
-    /// as the shared guarded-read context. The journal path stays lazily
-    /// resolved and the clock stays the system clock: production behaviour is
-    /// unchanged, and a test can drive the very same checks with an owned
-    /// journal and a controlled clock.
-    fn reads(&self) -> NativeReadContext<'_, tauri::Wry> {
+    /// as the shared guarded-read context. Production construction supplies
+    /// the trusted app-data journal and system clock; headless acceptance can
+    /// inject an owned journal and controlled clock without changing a fence.
+    fn reads(&self) -> NativeReadContext<'_, R> {
         NativeReadContext {
             app: &self.app,
             expected: &self.expected,
             owner: self.owner,
             repo_d: &self.repo_d,
             transport: &self.transport,
-            journal: &super::wiki_publication_native_reads::FROM_APP,
-            clock: &super::wiki_publication_native_reads::SYSTEM_CLOCK,
+            journal: &self.journal,
+            clock: &self.clock,
         }
     }
 
@@ -198,8 +224,10 @@ impl NativeWikiPublication {
         record.validate_intent(self.owner)?;
         let payload = serde_json::to_value(record)
             .map_err(|_| "Wiki publication recovery serialization failed.".to_string())?;
-        let result = owner_operation_update(
+        let path = self.journal.resolve(&self.app)?;
+        let result = owner_operation_update_at_path(
             self.app.clone(),
+            path,
             self.expected.clone(),
             operation.id.clone(),
             operation.revision,
@@ -208,6 +236,7 @@ impl NativeWikiPublication {
                 reconciled: false,
                 payload,
             },
+            false,
         )
         .await?;
         *operation = result.value;
@@ -489,7 +518,7 @@ pub(super) trait HeadRetirementReads {
     async fn read_current_toc(&self, operation: &Operation) -> Result<Option<Event>, String>;
 }
 
-impl HeadRetirementReads for NativeWikiPublication {
+impl<R: Runtime> HeadRetirementReads for NativeWikiPublication<R> {
     async fn read_exact_toc_event(
         &self,
         operation: &Operation,
@@ -604,9 +633,9 @@ pub(super) async fn validate_head_retirement_refusal<R: HeadRetirementReads>(
     }))
 }
 
-impl WikiPublicationRuntime for NativeWikiPublication {
+impl<R: Runtime> WikiPublicationRuntime for NativeWikiPublication<R> {
     fn now(&self) -> Result<i64, String> {
-        now()
+        self.clock.now()
     }
 
     async fn checkpoint(&self, operation: &Operation) -> Result<(), String> {
@@ -624,8 +653,10 @@ impl WikiPublicationRuntime for NativeWikiPublication {
         record.validate_intent(self.owner)?;
         let payload = serde_json::to_value(record)
             .map_err(|_| "Wiki publication recovery serialization failed.".to_string())?;
-        let result = owner_operation_update(
+        let path = self.journal.resolve(&self.app)?;
+        let result = owner_operation_update_at_path(
             self.app.clone(),
+            path,
             self.expected.clone(),
             operation.id.clone(),
             operation.revision,
@@ -634,6 +665,7 @@ impl WikiPublicationRuntime for NativeWikiPublication {
                 reconciled,
                 payload,
             },
+            false,
         )
         .await?;
         Ok(result.value)

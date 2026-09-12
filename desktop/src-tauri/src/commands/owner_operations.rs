@@ -145,7 +145,12 @@ pub(crate) async fn owner_operation_create(
     owner_operation_create_at_path(app.clone(), journal_path(&app)?, expected, operation).await
 }
 
-async fn owner_operation_create_at_path<R: Runtime>(
+/// Create an operation at a caller-selected trusted journal path.
+///
+/// The path is still opened through the same captured scope and blocking store
+/// adapter as the renderer command; the narrower visibility is for native
+/// command siblings and headless acceptance only.
+pub(super) async fn owner_operation_create_at_path<R: Runtime>(
     app: AppHandle<R>,
     path: PathBuf,
     expected: OwnerScopeToken,
@@ -160,7 +165,8 @@ async fn owner_operation_create_at_path<R: Runtime>(
     .await
 }
 
-async fn owner_operation_update_at_path<R: Runtime>(
+/// Compare-and-swap an operation at a caller-selected trusted journal path.
+pub(super) async fn owner_operation_update_at_path<R: Runtime>(
     app: AppHandle<R>,
     path: PathBuf,
     expected: OwnerScopeToken,
@@ -220,20 +226,28 @@ pub(crate) async fn owner_operation_load(
     id: String,
     revision: Option<u64>,
 ) -> Result<ScopedOperationResult<Operation>, String> {
+    owner_operation_load_at_path(app.clone(), journal_path(&app)?, expected, id, revision).await
+}
+
+/// Load one operation through the captured scope at a trusted journal path.
+pub(super) async fn owner_operation_load_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: OwnerScopeToken,
+    id: String,
+    revision: Option<u64>,
+) -> Result<ScopedOperationResult<Operation>, String> {
     if let Some(revision) = revision {
         let (captured, operation) =
-            load_owner_operation_for_dispatch(app, expected, id, revision).await?;
+            load_owner_operation_for_dispatch_at_path(app, path, expected, id, revision).await?;
         return Ok(ScopedOperationResult {
             token: captured.token,
             value: operation,
         });
     }
-    run_at_path(
-        app.clone(),
-        journal_path(&app)?,
-        expected,
-        move |store, scope| store.load(scope, &id).map_err(|error| error.to_string()),
-    )
+    run_at_path(app, path, expected, move |store, scope| {
+        store.load(scope, &id).map_err(|error| error.to_string())
+    })
     .await
 }
 
@@ -245,16 +259,23 @@ pub(crate) async fn owner_operation_list(
     after_id: Option<String>,
     limit: usize,
 ) -> Result<ScopedOperationResult<Vec<OperationSummary>>, String> {
-    run_at_path(
-        app.clone(),
-        journal_path(&app)?,
-        expected,
-        move |store, scope| {
-            store
-                .list(scope, after_id.as_deref(), limit)
-                .map_err(|error| error.to_string())
-        },
-    )
+    owner_operation_list_at_path(app.clone(), journal_path(&app)?, expected, after_id, limit).await
+}
+
+/// List bounded operation metadata through the captured scope at a trusted
+/// journal path.
+pub(super) async fn owner_operation_list_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: OwnerScopeToken,
+    after_id: Option<String>,
+    limit: usize,
+) -> Result<ScopedOperationResult<Vec<OperationSummary>>, String> {
+    run_at_path(app, path, expected, move |store, scope| {
+        store
+            .list(scope, after_id.as_deref(), limit)
+            .map_err(|error| error.to_string())
+    })
     .await
 }
 
