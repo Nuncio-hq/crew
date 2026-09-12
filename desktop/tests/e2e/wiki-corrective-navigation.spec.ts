@@ -160,23 +160,23 @@ test.describe("Wiki corrective navigation (#364)", () => {
         element.dispatchEvent(new Event("scroll", { bubbles: true }));
       }, targetScroll);
 
+      await page.getByRole("button", { name: "Back to wiki library" }).click();
+      await expect(page.getByTestId("wiki-library")).toBeVisible();
       await page.evaluate((owner) => {
         window.__BUZZ_E2E_SEED_WIKI__?.({ owner, repoD: "buzz" });
         window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
           queryKey: ["crew-wiki-events"],
         });
       }, OWNER);
-      await expect(page.getByTestId("wiki-markdown")).not.toContainText(
-        "Scroll restoration proof section 18",
-      );
-      await page.getByRole("button", { name: "Back to wiki library" }).click();
-      await expect(page.getByTestId("wiki-library")).toBeVisible();
       await page
         .getByTestId("wiki-repo-card-buzz")
         .locator("button")
         .first()
         .click();
       await expect(page.getByTestId("wiki-page")).toBeVisible();
+      await expect(page.getByTestId("wiki-markdown")).not.toContainText(
+        "Scroll restoration proof section 18",
+      );
       await expect
         .poll(() => scroll.evaluate((element) => element.scrollTop))
         .toBe(0);
@@ -201,14 +201,14 @@ test.describe("Wiki corrective navigation (#364)", () => {
         })
         .toBe(targetScroll);
 
+      await page.getByRole("button", { name: "Back to wiki library" }).click();
+      await expect(page.getByTestId("wiki-library")).toBeVisible();
       await page.evaluate((owner) => {
         window.__BUZZ_E2E_SEED_WIKI__?.({ owner, repoD: "buzz" });
         window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
           queryKey: ["crew-wiki-events"],
         });
       }, OWNER);
-      await page.getByRole("button", { name: "Back to wiki library" }).click();
-      await expect(page.getByTestId("wiki-library")).toBeVisible();
       await page
         .getByTestId("wiki-repo-card-buzz")
         .locator("button")
@@ -218,11 +218,11 @@ test.describe("Wiki corrective navigation (#364)", () => {
       await expect
         .poll(() => scroll.evaluate((element) => element.scrollTop))
         .toBe(0);
-      await scroll.evaluate((element) => {
-        element.scrollTop = 37;
-        element.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
-        element.dispatchEvent(new Event("scroll", { bubbles: true }));
-      });
+      await scroll.hover();
+      await page.mouse.wheel(0, 320);
+      const cancelledScroll = await scroll.evaluate(
+        (element) => element.scrollTop,
+      );
       await page.waitForTimeout(450);
       await page.evaluate(
         ({ owner, contentSuffix }) => {
@@ -239,7 +239,7 @@ test.describe("Wiki corrective navigation (#364)", () => {
       );
       await expect
         .poll(() => scroll.evaluate((element) => element.scrollTop))
-        .toBe(37);
+        .toBe(cancelledScroll);
     });
   });
 

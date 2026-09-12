@@ -221,6 +221,11 @@ test.describe("Crew Wiki (#200)", () => {
     await page.getByTestId("wiki-source-pane-close").click();
     await expect(page.getByTestId("wiki-source-pane")).toHaveCount(0);
 
+    await expect(
+      page.getByRole("button", { name: "Open project" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Open project" }).click();
+    await expect(page.getByTestId("project-wiki-tab")).toBeVisible();
     await page.getByTestId("project-wiki-tab").click();
     await expect(page.getByTestId("wiki-project-tab")).toBeVisible();
     await expect(page.getByTestId("wiki-cadence")).toHaveCount(0);
