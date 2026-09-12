@@ -412,7 +412,7 @@ pub(super) struct ChildGuard {
 
 impl ChildGuard {
     pub(super) fn spawn(command: StdCommand, deadline: Instant) -> Result<Self, String> {
-        let mut child = TokioCommand::from_std(command)
+        let mut child = TokioCommand::from(command)
             .kill_on_drop(true)
             .spawn()
             .map_err(|error| format!("spawn supplied ACP binary: {error}"))?;

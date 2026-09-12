@@ -447,7 +447,7 @@ pub(crate) fn emit_to<W: Write>(candidate: &ExportCandidate, mut sink: W) -> Res
 
 fn write_line<W: Write>(line: &[u8], sink: &mut W) -> Result<(), String> {
     sink.write_all(line).map_err(|_| EXPORT_ERROR)?;
-    sink.flush().map_err(|_| EXPORT_ERROR)
+    sink.flush().map_err(|_| EXPORT_ERROR.to_owned())
 }
 
 #[cfg(test)]
