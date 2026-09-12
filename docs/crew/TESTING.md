@@ -774,15 +774,14 @@ invalidation command. These cases cannot prove native process behavior,
 installed staging, or in-flight turn/receipt acceptance. Those remain #338
 gates; real staging requires #348.
 
-### Queued built ACP producer to native reader proof
+### Built ACP producer to native reader proof
 
 This is an opt-in whole-chain proof for the #338 producer-to-reader seam. It
 must run against the ACP binary built from the same source revision as the
 checkout, with a real loopback socket and the production native reader. Its
 source lives at
-`desktop/src-tauri/src/managed_agents/transport_status/producer_fixture.rs`;
-execution remains queued pending an explicit validation allocation. Do not
-replace it with a unit fixture that writes the status JSON directly. The fixture owns the loopback listener, child
+`desktop/src-tauri/src/managed_agents/transport_status/producer_fixture.rs`.
+Do not replace it with a unit fixture that writes the status JSON directly. The fixture owns the loopback listener, child
 process, status directory and cleanup guard. It must pass `--lazy-pool` to the
 actual ACP binary, bind only `127.0.0.1`, use fixed bounded deadlines, and leave
 no child or temporary state after a timeout.
@@ -844,7 +843,7 @@ for path in root.rglob("*"):
         files.append(path.relative_to(root))
 
 digest = hashlib.sha256()
-for relative in sorted(files, key=lambda path: path.as_posix()):
+for relative in sorted(files, key=lambda path: path.parts):
     digest.update(relative.as_posix().encode())
     digest.update(b"\0")
     with (root / relative).open("rb") as source:

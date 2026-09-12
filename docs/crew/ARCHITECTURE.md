@@ -233,8 +233,8 @@ cannot establish a live process or overwrite a newer generation.
 The opt-in native evidence markers are a diagnostic sink only. Registration is
 emitted before an AUTH marker, each marker is bounded and retried a fixed number
 of times, and generation/attempt/AUTH identities deduplicate renewals and stale
-replays. The producer-to-reader proof remains a queued integration gate; its
-actual built-ACP recipe is in [`TESTING.md`](TESTING.md#queued-built-acp-producer-to-native-reader-proof).
+replays. The producer-to-reader proof is an integration gate; its actual
+built-ACP recipe is in [`TESTING.md`](TESTING.md#built-acp-producer-to-native-reader-proof).
 
 ## Observer completion scheduling (#352)
 
