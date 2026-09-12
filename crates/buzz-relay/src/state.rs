@@ -44,6 +44,12 @@ pub(crate) type ScopedPubkeyKey = (CommunityId, [u8; 32]);
 /// revoked for an already-authenticated connection.
 pub(crate) const RELAY_MEMBERSHIP_REVOKED_REASON: &str = "restricted: not a relay member";
 
+/// Upper bound for simultaneous fan-out relay-membership batches. The actual
+/// state semaphore uses the lower of this cap and the configured handler
+/// concurrency so Redis bursts cannot queue an unbounded number of writer
+/// lookups, while the batch's identity bound remains `max_connections`.
+pub(crate) const RELAY_MEMBERSHIP_FANOUT_MAX_CONCURRENT_BATCHES: usize = 32;
+
 /// Why a community-bound socket is being asked to stop.
 ///
 /// Ordinary lifecycle exits keep using cancellation alone and therefore retain
@@ -1308,6 +1314,10 @@ pub struct AppState {
     pub conn_semaphore: Arc<Semaphore>,
     /// Semaphore limiting concurrent message handler tasks.
     pub handler_semaphore: Arc<Semaphore>,
+    /// Semaphore limiting concurrent relay-membership authorization batches
+    /// used by fan-out. This is separate from the handler semaphore because
+    /// post-commit and Redis fan-out tasks do not hold a handler permit.
+    pub relay_membership_fanout_semaphore: Arc<Semaphore>,
     /// Semaphore limiting concurrent git subprocess operations across
     /// the whole relay. Bounds resource use; **not** writer
     /// serialization — that's the CAS at the manifest pointer (spec
@@ -1453,6 +1463,9 @@ impl AppState {
     ) -> (Self, AuditShutdownHandle) {
         let max_connections = config.max_connections;
         let max_concurrent_handlers = config.max_concurrent_handlers;
+        let relay_membership_fanout_batches = max_concurrent_handlers
+            .max(1)
+            .min(RELAY_MEMBERSHIP_FANOUT_MAX_CONCURRENT_BATCHES);
         let search_arc = Arc::new(search);
 
         let audit_arc = audit.into().map(Arc::new);
@@ -1539,6 +1552,9 @@ impl AppState {
             )),
             conn_semaphore: Arc::new(Semaphore::new(max_connections)),
             handler_semaphore: Arc::new(Semaphore::new(max_concurrent_handlers)),
+            relay_membership_fanout_semaphore: Arc::new(Semaphore::new(
+                relay_membership_fanout_batches,
+            )),
             git_semaphore: Arc::new(Semaphore::new(git_max_concurrent_ops)),
             media_upload_semaphore: Arc::new(Semaphore::new(media_max_concurrent_uploads)),
             workflow_engine,

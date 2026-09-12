@@ -1,6 +1,10 @@
 //! EVENT handler — WS dispatcher → ingest pipeline → fan-out.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 #[cfg(test)]
 use std::sync::OnceLock;
@@ -68,6 +72,13 @@ fn event_frame_bytes_for_sub(sub_id: &str, event_json: &str) -> Arc<Bytes> {
     Arc::new(Bytes::from(event_frame_for_sub(sub_id, event_json)))
 }
 
+/// Keep each SQL request small while allowing every configured live connection
+/// to participate in one fan-out authorization pass.
+const RELAY_MEMBERSHIP_FANOUT_BATCH_SIZE: usize = 512;
+/// A stalled writer must not hold the Redis consumer or a post-commit task
+/// indefinitely. The whole batch, including all chunks, shares this deadline.
+const RELAY_MEMBERSHIP_FANOUT_DEADLINE: Duration = Duration::from_secs(2);
+
 fn fanout_frame_cache<'a, I>(sub_ids: I, event_json: &str) -> HashMap<&'a str, Arc<Bytes>>
 where
     I: IntoIterator<Item = &'a str>,
@@ -102,6 +113,155 @@ where
         }
     }
     drop_count
+}
+
+/// Resolve closed-relay authorization for all fan-out recipients in bounded
+/// writer-backed batches.
+///
+/// The connection semaphore bounds the number of authenticated identities by
+/// `Config::max_connections`; the explicit check below keeps this helper
+/// fail-closed if a test or future caller supplies a registry snapshot that
+/// violates that invariant. Direct principals and verified NIP-OA owners are
+/// queried together, so one absolute deadline covers the complete operation.
+async fn filter_fanout_by_relay_membership(
+    state: &AppState,
+    community_id: CommunityId,
+    matches: Vec<(crate::subscription::ConnId, crate::subscription::SubId)>,
+) -> Vec<(crate::subscription::ConnId, crate::subscription::SubId)> {
+    let identity_limit = state.config.max_connections.max(1);
+    let allow_nip_oa_auth = state.config.allow_nip_oa_auth;
+    let mut identities: HashMap<(Vec<u8>, Option<Vec<u8>>), bool> = HashMap::new();
+    let mut lookup_pubkeys = HashSet::new();
+
+    for (conn_id, _) in &matches {
+        let Some(pubkey) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+            continue;
+        };
+        let owner = state.conn_manager.admission_owner_for_conn(*conn_id);
+        let key = (pubkey.clone(), owner.clone());
+        if identities.contains_key(&key) {
+            continue;
+        }
+
+        lookup_pubkeys.insert(hex::encode(&pubkey));
+        if allow_nip_oa_auth {
+            if let Some(owner) = owner.as_ref() {
+                lookup_pubkeys.insert(hex::encode(owner));
+            }
+        }
+        identities.insert(key, false);
+
+        // Stop before allocating an unbounded identity snapshot when a
+        // future caller violates the connection-manager bound. The entire
+        // recipient batch is terminally dropped because its authorization
+        // result is no longer complete.
+        if identities.len() > identity_limit {
+            metrics::counter!(
+                "buzz_fanout_membership_terminal_drops_total",
+                "reason" => "identity_limit"
+            )
+            .increment(matches.len() as u64);
+            warn!(
+                %community_id,
+                identities = identities.len(),
+                identity_limit,
+                recipients = matches.len(),
+                "fan-out relay membership identity limit exceeded"
+            );
+            return Vec::new();
+        }
+    }
+
+    if identities.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(_membership_permit) = state
+        .relay_membership_fanout_semaphore
+        .clone()
+        .try_acquire_owned()
+        .ok()
+    else {
+        metrics::counter!(
+            "buzz_fanout_membership_terminal_drops_total",
+            "reason" => "overloaded"
+        )
+        .increment(matches.len() as u64);
+        warn!(
+            %community_id,
+            identities = identities.len(),
+            recipients = matches.len(),
+            "fan-out relay membership batch concurrency limit reached"
+        );
+        return Vec::new();
+    };
+
+    let mut lookup_pubkeys: Vec<String> = lookup_pubkeys.into_iter().collect();
+    lookup_pubkeys.sort_unstable();
+    let lookup_result = tokio::time::timeout(RELAY_MEMBERSHIP_FANOUT_DEADLINE, async {
+        let mut current_members = HashSet::new();
+        for batch in lookup_pubkeys.chunks(RELAY_MEMBERSHIP_FANOUT_BATCH_SIZE) {
+            let members = state
+                .db
+                .list_relay_member_pubkeys(community_id, batch)
+                .await?;
+            current_members.extend(members);
+        }
+        Ok::<HashSet<String>, buzz_db::DbError>(current_members)
+    })
+    .await;
+
+    let current_members = match lookup_result {
+        Ok(Ok(members)) => members,
+        Ok(Err(error)) => {
+            metrics::counter!(
+                "buzz_fanout_membership_terminal_drops_total",
+                "reason" => "lookup_error"
+            )
+            .increment(matches.len() as u64);
+            warn!(
+                %community_id,
+                identities = identities.len(),
+                recipients = matches.len(),
+                "fan-out relay membership batch failed: {error}"
+            );
+            return Vec::new();
+        }
+        Err(_) => {
+            metrics::counter!(
+                "buzz_fanout_membership_terminal_drops_total",
+                "reason" => "timeout"
+            )
+            .increment(matches.len() as u64);
+            warn!(
+                %community_id,
+                identities = identities.len(),
+                recipients = matches.len(),
+                "fan-out relay membership batch timed out"
+            );
+            return Vec::new();
+        }
+    };
+
+    for ((pubkey, owner), allowed) in &mut identities {
+        let direct = current_members.contains(&hex::encode(pubkey));
+        let via_owner = allow_nip_oa_auth
+            && owner
+                .as_ref()
+                .is_some_and(|owner| current_members.contains(&hex::encode(owner)));
+        *allowed = direct || via_owner;
+    }
+
+    matches
+        .into_iter()
+        .filter(|(conn_id, _)| {
+            let Some(pubkey) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                return false;
+            };
+            let owner = state.conn_manager.admission_owner_for_conn(*conn_id);
+            identities.get(&(pubkey, owner)).copied().unwrap_or(false)
+        })
+        .collect()
 }
 
 /// Drop recipients without access before fan-out on a private channel.
@@ -145,39 +305,7 @@ pub async fn filter_fanout_by_access(
     // the writer-backed check and deduplicate identical auth identities so a
     // user with several subscriptions costs one authorization read.
     let matches = if state.config.require_relay_membership {
-        let mut membership_cache: HashMap<(Vec<u8>, Option<Vec<u8>>), bool> = HashMap::new();
-        let mut allowed = Vec::with_capacity(matches.len());
-        for (conn_id, sub_id) in matches {
-            let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
-                continue;
-            };
-            let owner = state.conn_manager.admission_owner_for_conn(conn_id);
-            let cache_key = (pubkey.clone(), owner.clone());
-            let is_member = if let Some(cached) = membership_cache.get(&cache_key) {
-                *cached
-            } else {
-                let current = match crate::api::relay_members::current_relay_membership_for_auth(
-                    state,
-                    community_id,
-                    &pubkey,
-                    owner.as_deref(),
-                )
-                .await
-                {
-                    Ok(value) => value,
-                    Err(error) => {
-                        warn!(%community_id, conn_id = %conn_id, "fan-out relay membership check failed: {error}");
-                        false
-                    }
-                };
-                membership_cache.insert(cache_key, current);
-                current
-            };
-            if is_member {
-                allowed.push((conn_id, sub_id));
-            }
-        }
-        allowed
+        filter_fanout_by_relay_membership(state, community_id, matches).await
     } else {
         matches
     };

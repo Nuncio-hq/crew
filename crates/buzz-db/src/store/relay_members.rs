@@ -100,6 +100,34 @@ pub async fn get_relay_member(
     .map_err(crate::error::DbError::from)
 }
 
+/// Returns the relay-member pubkeys from `pubkeys` that are present in
+/// `community`, using one authoritative writer query.
+///
+/// The caller uses this for a fan-out authorization batch. The community
+/// predicate is deliberately kept in the query so a pubkey admitted to one
+/// tenant can never authorize delivery in another tenant. An empty input
+/// avoids acquiring a writer connection.
+pub async fn list_relay_member_pubkeys(
+    pool: &PgPool,
+    community: CommunityId,
+    pubkeys: &[String],
+) -> Result<Vec<String>> {
+    if pubkeys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut connection =
+        observability::acquire_writer(pool, observability::WriterOperation::Authorization).await?;
+    let rows = sqlx::query_scalar(
+        "SELECT pubkey FROM relay_members WHERE community_id = $1 AND pubkey = ANY($2)",
+    )
+    .bind(community.as_uuid())
+    .bind(pubkeys)
+    .fetch_all(&mut *connection)
+    .await?;
+    Ok(rows)
+}
+
 /// Returns all relay members of `community` ordered by `created_at` ascending.
 pub async fn list_relay_members(pool: &PgPool, community: CommunityId) -> Result<Vec<RelayMember>> {
     list_relay_members_with_operation(
@@ -710,6 +738,17 @@ impl Db {
         get_relay_member(&self.pool, community, pubkey).await
     }
 
+    /// Returns the current relay-member pubkeys from one community in one
+    /// authoritative writer-backed query.
+    #[datastore_span(name = "list_relay_member_pubkeys", system = "postgresql")]
+    pub async fn list_relay_member_pubkeys(
+        &self,
+        community: CommunityId,
+        pubkeys: &[String],
+    ) -> Result<Vec<String>> {
+        list_relay_member_pubkeys(&self.pool, community, pubkeys).await
+    }
+
     /// Returns all relay members of `community` ordered by `created_at` ascending.
     #[datastore_span(name = "list_relay_members", system = "postgresql")]
     pub async fn list_relay_members(&self, community: CommunityId) -> Result<Vec<RelayMember>> {
@@ -1269,6 +1308,20 @@ mod postgres_tests {
         assert!(
             list_b.iter().all(|m| m.pubkey != pubkey),
             "community B list must not contain A's member"
+        );
+
+        // The batched fan-out authorization read carries the same community
+        // predicate: a pubkey admitted to A must not authorize delivery in B.
+        let batch_a = list_relay_member_pubkeys(&pool, community_a, &[pubkey.clone()])
+            .await
+            .expect("batch list A");
+        assert_eq!(batch_a, vec![pubkey.clone()]);
+        let batch_b = list_relay_member_pubkeys(&pool, community_b, &[pubkey])
+            .await
+            .expect("batch list B");
+        assert!(
+            batch_b.is_empty(),
+            "batched membership lookup must not cross community boundaries"
         );
     }
 
