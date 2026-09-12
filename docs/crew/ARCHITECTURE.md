@@ -483,13 +483,20 @@ runbook](TESTING.md#wiki-journal-v3-recovery) and
 snapshot handoff. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
 caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
-profile; Claude/Codex receive an explicit model selection. Missing or failed
+profile and `HERMES_SAFE_MODE=1`; Claude/Codex receive an explicit model
+selection. The Hermes environment guard skips installed plugin, configured MCP,
+shell-hook, and outbound-webhook startup paths while leaving profile-owned
+provider/model configuration available; this is narrower than the CLI's
+`--safe-mode`, which also ignores user config and rules. Missing or failed
 runtime execution is a failed generation with no heuristic or HTTP fallback;
 the unsigned legacy preview remains deterministic for compatibility. The
 adapter's state, prompt input, stdout/stderr, deadline, and cancellation are
 bounded, and selection is independent from employee sessions and recap
-settings. #348's real installed-runtime staging evidence is still required
-before any runtime combination is called certified. #364 owns scoped full-body
+settings. The source guard is covered by a production-command fake-process
+regression; it does not certify a native Hermes launch, provider/auth path,
+effective model, or installed tool isolation. #348's real installed-runtime
+staging evidence is still required before any runtime combination is called
+certified. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
 selected page and bounded scroll position under the captured owner/community,
 parent Project, repository coordinate, and door; when a saved page is gone, it

@@ -950,6 +950,23 @@ run one exact staged runtime with a disposable copied profile/config and
 record source revision, runtime/model/profile, output and no employee-session
 mutation.
 
+The Hermes child command sets `HERMES_SAFE_MODE=1` while retaining the copied
+profile's provider/model configuration. The installed Hermes source currently
+checks this guard before plugin discovery (`hermes_cli/plugins.py:1216` and
+`:1391`), configured MCP loading (`tools/mcp_tool_config.py:327`), shell-hook
+registration (`agent/shell_hooks.py:148`), and outbound-webhook registration
+(`agent/outbound_webhooks.py:77`). This environment guard is deliberately
+narrower than Hermes' top-level `--safe-mode`, which also ignores user config
+and rules. The production-bound fake-process regression seeds adversarial
+hook/plugin/MCP configuration and makes the child create markers and fail when
+the guard is absent; it therefore catches removal of the environment assignment
+without claiming that an installed Hermes provider or model has run.
+
+This source-level guard does not close the installed-runtime acceptance gap.
+No native Hermes launch, provider/auth check, effective-model receipt, or
+staging generation is implied; #348 still owns that exact installed-runtime
+proof, and mutable Hermes source or wrappers require revalidation.
+
 ## Recap capability source proof (#351)
 
 The default-off native recap slice is tested through its production modules:

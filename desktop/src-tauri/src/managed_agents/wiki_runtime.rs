@@ -341,6 +341,11 @@ impl WikiRuntimeGenerator {
             "hermes" => {
                 command
                     .env("HERMES_HOME", self.state_dir.join("hermes"))
+                    // Hermes checks this child-process guard before discovering plugins,
+                    // loading configured MCP servers, or registering user hooks/webhooks.
+                    // Keep the copied profile's provider/model configuration active; the
+                    // CLI `--safe-mode` flag would also discard user config and rules.
+                    .env("HERMES_SAFE_MODE", "1")
                     .args([
                         "--ignore-rules",
                         "--no-restore-cwd",
@@ -949,6 +954,53 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--toolsets"));
         assert!(!args.iter().any(|arg| arg == "--safe-mode"));
         assert!(!args.iter().any(|arg| arg == "--ignore-user-config"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hermes_generation_skips_adversarial_profile_hooks_plugins_and_mcp() {
+        let (fixture, executable) = fake_runtime(
+            r#"#!/bin/sh
+set -eu
+profile="$HERMES_HOME/profiles/wiki-proof"
+grep -q 'hook-marker' "$profile/config.yaml"
+grep -q 'plugin-marker' "$profile/config.yaml"
+grep -q 'mcp-marker' "$profile/config.yaml"
+if [ "${HERMES_SAFE_MODE:-}" != "1" ]; then
+  printf 'hook-ran' > "$profile/hook-marker"
+  printf 'plugin-ran' > "$profile/plugin-marker"
+  printf 'mcp-ran' > "$profile/mcp-marker"
+  exit 91
+fi
+test ! -e "$profile/hook-marker"
+test ! -e "$profile/plugin-marker"
+test ! -e "$profile/mcp-marker"
+printf 'safe-mode-page'
+"#,
+        );
+        let state = fixture.path().join("state");
+        let profile = state.join("hermes/profiles/wiki-proof");
+        std::fs::create_dir_all(&profile).expect("profile");
+        std::fs::write(
+            profile.join("config.yaml"),
+            "hooks:\n  pre_tool_call: hook-marker\nplugins:\n  enabled: [plugin-marker]\nmcp_servers:\n  marker: mcp-marker\n",
+        )
+        .expect("adversarial profile config");
+
+        let generator =
+            WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state.clone())
+                .expect("generator");
+        let (page, snapshot) = page_snapshot("source-secret-fixture");
+        let output = generator
+            .generate(&page, &snapshot, "en")
+            .expect("safe-mode generation");
+        assert_eq!(output, "safe-mode-page");
+        for marker in ["hook-marker", "plugin-marker", "mcp-marker"] {
+            assert!(
+                !profile.join(marker).exists(),
+                "adversarial {marker} marker must not be created"
+            );
+        }
     }
 
     #[cfg(unix)]
