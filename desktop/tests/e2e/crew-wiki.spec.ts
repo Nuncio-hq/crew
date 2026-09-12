@@ -158,9 +158,16 @@ test.describe("Crew Wiki (#200)", () => {
       sourceFiles.getByText("Folder: E2E mock Buzz checkout"),
     ).toBeVisible();
     await sourceFiles.getByRole("button", { name: SOURCE_PATH }).click();
+    await expect(page.getByTestId("wiki-source-pane")).toBeVisible();
+    await expect(page.getByTestId("wiki-toc")).toHaveCount(0);
     await expect(page.getByTestId("wiki-source-preview")).toContainText(
       "export function ProjectDetailScreen()",
     );
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("wiki-source-pane")).toHaveCount(0);
+    await expect(
+      sourceFiles.getByRole("button", { name: SOURCE_PATH }),
+    ).toBeFocused();
 
     await expect(page.getByTestId("wiki-mermaid")).toBeVisible();
     await expect(page.getByTestId("wiki-mermaid-fallback")).toBeVisible();
@@ -202,40 +209,30 @@ test.describe("Crew Wiki (#200)", () => {
       .getByTestId("wiki-markdown")
       .getByRole("button", { name: /Open .*ProjectDetailScreen/ })
       .click();
-    await expect(page).toHaveURL(/#\/projects\//);
-    await expect(page.getByTestId("wiki-file-panel")).toBeVisible();
-    await expect(page.getByTestId("wiki-file-highlight").first()).toBeVisible();
+    await expect(page).toHaveURL(/#\/wiki/);
+    await expect(page.getByTestId("wiki-source-pane")).toBeVisible();
+    await expect(page.getByTestId("wiki-source-preview")).toContainText(
+      "export function ProjectDetailScreen()",
+    );
     await waitForAnimations(page);
     await page
-      .getByTestId("wiki-file-panel")
+      .getByTestId("wiki-source-pane")
       .screenshot({ path: `${SHOTS}/10-file-citation.png` });
+    await page.getByTestId("wiki-source-pane-close").click();
+    await expect(page.getByTestId("wiki-source-pane")).toHaveCount(0);
 
-    const filePanel = page.getByTestId("wiki-file-panel");
     await expect(
-      filePanel.locator('[data-testid="wiki-file-highlight"]'),
-    ).toHaveCount(3);
-    await page.evaluate(
-      (href) =>
-        window.__TAURI_INTERNALS__?.invoke?.("plugin:event|emit", {
-          event: "deep-link-entity",
-          payload: href,
-        }),
-      `buzz://file?owner=${OWNER}&d=buzz&path=desktop/src/features/projects/ui/ProjectDetailScreen.tsx&lines=2-3`,
-    );
-    await expect
-      .poll(() =>
-        filePanel
-          .getByTestId("wiki-file-highlight")
-          .evaluateAll((lines) =>
-            lines.map((line) => line.getAttribute("data-line")),
-          ),
-      )
-      .toEqual(["2", "3"]);
-    await expect(filePanel.locator('[data-line="1"]')).not.toHaveAttribute(
-      "data-testid",
-      "wiki-file-highlight",
-    );
-
+      page.getByRole("button", { name: "Open project" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Open project" }).click();
+    const buzzWorkspaceCard = page.locator("article").filter({
+      has: page.getByRole("heading", { name: "buzz", exact: true }),
+    });
+    await expect(buzzWorkspaceCard).toBeVisible();
+    await buzzWorkspaceCard
+      .getByRole("button", { name: "Open workspace details" })
+      .click();
+    await expect(page.getByTestId("project-wiki-tab")).toBeVisible();
     await page.getByTestId("project-wiki-tab").click();
     await expect(page.getByTestId("wiki-project-tab")).toBeVisible();
     await expect(page.getByTestId("wiki-cadence")).toHaveCount(0);
@@ -244,6 +241,141 @@ test.describe("Crew Wiki (#200)", () => {
     await page
       .getByTestId("wiki-project-tab")
       .screenshot({ path: `${SHOTS}/11-project-wiki-tab.png` });
+
+    const projectDetailScroll = page.getByTestId("project-detail-scroll");
+    const projectTabGeometry = await page.evaluate(() => {
+      const scroll = document.querySelector<HTMLElement>(
+        '[data-testid="project-detail-scroll"]',
+      );
+      const header = document.querySelector<HTMLElement>(
+        '[data-testid="wiki-header-bar"]',
+      );
+      const tabs = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-testid="project-workspace-tab-menu"] [role="tab"]',
+        ),
+      );
+      if (!scroll || !header || tabs.length === 0) {
+        throw new Error("Project Wiki tab geometry targets are missing");
+      }
+      const headerRect = header.getBoundingClientRect();
+      const targetIndex = tabs
+        .map((tab, index) => {
+          const rect = tab.getBoundingClientRect();
+          return {
+            index,
+            overlap:
+              Math.min(rect.right, headerRect.right) -
+              Math.max(rect.left, headerRect.left),
+          };
+        })
+        .filter(({ overlap }) => overlap > 0)
+        .sort((left, right) => right.overlap - left.overlap)[0]?.index;
+      const target = targetIndex === undefined ? null : tabs[targetIndex];
+      if (!target) {
+        throw new Error("No project navigation tab intersects Wiki header");
+      }
+      return {
+        scrollTop: scroll.scrollTop,
+        targetIndex,
+        tabTop: target.getBoundingClientRect().top,
+        headerTop: headerRect.top,
+      };
+    });
+    await projectDetailScroll.evaluate(
+      (element, scrollTop) => {
+        element.scrollTop = Math.max(1, Math.ceil(scrollTop));
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      },
+      (projectTabGeometry.scrollTop ?? 0) +
+        projectTabGeometry.headerTop -
+        projectTabGeometry.tabTop,
+    );
+    await expect
+      .poll(() => projectDetailScroll.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    const measureProjectTabHit = () =>
+      page.evaluate((targetIndex) => {
+        const tabs = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[data-testid="project-workspace-tab-menu"] [role="tab"]',
+          ),
+        );
+        const header = document.querySelector<HTMLElement>(
+          '[data-testid="wiki-header-bar"]',
+        );
+        const tab = tabs[targetIndex];
+        if (!tab || !header) {
+          throw new Error("Project Wiki tab geometry targets are missing");
+        }
+        const tabRect = tab.getBoundingClientRect();
+        const headerRect = header.getBoundingClientRect();
+        const intersection = {
+          bottom: Math.min(tabRect.bottom, headerRect.bottom),
+          left: Math.max(tabRect.left, headerRect.left),
+          right: Math.min(tabRect.right, headerRect.right),
+          top: Math.max(tabRect.top, headerRect.top),
+        };
+        const point = {
+          x: (intersection.left + intersection.right) / 2,
+          y: (intersection.top + intersection.bottom) / 2,
+        };
+        const hit = document.elementFromPoint(point.x, point.y);
+        const hitTab = hit?.closest<HTMLElement>('[role="tab"]');
+        return {
+          hitTabLabel: hitTab?.textContent?.trim() ?? null,
+          intersection,
+          point,
+          tabLabel: tab.textContent?.trim() ?? "",
+        };
+      }, projectTabGeometry.targetIndex);
+    const initialOverlap = await measureProjectTabHit();
+    expect(initialOverlap.intersection.right).toBeGreaterThan(
+      initialOverlap.intersection.left,
+    );
+    expect(initialOverlap.intersection.bottom).toBeGreaterThan(
+      initialOverlap.intersection.top,
+    );
+    const legacyHit = await page.evaluate((point) => {
+      const header = document.querySelector<HTMLElement>(
+        '[data-testid="wiki-header-bar"]',
+      );
+      if (!header) {
+        throw new Error("Project Wiki header geometry target is missing");
+      }
+      const originalStyle = header.getAttribute("style");
+      try {
+        header.style.zIndex = "40";
+        const hit = document.elementFromPoint(point.x, point.y);
+        return (
+          hit?.closest<HTMLElement>('[role="tab"]')?.textContent?.trim() ?? null
+        );
+      } finally {
+        if (originalStyle === null) {
+          header.removeAttribute("style");
+        } else {
+          header.setAttribute("style", originalStyle);
+        }
+      }
+    }, initialOverlap.point);
+    expect(legacyHit).toBeNull();
+    const overlap = await measureProjectTabHit();
+    expect(overlap.intersection.right).toBeGreaterThan(
+      overlap.intersection.left,
+    );
+    expect(overlap.intersection.bottom).toBeGreaterThan(
+      overlap.intersection.top,
+    );
+    expect(overlap.hitTabLabel).toBe(overlap.tabLabel);
+    const projectTabMenuBackground = await page
+      .getByTestId("project-workspace-tab-menu")
+      .evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(projectTabMenuBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(projectTabMenuBackground).not.toBe("transparent");
+    await waitForAnimations(page);
+    await projectDetailScroll.screenshot({
+      path: `${SHOTS}/15-project-tab-outer-scroll.png`,
+    });
 
     await openWiki(page);
     await page.getByTestId("wiki-company-card").getByRole("button").click();

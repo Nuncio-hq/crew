@@ -1613,6 +1613,7 @@ declare global {
       owner: string;
       repoD: string;
       commit?: string;
+      contentSuffix?: string;
     }) => void;
     __BUZZ_E2E_SEED_COMPANY_WIKI__?: (input: {
       pubkey: string;
@@ -12365,8 +12366,8 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_SET_WIKI_EVENTS__ = (events) => {
     setE2eWikiEvents(events);
   };
-  window.__BUZZ_E2E_SEED_WIKI__ = ({ owner, repoD, commit }) => {
-    seedGeneratedWiki(owner, repoD, commit);
+  window.__BUZZ_E2E_SEED_WIKI__ = ({ owner, repoD, commit, contentSuffix }) => {
+    seedGeneratedWiki(owner, repoD, commit, contentSuffix);
   };
   window.__BUZZ_E2E_SEED_COMPANY_WIKI__ = ({ pubkey, proposal }) => {
     seedCompanyWiki(pubkey, { proposal });

@@ -160,6 +160,12 @@ page-id allowlist and bounded query/result sizes. Source preview revalidates
 the signed snapshot, head and scoped native source grant against the page's
 source revision before reading the selected reference.
 
+The desktop source workflow opens a verified-source pane from either the source
+list or an exact Markdown citation. The pane hides the table of contents and
+closes with its button or Escape, returning focus to the activating control;
+citations with a mismatched owner, repository, path, or line range remain
+unavailable and do not navigate to the mutable Project Files surface.
+
 Native command/API tests, relay interop coverage and the desktop Wiki E2E flow
 provide technical evidence for this merged code. They do not establish an
 installed/native staging run or founder acceptance. Snapshot generation and

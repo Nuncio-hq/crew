@@ -1,14 +1,11 @@
 import { invokeTauri } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
+import type { OwnerOperationScope } from "./ownerOperations";
 
 export type WikiSourceGrant = {
   capabilityId: string;
   repositoryCoordinate: string;
-  token: {
-    scope: { owner: string; community: string };
-    workspaceGeneration: number;
-    identityGeneration: number;
-  };
+  token: OwnerOperationScope;
   label: string;
   workspaceMode: "git" | "folder" | string;
 };

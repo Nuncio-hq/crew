@@ -171,6 +171,7 @@ export function seedGeneratedWiki(
   owner: string,
   repoD: string,
   commit?: string,
+  contentSuffix?: string,
 ): RelayEvent[] {
   const sourcePath = MOCK_WIKI_SOURCE_PATH;
   const sourceReferences: WikiSourceReference[] = [
@@ -209,6 +210,7 @@ export function seedGeneratedWiki(
       "",
       `See [ProjectDetailScreen.tsx#L1-3](buzz://file?owner=${owner}&d=${repoD}&path=${sourcePath}&lines=1-3).`,
       "",
+      ...(contentSuffix ? [contentSuffix, ""] : []),
     ].join("\n"),
   });
   const manifestDigest = "a".repeat(64);
