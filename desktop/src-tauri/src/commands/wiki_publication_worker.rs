@@ -54,14 +54,34 @@ fn ensure_state<R: tauri::Runtime>(app: &AppHandle<R>) -> Arc<Worker> {
 
 /// Start the app-lifetime Wiki recovery loop exactly once.
 pub(crate) fn start(app: AppHandle) {
+    let _ = start_with_context(app, NativeJournal::FromApp, NativeClock::System, None);
+}
+
+/// Start one recovery loop through the same initialization seam used by the
+/// shipped worker. Native acceptance supplies an owned journal and a stop
+/// receiver so a fresh app can run one real recovery tick and then be joined
+/// instead of leaking a background task.
+pub(super) fn start_with_context<R: Runtime>(
+    app: AppHandle<R>,
+    journal: NativeJournal,
+    clock: NativeClock,
+    stop: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Option<tauri::async_runtime::JoinHandle<()>> {
     let worker = ensure_state(&app);
     if worker.running.swap(true, Ordering::AcqRel) {
-        return;
+        return None;
     }
-    tauri::async_runtime::spawn(async move {
+    let joinable = stop.is_some();
+    let handle = tauri::async_runtime::spawn(async move {
         let mut failures = 0_u8;
         let mut last_scope = None;
+        let mut stop = stop;
         loop {
+            if let Some(stop) = &mut stop {
+                if stop.try_recv().is_ok() {
+                    break;
+                }
+            }
             let scope = capture(app.clone()).await.map(|captured| captured.token);
             if let Ok(scope) = &scope {
                 if last_scope.as_ref() != Some(scope) {
@@ -72,14 +92,24 @@ pub(crate) fn start(app: AppHandle) {
             if failures >= MAX_FAILURES {
                 // A broken storage or relay must not create an unbounded
                 // request loop. A user mutation or scope change wakes it.
-                tokio::select! {
-                    _ = worker.wake.notified() => failures = 0,
-                    _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                if let Some(stop) = &mut stop {
+                    tokio::select! {
+                        _ = stop => break,
+                        _ = worker.wake.notified() => failures = 0,
+                        _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                    }
+                } else {
+                    tokio::select! {
+                        _ = worker.wake.notified() => failures = 0,
+                        _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                    }
                 }
                 continue;
             }
             let result = match scope {
-                Ok(scope) => run_due(app.clone(), scope).await,
+                Ok(scope) => {
+                    run_due_with_context(app.clone(), scope, journal.clone(), clock.clone()).await
+                }
                 Err(error) => Err(error),
             };
             if let Err(error) = &result {
@@ -87,12 +117,26 @@ pub(crate) fn start(app: AppHandle) {
             }
             failures = next_failure_window(failures, &result);
             let delay = backoff_secs(failures);
-            tokio::select! {
-                _ = worker.wake.notified() => failures = 0,
-                _ = tokio::time::sleep(Duration::from_secs(delay)) => {}
+            if let Some(stop) = &mut stop {
+                tokio::select! {
+                    _ = stop => break,
+                    _ = worker.wake.notified() => failures = 0,
+                    _ = tokio::time::sleep(Duration::from_secs(delay)) => {}
+                }
+            } else {
+                tokio::select! {
+                    _ = worker.wake.notified() => failures = 0,
+                    _ = tokio::time::sleep(Duration::from_secs(delay)) => {}
+                }
             }
         }
+        worker.running.store(false, Ordering::Release);
     });
+    if joinable {
+        Some(handle)
+    } else {
+        None
+    }
 }
 
 /// Wake the running worker after a new or changed journal row is committed.
@@ -262,13 +306,6 @@ fn is_due(current: &Operation, record: &WikiPublicationRecord, now: i64) -> bool
             current.status,
             OperationStatus::Canceled | OperationStatus::Superseded | OperationStatus::Complete
         ))
-}
-
-async fn run_due(
-    app: AppHandle,
-    scope: crate::app_state::owner_scope::OwnerScopeToken,
-) -> Result<(), String> {
-    run_due_with_context(app, scope, NativeJournal::FromApp, NativeClock::System).await
 }
 
 /// Run one bounded recovery tick with an explicit native journal context.
