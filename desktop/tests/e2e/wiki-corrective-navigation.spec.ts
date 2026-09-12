@@ -8,6 +8,7 @@ const OWNER = "deadbeef".repeat(8);
 const SOURCE_PATH = "desktop/src/features/projects/ui/ProjectDetailScreen.tsx";
 
 test.describe.configure({ timeout: 90_000 });
+test.use({ video: "on" });
 
 async function openSeededRepoWiki(page: Page) {
   await installMockBridge(page);
@@ -53,7 +54,7 @@ async function openSourceWithKeyboard(page: Page) {
 
 test.describe("Wiki corrective navigation (#364)", () => {
   test.describe("1130x1089", () => {
-    test.use({ viewport: { width: 1130, height: 1089 }, video: "on" });
+    test.use({ viewport: { width: 1130, height: 1089 } });
 
     test("reads, searches, opens exact source, and restores scroll after back", async ({
       page,
@@ -129,7 +130,7 @@ test.describe("Wiki corrective navigation (#364)", () => {
   });
 
   test.describe("800x700", () => {
-    test.use({ viewport: { width: 800, height: 700 }, video: "on" });
+    test.use({ viewport: { width: 800, height: 700 } });
 
     test("keeps the compact reading surface keyboard reachable", async ({
       page,
