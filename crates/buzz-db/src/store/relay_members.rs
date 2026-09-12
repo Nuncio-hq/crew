@@ -1312,7 +1312,7 @@ mod postgres_tests {
 
         // The batched fan-out authorization read carries the same community
         // predicate: a pubkey admitted to A must not authorize delivery in B.
-        let batch_a = list_relay_member_pubkeys(&pool, community_a, &[pubkey.clone()])
+        let batch_a = list_relay_member_pubkeys(&pool, community_a, std::slice::from_ref(&pubkey))
             .await
             .expect("batch list A");
         assert_eq!(batch_a, vec![pubkey.clone()]);
