@@ -438,7 +438,7 @@ fn retired_matching_terminal_record_is_the_only_evidence_source() {
         .as_mut()
         .expect("fixture has AUTH evidence")
         .auth_event_id = "b".repeat(64);
-    assert!(diagnostics.lock().unwrap().apply(
+    assert!(!diagnostics.lock().unwrap().apply(
         &ticket,
         TransportRecordEnvelope::V2(changed_ack),
         false,
