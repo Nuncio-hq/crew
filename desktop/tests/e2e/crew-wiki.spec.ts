@@ -158,9 +158,16 @@ test.describe("Crew Wiki (#200)", () => {
       sourceFiles.getByText("Folder: E2E mock Buzz checkout"),
     ).toBeVisible();
     await sourceFiles.getByRole("button", { name: SOURCE_PATH }).click();
+    await expect(page.getByTestId("wiki-source-pane")).toBeVisible();
+    await expect(page.getByTestId("wiki-toc")).toHaveCount(0);
     await expect(page.getByTestId("wiki-source-preview")).toContainText(
       "export function ProjectDetailScreen()",
     );
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("wiki-source-pane")).toHaveCount(0);
+    await expect(
+      sourceFiles.getByRole("button", { name: SOURCE_PATH }),
+    ).toBeFocused();
 
     await expect(page.getByTestId("wiki-mermaid")).toBeVisible();
     await expect(page.getByTestId("wiki-mermaid-fallback")).toBeVisible();
@@ -202,39 +209,17 @@ test.describe("Crew Wiki (#200)", () => {
       .getByTestId("wiki-markdown")
       .getByRole("button", { name: /Open .*ProjectDetailScreen/ })
       .click();
-    await expect(page).toHaveURL(/#\/projects\//);
-    await expect(page.getByTestId("wiki-file-panel")).toBeVisible();
-    await expect(page.getByTestId("wiki-file-highlight").first()).toBeVisible();
+    await expect(page).toHaveURL(/#\/wiki/);
+    await expect(page.getByTestId("wiki-source-pane")).toBeVisible();
+    await expect(page.getByTestId("wiki-source-preview")).toContainText(
+      "export function ProjectDetailScreen()",
+    );
     await waitForAnimations(page);
     await page
-      .getByTestId("wiki-file-panel")
+      .getByTestId("wiki-source-pane")
       .screenshot({ path: `${SHOTS}/10-file-citation.png` });
-
-    const filePanel = page.getByTestId("wiki-file-panel");
-    await expect(
-      filePanel.locator('[data-testid="wiki-file-highlight"]'),
-    ).toHaveCount(3);
-    await page.evaluate(
-      (href) =>
-        window.__TAURI_INTERNALS__?.invoke?.("plugin:event|emit", {
-          event: "deep-link-entity",
-          payload: href,
-        }),
-      `buzz://file?owner=${OWNER}&d=buzz&path=desktop/src/features/projects/ui/ProjectDetailScreen.tsx&lines=2-3`,
-    );
-    await expect
-      .poll(() =>
-        filePanel
-          .getByTestId("wiki-file-highlight")
-          .evaluateAll((lines) =>
-            lines.map((line) => line.getAttribute("data-line")),
-          ),
-      )
-      .toEqual(["2", "3"]);
-    await expect(filePanel.locator('[data-line="1"]')).not.toHaveAttribute(
-      "data-testid",
-      "wiki-file-highlight",
-    );
+    await page.getByTestId("wiki-source-pane-close").click();
+    await expect(page.getByTestId("wiki-source-pane")).toHaveCount(0);
 
     await page.getByTestId("project-wiki-tab").click();
     await expect(page.getByTestId("wiki-project-tab")).toBeVisible();

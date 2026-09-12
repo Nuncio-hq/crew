@@ -184,10 +184,13 @@ function entityLinkPresentation(link: ParsedEntityLink) {
  * The link's (owner, d) coordinate is exactly the `/projects/$projectId`
  * route id, so no read-model resolution is needed.
  */
-export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
+export function useOpenEntityLink(): (
+  link: ParsedEntityLink,
+  _trigger?: HTMLElement | null,
+) => void {
   const { goProject } = useAppNavigation();
   return React.useCallback(
-    (link: ParsedEntityLink) => {
+    (link: ParsedEntityLink, _trigger?: HTMLElement | null) => {
       const projectId = entityLinkProjectRouteId(link);
       const entityNavigationId = crypto.randomUUID();
       switch (link.type) {
@@ -264,7 +267,10 @@ export function EntityLinkAnchor({
 }: {
   children?: React.ReactNode;
   href: string;
-  onOpenEntityLink: (link: ParsedEntityLink) => void;
+  onOpenEntityLink: (
+    link: ParsedEntityLink,
+    trigger?: HTMLElement | null,
+  ) => void;
   relayOrigin: string | null;
   interactive?: boolean;
   asChip?: boolean;
@@ -297,7 +303,10 @@ export function renderEntityLinkAnchor({
 }: {
   children: React.ReactNode;
   href: string | undefined;
-  onOpenEntityLink: (link: ParsedEntityLink) => void;
+  onOpenEntityLink: (
+    link: ParsedEntityLink,
+    trigger?: HTMLElement | null,
+  ) => void;
   relayOrigin: string | null;
   interactive?: boolean;
   asChip?: boolean;
@@ -324,7 +333,7 @@ export function renderEntityLinkAnchor({
         title={href}
         aria-label={ariaLabel}
         interactive={interactive}
-        onOpenLink={() => onOpenEntityLink(parsed.value)}
+        onOpenLink={(trigger) => onOpenEntityLink(parsed.value, trigger)}
       >
         {children}
       </BuzzInlineLink>
@@ -368,7 +377,7 @@ export function renderEntityLinkAnchor({
         icon={presentation.icon}
         aria-label={ariaLabel}
         interactive={interactive}
-        onOpenLink={() => onOpenEntityLink(parsed.value)}
+        onOpenLink={(trigger) => onOpenEntityLink(parsed.value, trigger)}
         wrapping
       >
         {chipLabel}

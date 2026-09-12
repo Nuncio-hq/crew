@@ -24,9 +24,11 @@ import { WikiCompanyEditor } from "@/features/wiki/ui/WikiCompanyEditor";
 import { WikiHeaderControls } from "@/features/wiki/ui/WikiHeaderControls";
 import { WikiMarkdown } from "@/features/wiki/ui/WikiMarkdown";
 import { WikiSourceFiles } from "@/features/wiki/ui/WikiSourceFiles";
+import type { WikiSourceOpenRequest } from "@/features/wiki/lib/wikiSourceReferences";
 import { WikiTocMenu } from "@/features/wiki/ui/WikiTocMenu";
 import { WikiTocRail } from "@/features/wiki/ui/WikiTocRail";
 import { useWikiSearch, type WikiSearchResult } from "@/shared/api/wikiSearch";
+import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { OFFICE_SURFACE } from "@/shared/layout/officeChrome";
 import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
 
@@ -129,8 +131,28 @@ export function WikiPageView({
   const [navigationNotice, setNavigationNotice] = React.useState<string | null>(
     null,
   );
+  const [sourcePaneRequest, setSourcePaneRequest] = React.useState<{
+    pageId: string;
+    path: string;
+    startLine: number;
+    endLine: number;
+  } | null>(null);
+  const [sourceNotice, setSourceNotice] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const loadedNavigationKeyRef = React.useRef<string | null>(null);
+  const restoreRequestRef = React.useRef<{
+    key: string;
+    pageId: string;
+    scrollTop: number;
+  } | null>(null);
+  const restoreGenerationRef = React.useRef(0);
+  const restoreTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const restoreObserverRef = React.useRef<ResizeObserver | null>(null);
+  const restoringRef = React.useRef(false);
+  const lastRestoreScrollTopRef = React.useRef<number | null>(null);
+  const sourceTriggerRef = React.useRef<HTMLElement | null>(null);
   const availablePages = React.useMemo(
     () => pages ?? (page ? [page] : []),
     [page, pages],
@@ -144,33 +166,20 @@ export function WikiPageView({
     scrollTop: number;
   } | null>(null);
 
-  const selectPage = React.useCallback(
-    (slug: string) => {
-      const next = availablePages.find((item) => item.slug === slug);
-      if (!next) return;
-      setNavigationNotice(null);
-      setActiveSlug(slug);
-      if (navigationIdentity) {
-        writeWikiNavigationState(navigationIdentity, {
-          pageId: next.event.id || null,
-          pageSlug: next.slug,
-          scrollTop: 0,
-        });
-        if (navigationKey) {
-          navigationSnapshotRef.current = {
-            key: navigationKey,
-            identity: navigationIdentity,
-            page: next,
-            activeSlug: slug,
-            scrollTop: 0,
-          };
-        }
-      }
-    },
-    [availablePages, navigationIdentity, navigationKey],
-  );
+  const stopScrollRestore = React.useCallback(() => {
+    restoreGenerationRef.current += 1;
+    restoringRef.current = false;
+    restoreRequestRef.current = null;
+    lastRestoreScrollTopRef.current = null;
+    if (restoreTimerRef.current !== null) {
+      clearTimeout(restoreTimerRef.current);
+      restoreTimerRef.current = null;
+    }
+    restoreObserverRef.current?.disconnect();
+    restoreObserverRef.current = null;
+  }, []);
 
-  const handleContentScroll = React.useCallback(() => {
+  const persistCurrentNavigation = React.useCallback(() => {
     if (!navigationIdentity) return;
     const current = availablePages.find((item) => item.slug === activeSlug);
     const scrollTop = scrollRef.current?.scrollTop ?? 0;
@@ -190,6 +199,208 @@ export function WikiPageView({
     }
   }, [activeSlug, availablePages, navigationIdentity, navigationKey]);
 
+  const startScrollRestore = React.useCallback(
+    (request: { key: string; pageId: string; scrollTop: number }) => {
+      stopScrollRestore();
+      const generation = restoreGenerationRef.current;
+      restoringRef.current = true;
+      restoreRequestRef.current = request;
+      const deadline = Date.now() + 1_000;
+      const scheduleRetry = () => {
+        if (restoreTimerRef.current !== null) return;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          stopScrollRestore();
+          return;
+        }
+        restoreTimerRef.current = setTimeout(
+          () => {
+            restoreTimerRef.current = null;
+            tryRestore();
+          },
+          Math.min(100, remaining),
+        );
+      };
+      function tryRestore() {
+        if (
+          generation !== restoreGenerationRef.current ||
+          !restoringRef.current ||
+          restoreRequestRef.current !== request
+        ) {
+          return;
+        }
+        const element = scrollRef.current;
+        if (!element) {
+          scheduleRetry();
+          return;
+        }
+        // jsdom and a newly mounted WebKit node can report zero dimensions
+        // before layout. Preserve the requested value until a real range is
+        // available; once layout reports dimensions, clamp to the browser's
+        // reachable range and keep retrying as content grows.
+        const hasLayout = element.scrollHeight > 0 || element.clientHeight > 0;
+        const maxScrollTop = hasLayout
+          ? Math.max(0, element.scrollHeight - element.clientHeight)
+          : request.scrollTop;
+        const nextScrollTop = Math.min(request.scrollTop, maxScrollTop);
+        element.scrollTop = nextScrollTop;
+        lastRestoreScrollTopRef.current = element.scrollTop;
+        const targetReached =
+          request.scrollTop === 0 ||
+          (hasLayout && element.scrollTop >= request.scrollTop);
+        if (targetReached) {
+          stopScrollRestore();
+          return;
+        }
+        scheduleRetry();
+      }
+      const element = scrollRef.current;
+      if (element && typeof ResizeObserver !== "undefined") {
+        const observer = new ResizeObserver(tryRestore);
+        const content = element.firstElementChild;
+        observer.observe(content instanceof HTMLElement ? content : element);
+        restoreObserverRef.current = observer;
+      }
+      tryRestore();
+    },
+    [stopScrollRestore],
+  );
+
+  const openSourcePane = React.useCallback(
+    (request: WikiSourceOpenRequest, trigger?: HTMLElement | null) => {
+      const current = shown;
+      if (
+        !current ||
+        request.startLine === undefined ||
+        request.endLine === undefined
+      ) {
+        setSourceNotice(
+          "This source citation is unavailable for the published page revision.",
+        );
+        return;
+      }
+      stopScrollRestore();
+      sourceTriggerRef.current =
+        trigger ??
+        (typeof document !== "undefined" &&
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null);
+      setSourceNotice(null);
+      setSourcePaneRequest({
+        pageId: current.event.id,
+        path: request.path,
+        startLine: request.startLine,
+        endLine: request.endLine,
+      });
+    },
+    [shown, stopScrollRestore],
+  );
+
+  const closeSourcePane = React.useCallback(() => {
+    const trigger = sourceTriggerRef.current;
+    sourceTriggerRef.current = null;
+    setSourcePaneRequest(null);
+    setSourceNotice(null);
+    queueMicrotask(() => {
+      if (trigger?.isConnected) {
+        trigger.focus({ preventScroll: true });
+      }
+    });
+  }, []);
+  useEscapeKey(closeSourcePane, sourcePaneRequest !== null);
+
+  const selectPage = React.useCallback(
+    (slug: string) => {
+      const next = availablePages.find((item) => item.slug === slug);
+      if (!next) return;
+      stopScrollRestore();
+      if (sourcePaneRequest) {
+        sourceTriggerRef.current = null;
+        setSourcePaneRequest(null);
+      }
+      setSourceNotice(null);
+      setNavigationNotice(null);
+      setActiveSlug(slug);
+      if (navigationIdentity) {
+        writeWikiNavigationState(navigationIdentity, {
+          pageId: next.event.id || null,
+          pageSlug: next.slug,
+          scrollTop: 0,
+        });
+        if (navigationKey) {
+          navigationSnapshotRef.current = {
+            key: navigationKey,
+            identity: navigationIdentity,
+            page: next,
+            activeSlug: slug,
+            scrollTop: 0,
+          };
+        }
+      }
+    },
+    [
+      availablePages,
+      navigationIdentity,
+      navigationKey,
+      sourcePaneRequest,
+      stopScrollRestore,
+    ],
+  );
+
+  const handleContentScroll = React.useCallback(() => {
+    if (restoringRef.current) {
+      const currentScrollTop = scrollRef.current?.scrollTop ?? 0;
+      if (currentScrollTop === lastRestoreScrollTopRef.current) return;
+      stopScrollRestore();
+    }
+    if (!navigationIdentity) return;
+    const current = availablePages.find((item) => item.slug === activeSlug);
+    const scrollTop = scrollRef.current?.scrollTop ?? 0;
+    writeWikiNavigationState(navigationIdentity, {
+      pageId: current?.event.id || null,
+      pageSlug: current?.slug ?? (activeSlug || null),
+      scrollTop,
+    });
+    if (navigationKey && current) {
+      navigationSnapshotRef.current = {
+        key: navigationKey,
+        identity: navigationIdentity,
+        page: current,
+        activeSlug,
+        scrollTop,
+      };
+    }
+  }, [
+    activeSlug,
+    availablePages,
+    navigationIdentity,
+    navigationKey,
+    stopScrollRestore,
+  ]);
+
+  const cancelRestoreFromUserInput = React.useCallback(() => {
+    if (!restoringRef.current) return;
+    stopScrollRestore();
+    persistCurrentNavigation();
+  }, [persistCurrentNavigation, stopScrollRestore]);
+  const handleScrollKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "ArrowUp" ||
+        event.key === "PageDown" ||
+        event.key === "PageUp" ||
+        event.key === "Home" ||
+        event.key === "End" ||
+        event.key === " "
+      ) {
+        cancelRestoreFromUserInput();
+      }
+    },
+    [cancelRestoreFromUserInput],
+  );
+
   React.useEffect(() => {
     if (!navigationKey) {
       loadedNavigationKeyRef.current = null;
@@ -203,8 +414,11 @@ export function WikiPageView({
         ? readWikiNavigationState(navigationIdentity)
         : null;
       const savedPage = saved
-        ? (availablePages.find((item) => item.event.id === saved.pageId) ??
-          availablePages.find((item) => item.slug === saved.pageSlug))
+        ? saved.pageId
+          ? availablePages.find((item) => item.event.id === saved.pageId)
+          : saved.pageSlug
+            ? availablePages.find((item) => item.slug === saved.pageSlug)
+            : null
         : null;
       const fallback =
         availablePages.find((item) => item.slug === page?.slug) ??
@@ -212,7 +426,7 @@ export function WikiPageView({
       const selected = savedPage ?? fallback;
       if (selected) {
         setActiveSlug(selected.slug);
-        if (!savedPage && saved) {
+        if (!savedPage && saved?.pageId) {
           setNavigationNotice(
             `The saved Wiki page is no longer available. Showing “${selected.title}”.`,
           );
@@ -223,8 +437,16 @@ export function WikiPageView({
             pageSlug: selected.slug,
             scrollTop: savedPage ? (saved?.scrollTop ?? 0) : 0,
           });
-          if (savedPage && scrollRef.current) {
-            scrollRef.current.scrollTop = saved?.scrollTop ?? 0;
+          restoreRequestRef.current = {
+            key: navigationKey,
+            pageId: selected.event.id,
+            scrollTop: savedPage ? (saved?.scrollTop ?? 0) : 0,
+          };
+          if (
+            selected.event.id === shown?.event.id &&
+            selected.slug === activeSlug
+          ) {
+            startScrollRestore(restoreRequestRef.current);
           }
         }
       }
@@ -250,30 +472,35 @@ export function WikiPageView({
     navigationIdentity,
     navigationKey,
     page?.slug,
+    shown,
+    startScrollRestore,
   ]);
 
   React.useLayoutEffect(() => {
     if (!navigationIdentity || !navigationKey || !shown) return;
-    if (loadedNavigationKeyRef.current !== navigationKey) return;
-    const saved = readWikiNavigationState(navigationIdentity);
-    if (!saved) return;
+    const request = restoreRequestRef.current;
     if (
-      saved.pageId &&
-      saved.pageId !== shown.event.id &&
-      saved.pageSlug !== shown.slug
+      !request ||
+      request.key !== navigationKey ||
+      request.pageId !== shown.event.id
     ) {
       return;
     }
-    if (saved.pageSlug && saved.pageSlug !== shown.slug) return;
-    if (scrollRef.current) scrollRef.current.scrollTop = saved.scrollTop;
-    navigationSnapshotRef.current = {
-      key: navigationKey,
-      identity: navigationIdentity,
-      page: shown,
-      activeSlug,
-      scrollTop: scrollRef.current?.scrollTop ?? 0,
+    restoreRequestRef.current = null;
+    startScrollRestore(request);
+  }, [navigationIdentity, navigationKey, shown, startScrollRestore]);
+
+  React.useEffect(() => {
+    return () => {
+      stopScrollRestore();
     };
-  }, [activeSlug, navigationIdentity, navigationKey, shown]);
+  }, [stopScrollRestore]);
+
+  React.useEffect(() => {
+    if (sourcePaneRequest && sourcePaneRequest.pageId !== shown?.event.id) {
+      closeSourcePane();
+    }
+  }, [closeSourcePane, shown?.event.id, sourcePaneRequest]);
 
   React.useEffect(() => {
     if (!navigationKey) return;
@@ -307,19 +534,21 @@ export function WikiPageView({
       className="@container flex h-full min-h-0 min-w-0"
       data-testid={door === "project" ? "wiki-project-tab" : "wiki-page"}
     >
-      <WikiTocRail
-        activeSlug={shown?.slug ?? ""}
-        filter={search}
-        onSelect={selectPage}
-        toc={toc}
-      />
+      {!sourcePaneRequest ? (
+        <WikiTocRail
+          activeSlug={shown?.slug ?? ""}
+          filter={search}
+          onSelect={selectPage}
+          toc={toc}
+        />
+      ) : null}
       <div className="flex min-w-0 flex-1 flex-col">
         <TopChromeInsetHeader
           className="border-b border-border"
           data-office-surface={OFFICE_SURFACE.headerBar}
           data-testid="wiki-header-bar"
         >
-          <div className="flex min-w-0 items-center gap-2 px-4 py-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 px-4 py-2">
             {onBack ? (
               <button
                 aria-label="Back to wiki library"
@@ -330,14 +559,16 @@ export function WikiPageView({
                 <ArrowLeft className="h-4 w-4" />
               </button>
             ) : null}
-            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+            <h1 className="min-w-0 flex-1 basis-40 truncate text-sm font-semibold">
               {shown?.title ?? repoName}
             </h1>
-            <WikiTocMenu
-              activeSlug={shown?.slug ?? ""}
-              onSelect={selectPage}
-              toc={toc}
-            />
+            {!sourcePaneRequest ? (
+              <WikiTocMenu
+                activeSlug={shown?.slug ?? ""}
+                onSelect={selectPage}
+                toc={toc}
+              />
+            ) : null}
             <WikiHeaderControls
               onOpenProject={admin ? onOpenProject : undefined}
               onSearchChange={setSearch}
@@ -360,121 +591,179 @@ export function WikiPageView({
             />
           </div>
         </TopChromeInsetHeader>
-        <div
+        <section
+          aria-label="Wiki page content"
           className="min-h-0 flex-1 overflow-auto px-6 py-4"
           data-testid="wiki-page-scroll"
           onScroll={handleContentScroll}
+          onKeyDown={handleScrollKeyDown}
+          onPointerDown={cancelRestoreFromUserInput}
+          onTouchStart={cancelRestoreFromUserInput}
+          onWheel={cancelRestoreFromUserInput}
           ref={scrollRef}
         >
-          {navigationNotice ? (
-            <p
-              aria-live="polite"
-              className="mb-3 rounded-md bg-muted/40 p-2 text-2xs text-muted-foreground"
-              data-testid="wiki-navigation-fallback"
-              role="status"
+          <div
+            className={
+              sourcePaneRequest
+                ? "flex min-w-0 flex-col gap-4 [@container(min-width:48rem)]:flex-row"
+                : "min-w-0"
+            }
+          >
+            <article
+              className={
+                sourcePaneRequest
+                  ? "hidden min-w-0 flex-1 [@container(min-width:48rem)]:block"
+                  : "min-w-0"
+              }
+              data-testid="wiki-page-article"
             >
-              {navigationNotice}
-            </p>
-          ) : null}
-          {readStale ? (
-            <p
-              className="mb-3 text-2xs text-attention"
-              data-testid="wiki-read-stale"
-            >
-              Showing the last verified Wiki.{" "}
-              {readStatus?.message ?? "Refresh unavailable."}
-            </p>
-          ) : null}
-          {readUnavailable ? (
-            <div
-              className="mb-3 rounded-md bg-destructive/10 p-2 text-2xs text-destructive"
-              data-testid="wiki-read-unavailable"
-            >
-              <p>{readStatus?.message ?? "Wiki read unavailable."}</p>
-              {onRetryRead ? (
-                <button
-                  className="mt-2 rounded-md bg-destructive/15 px-2 py-1"
-                  data-testid="wiki-retry-read"
-                  onClick={onRetryRead}
-                  type="button"
+              {navigationNotice ? (
+                <p
+                  aria-live="polite"
+                  className="mb-3 rounded-md bg-muted/40 p-2 text-2xs text-muted-foreground"
+                  data-testid="wiki-navigation-fallback"
+                  role="status"
                 >
-                  Retry read
-                </button>
+                  {navigationNotice}
+                </p>
               ) : null}
-            </div>
-          ) : null}
-          {isCompany && companyPending && !shown ? (
-            <p
-              className="text-sm text-muted-foreground"
-              data-testid="wiki-company-loading"
-            >
-              Loading company Wiki…
-            </p>
-          ) : null}
-          {isCompany && companyError ? (
-            <div
-              className="rounded-md bg-destructive/10 p-3 text-sm text-destructive"
-              data-testid="wiki-company-unavailable"
-            >
-              <p>Company Wiki is unavailable right now.</p>
-              {onRetryCompany ? (
-                <button
-                  className="mt-2 rounded-md bg-destructive/15 px-2 py-1 text-2xs"
-                  onClick={onRetryCompany}
-                  type="button"
+              {sourceNotice ? (
+                <p
+                  aria-live="polite"
+                  className="mb-3 rounded-md bg-muted/40 p-2 text-2xs text-muted-foreground"
+                  data-testid="wiki-source-unavailable"
+                  role="status"
                 >
-                  Retry company Wiki
-                </button>
+                  {sourceNotice}
+                </p>
               ) : null}
-            </div>
-          ) : null}
-          {emptyCompany ? (
-            <div data-testid="wiki-company-empty">
-              <p className="text-sm text-muted-foreground">
-                Company wiki is empty. An agent can propose a page.
-              </p>
-              <WikiCompanyEditor proposals={proposals ?? []} />
-            </div>
-          ) : null}
-          {!isCompany && search.trim() ? (
-            <WikiSearchResultsPanel
-              query={search}
-              searchQuery={searchQuery}
-              onSelect={(slug) => {
-                selectPage(slug);
-                setSearch("");
-              }}
-              hasSnapshot={snapshot?.state === "complete"}
-            />
-          ) : null}
-          {!shown &&
-          !emptyCompany &&
-          !isCompany &&
-          readStatus?.state === "missing" ? (
-            <p className="text-sm text-muted-foreground">
-              This repository has no wiki yet. Generate it from the header.
-            </p>
-          ) : null}
-          {shown ? (
-            <>
-              <WikiSourceFiles
-                files={shown.sourceFiles}
-                owner={owner ?? toc?.owner ?? ""}
-                pageEvent={shown.event}
-                repoD={shown.repoD}
-                operationScope={operationScope}
-              />
-              <WikiMarkdown
-                owner={owner ?? toc?.owner ?? ""}
-                repoD={shown.repoD}
-                source={shown.content}
-              />
-            </>
-          ) : null}
-          {companyPages && door === "library" && shown ? (
-            <WikiCompanyEditor className="mt-8" proposals={proposals ?? []} />
-          ) : null}
-        </div>
+              {readStale ? (
+                <p
+                  className="mb-3 text-2xs text-attention"
+                  data-testid="wiki-read-stale"
+                >
+                  Showing the last verified Wiki.{" "}
+                  {readStatus?.message ?? "Refresh unavailable."}
+                </p>
+              ) : null}
+              {readUnavailable ? (
+                <div
+                  className="mb-3 rounded-md bg-destructive/10 p-2 text-2xs text-destructive"
+                  data-testid="wiki-read-unavailable"
+                >
+                  <p>{readStatus?.message ?? "Wiki read unavailable."}</p>
+                  {onRetryRead ? (
+                    <button
+                      className="mt-2 rounded-md bg-destructive/15 px-2 py-1"
+                      data-testid="wiki-retry-read"
+                      onClick={onRetryRead}
+                      type="button"
+                    >
+                      Retry read
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {isCompany && companyPending && !shown ? (
+                <p
+                  className="text-sm text-muted-foreground"
+                  data-testid="wiki-company-loading"
+                >
+                  Loading company Wiki…
+                </p>
+              ) : null}
+              {isCompany && companyError ? (
+                <div
+                  className="rounded-md bg-destructive/10 p-3 text-sm text-destructive"
+                  data-testid="wiki-company-unavailable"
+                >
+                  <p>Company Wiki is unavailable right now.</p>
+                  {onRetryCompany ? (
+                    <button
+                      className="mt-2 rounded-md bg-destructive/15 px-2 py-1 text-2xs"
+                      onClick={onRetryCompany}
+                      type="button"
+                    >
+                      Retry company Wiki
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {emptyCompany ? (
+                <div data-testid="wiki-company-empty">
+                  <p className="text-sm text-muted-foreground">
+                    Company wiki is empty. An agent can propose a page.
+                  </p>
+                  <WikiCompanyEditor proposals={proposals ?? []} />
+                </div>
+              ) : null}
+              {!isCompany && search.trim() ? (
+                <WikiSearchResultsPanel
+                  query={search}
+                  searchQuery={searchQuery}
+                  onSelect={(slug) => {
+                    selectPage(slug);
+                    setSearch("");
+                  }}
+                  hasSnapshot={snapshot?.state === "complete"}
+                />
+              ) : null}
+              {!shown &&
+              !emptyCompany &&
+              !isCompany &&
+              readStatus?.state === "missing" ? (
+                <p className="text-sm text-muted-foreground">
+                  This repository has no wiki yet. Generate it from the header.
+                </p>
+              ) : null}
+              {shown ? (
+                <>
+                  <div className={sourcePaneRequest ? "hidden" : undefined}>
+                    <WikiSourceFiles
+                      files={shown.sourceFiles}
+                      owner={owner ?? toc?.owner ?? ""}
+                      onOpenPane={openSourcePane}
+                      pageEvent={shown.event}
+                      repoD={shown.repoD}
+                      operationScope={operationScope}
+                    />
+                  </div>
+                  <WikiMarkdown
+                    owner={owner ?? toc?.owner ?? ""}
+                    onOpenSource={openSourcePane}
+                    onSourceUnavailable={setSourceNotice}
+                    pageEvent={shown.event}
+                    repoD={shown.repoD}
+                    source={shown.content}
+                  />
+                </>
+              ) : null}
+              {companyPages && door === "library" && shown ? (
+                <WikiCompanyEditor
+                  className="mt-8"
+                  proposals={proposals ?? []}
+                />
+              ) : null}
+            </article>
+            {sourcePaneRequest && shown ? (
+              <aside
+                className="min-w-0 [@container(min-width:48rem)]:w-[min(42%,32rem)] [@container(min-width:48rem)]:shrink-0"
+                data-testid="wiki-source-pane-region"
+              >
+                <WikiSourceFiles
+                  files={shown.sourceFiles}
+                  initialRequest={sourcePaneRequest}
+                  mode="pane"
+                  onClosePane={closeSourcePane}
+                  owner={owner ?? toc?.owner ?? ""}
+                  pageEvent={shown.event}
+                  repoD={shown.repoD}
+                  operationScope={operationScope}
+                />
+              </aside>
+            ) : null}
+          </div>
+        </section>
         <WikiAskBox
           channelId={channelId}
           door={door}

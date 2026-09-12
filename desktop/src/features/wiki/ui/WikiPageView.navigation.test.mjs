@@ -351,3 +351,35 @@ test("Wiki falls back to a surviving page with a clear notice when the saved pag
     mounted.client.unmount();
   }
 });
+
+test("Wiki does not reuse a replacement event that keeps the saved page slug", async () => {
+  writeWikiNavigationState(identity(), {
+    pageId: runtime.event.id,
+    pageSlug: runtime.slug,
+    scrollTop: 90,
+  });
+  const replacement = page(
+    "3".repeat(64),
+    runtime.slug,
+    "Replacement runtime",
+    "Replacement body",
+  );
+  const mounted = mount({
+    page: intro,
+    pages: [intro, replacement],
+  });
+  try {
+    await waitFor(() => screen.getByTestId("wiki-navigation-fallback"));
+    assert.match(
+      screen.getByTestId("wiki-navigation-fallback").textContent,
+      /no longer available/u,
+    );
+    assert.ok(screen.getByText("Intro body"));
+    assert.equal(screen.queryByText("Replacement body"), null);
+    assert.equal(readWikiNavigationState(identity()).pageId, intro.event.id);
+  } finally {
+    await act(async () => mounted.view.unmount());
+    mounted.client.clear();
+    mounted.client.unmount();
+  }
+});

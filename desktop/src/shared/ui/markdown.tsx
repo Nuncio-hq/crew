@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import type { Components } from "react-markdown";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { requestOpenSnapshotImport } from "@/features/agents/openSnapshotImportFromUrlEvent";
 import type { ParsedMessageLink } from "@/features/messages/lib/messageLink";
@@ -49,7 +48,7 @@ import {
   buzzPermalinkComponents,
   tryRenderBuzzPermalinkAnchor,
 } from "./markdown/buzzPermalinkComponents";
-import { useOpenEntityLink } from "./markdown/entityLinks";
+import { useEntityLinkHandler } from "./markdown/useEntityLinkHandler";
 import { ExternalLinkAnchor } from "./markdown/ExternalLinkAnchor";
 import { FileCard } from "./markdown/FileCard";
 import { InlineEmojiPopover } from "./markdown/InlineEmojiPopover";
@@ -1584,6 +1583,7 @@ function MarkdownInner({
   linkPreviewsSuppressed = false,
   linkPreviewTags,
   onRemoveLinkPreviewsForEveryone,
+  onOpenEntityLink: onOpenEntityLinkOverride,
   mentionNames,
   mentionPubkeysByName,
   searchQuery,
@@ -1599,7 +1599,7 @@ function MarkdownInner({
     },
     [goChannel],
   );
-  const onOpenEntityLink = useOpenEntityLink();
+  const onOpenEntityLink = useEntityLinkHandler(onOpenEntityLinkOverride);
   const onOpenMessageLink = React.useCallback(
     (link: ParsedMessageLink) => {
       // Always route through `goChannel` with `messageId` set: the navigation

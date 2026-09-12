@@ -15,7 +15,7 @@ const LONG_WIKI_BODY = Array.from(
 test.describe.configure({ timeout: 90_000 });
 test.use({ video: "on" });
 
-async function openSeededRepoWiki(page: Page) {
+async function openSeededRepoWiki(page: Page, contentSuffix = LONG_WIKI_BODY) {
   await installMockBridge(page);
   await page.goto("/");
   await expect(page.getByTestId("workspace-menu-trigger")).toBeVisible();
@@ -35,7 +35,7 @@ async function openSeededRepoWiki(page: Page) {
         queryKey: ["crew-wiki-events"],
       });
     },
-    { owner: OWNER, contentSuffix: LONG_WIKI_BODY },
+    { owner: OWNER, contentSuffix },
   );
   await expect(page.getByTestId("wiki-repo-card-buzz")).toContainText(
     "minutes",
@@ -62,6 +62,8 @@ async function openSourceWithKeyboard(page: Page) {
   await expect(page.getByTestId("wiki-source-preview")).toContainText(
     "export function ProjectDetailScreen()",
   );
+  await expect(page.getByTestId("wiki-source-pane")).toBeVisible();
+  return sourceButton;
 }
 
 test.describe("Wiki corrective navigation (#364)", () => {
@@ -91,7 +93,11 @@ test.describe("Wiki corrective navigation (#364)", () => {
         "body search proof",
       );
 
-      await openSourceWithKeyboard(page);
+      const sourceButton = await openSourceWithKeyboard(page);
+      await expect(page.getByTestId("wiki-toc")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("wiki-source-pane")).toHaveCount(0);
+      await expect(sourceButton).toBeFocused();
       const command = await page.evaluate(() =>
         window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
           (entry) => entry.command === "wiki_open_verified_source",
@@ -138,6 +144,102 @@ test.describe("Wiki corrective navigation (#364)", () => {
       await page
         .getByTestId("wiki-page")
         .screenshot({ path: `${SHOTS}/01-1130x1089-read-search-source.png` });
+    });
+
+    test("retries restoration after delayed content growth and respects user scroll", async ({
+      page,
+    }) => {
+      await openSeededRepoWiki(page, LONG_WIKI_BODY);
+      const scroll = page.getByTestId("wiki-page-scroll");
+      const targetScroll = await scroll.evaluate((element) =>
+        Math.min(240, Math.max(0, element.scrollHeight - element.clientHeight)),
+      );
+      expect(targetScroll).toBeGreaterThan(0);
+      await scroll.evaluate((element, value) => {
+        element.scrollTop = value;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, targetScroll);
+
+      await page.evaluate((owner) => {
+        window.__BUZZ_E2E_SEED_WIKI__?.({ owner, repoD: "buzz" });
+        window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+          queryKey: ["crew-wiki-events"],
+        });
+      }, OWNER);
+      await expect(page.getByTestId("wiki-markdown")).not.toContainText(
+        "Scroll restoration proof section 18",
+      );
+      await page.getByRole("button", { name: "Back to wiki library" }).click();
+      await expect(page.getByTestId("wiki-library")).toBeVisible();
+      await page
+        .getByTestId("wiki-repo-card-buzz")
+        .locator("button")
+        .first()
+        .click();
+      await expect(page.getByTestId("wiki-page")).toBeVisible();
+      await expect
+        .poll(() => scroll.evaluate((element) => element.scrollTop))
+        .toBe(0);
+
+      await page.waitForTimeout(450);
+      await page.evaluate(
+        ({ owner, contentSuffix }) => {
+          window.__BUZZ_E2E_SEED_WIKI__?.({
+            owner,
+            repoD: "buzz",
+            contentSuffix,
+          });
+          window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+            queryKey: ["crew-wiki-events"],
+          });
+        },
+        { owner: OWNER, contentSuffix: LONG_WIKI_BODY },
+      );
+      await expect
+        .poll(() => scroll.evaluate((element) => element.scrollTop), {
+          timeout: 2_000,
+        })
+        .toBe(targetScroll);
+
+      await page.evaluate((owner) => {
+        window.__BUZZ_E2E_SEED_WIKI__?.({ owner, repoD: "buzz" });
+        window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+          queryKey: ["crew-wiki-events"],
+        });
+      }, OWNER);
+      await page.getByRole("button", { name: "Back to wiki library" }).click();
+      await expect(page.getByTestId("wiki-library")).toBeVisible();
+      await page
+        .getByTestId("wiki-repo-card-buzz")
+        .locator("button")
+        .first()
+        .click();
+      await expect(page.getByTestId("wiki-page")).toBeVisible();
+      await expect
+        .poll(() => scroll.evaluate((element) => element.scrollTop))
+        .toBe(0);
+      await scroll.evaluate((element) => {
+        element.scrollTop = 37;
+        element.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await page.waitForTimeout(450);
+      await page.evaluate(
+        ({ owner, contentSuffix }) => {
+          window.__BUZZ_E2E_SEED_WIKI__?.({
+            owner,
+            repoD: "buzz",
+            contentSuffix,
+          });
+          window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+            queryKey: ["crew-wiki-events"],
+          });
+        },
+        { owner: OWNER, contentSuffix: LONG_WIKI_BODY },
+      );
+      await expect
+        .poll(() => scroll.evaluate((element) => element.scrollTop))
+        .toBe(37);
     });
   });
 

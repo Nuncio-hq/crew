@@ -17,6 +17,8 @@ import {
   useDismissMediaContextMenu,
 } from "./MediaContextMenu";
 
+type BuzzLinkActivation = (trigger?: HTMLElement | null) => void;
+
 function useBuzzLinkContextMenu({
   href,
   interactive,
@@ -24,10 +26,11 @@ function useBuzzLinkContextMenu({
 }: {
   href: string | undefined;
   interactive: boolean;
-  onOpenLink: () => void;
+  onOpenLink: BuzzLinkActivation;
 }) {
   const [position, setPosition] =
     React.useState<MediaContextMenuPosition | null>(null);
+  const triggerRef = React.useRef<HTMLElement | null>(null);
   const closeMenu = React.useCallback(() => setPosition(null), []);
   useDismissMediaContextMenu(Boolean(position), closeMenu);
 
@@ -35,6 +38,7 @@ function useBuzzLinkContextMenu({
     (event: React.MouseEvent<HTMLElement>) => {
       if (!interactive || !href) return;
       event.preventDefault();
+      triggerRef.current = event.currentTarget;
       setPosition({ x: event.clientX, y: event.clientY });
     },
     [href, interactive],
@@ -48,8 +52,9 @@ function useBuzzLinkContextMenu({
           {
             label: "Open link",
             onSelect: () => {
+              const trigger = triggerRef.current;
               closeMenu();
-              onOpenLink();
+              onOpenLink(trigger);
             },
           },
           {
@@ -118,7 +123,7 @@ export function BuzzLinkChip({
   href?: string;
   icon: InlineChipIconKind;
   interactive: boolean;
-  onOpenLink: () => void;
+  onOpenLink: BuzzLinkActivation;
   wrapping?: boolean;
 }) {
   const { contextMenu, onContextMenuCapture } = useBuzzLinkContextMenu({
@@ -144,7 +149,7 @@ export function BuzzLinkChip({
         return;
       }
       event.preventDefault();
-      onOpenLink();
+      onOpenLink(event.currentTarget);
     },
     [onOpenLink, props.onKeyDown],
   );
@@ -172,7 +177,7 @@ export function BuzzLinkChip({
         interactive
         role="button"
         tabIndex={0}
-        onClick={onOpenLink}
+        onClick={(event) => onOpenLink(event.currentTarget)}
         onContextMenuCapture={onContextMenuCapture}
         onKeyDown={onKeyDown}
       >
@@ -192,7 +197,7 @@ export function BuzzInlineLink({
 }: Omit<React.ComponentPropsWithoutRef<"button">, "onClick"> & {
   href?: string;
   interactive: boolean;
-  onOpenLink: () => void;
+  onOpenLink: BuzzLinkActivation;
 }) {
   const contextMenuHref =
     href ?? (typeof props.title === "string" ? props.title : undefined);
@@ -212,7 +217,7 @@ export function BuzzInlineLink({
         {...props}
         type="button"
         className="cursor-pointer font-medium text-primary underline underline-offset-4 transition-colors hover:text-primary/80"
-        onClick={onOpenLink}
+        onClick={(event) => onOpenLink(event.currentTarget)}
         onContextMenuCapture={onContextMenuCapture}
       >
         {children}
