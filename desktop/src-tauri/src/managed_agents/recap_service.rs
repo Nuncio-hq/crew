@@ -186,8 +186,6 @@ fn execute_admitted_recap_with_release(
 
     let mut command = plan.command();
     command.stdin(Stdio::from(stdin));
-    #[cfg(test)]
-    record_test_provider_launch();
     let result = bounded_output_with_policy_and_spawn_hook(
         command,
         BoundedPolicy {
@@ -576,6 +574,8 @@ pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
         .map_err(|error| error_code(error).to_string());
     }
     let release_launch_lease = move || {
+        #[cfg(test)]
+        record_test_provider_launch();
         drop(identity_guard);
         drop(launch_workspace_guard.take());
     };
