@@ -411,6 +411,14 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(future)
+    }
+
     #[test]
     fn generation_cancel_key_is_bound_to_the_exact_operation_revision() {
         let first = generation_cancel_key("https://relay.example", "30617:owner:repo", "one", 4);
@@ -451,69 +459,75 @@ mod tests {
         assert_eq!(outcome.pages, 0);
     }
 
-    #[tokio::test]
-    async fn wiki_generate_reports_an_empty_git_tree_as_empty_repo() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let status = Command::new("git")
-            .args(["init"])
-            .current_dir(directory.path())
-            .status()
-            .expect("git init");
-        assert!(status.success());
+    #[test]
+    fn wiki_generate_reports_an_empty_git_tree_as_empty_repo() {
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        block_on(async {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let status = Command::new("git")
+                .args(["init"])
+                .current_dir(directory.path())
+                .status()
+                .expect("git init");
+            assert!(status.success());
 
-        let outcome = wiki_generate(
-            "cd".repeat(32),
-            "empty".to_owned(),
-            Some(directory.path().display().to_string()),
-        )
-        .await
-        .expect("typed empty-repo outcome");
+            let outcome = wiki_generate(
+                "cd".repeat(32),
+                "empty".to_owned(),
+                Some(directory.path().display().to_string()),
+            )
+            .await
+            .expect("typed empty-repo outcome");
 
-        assert!(outcome.empty_repo);
-        assert!(!outcome.missing_local_path);
-        assert_eq!(outcome.pages, 0);
+            assert!(outcome.empty_repo);
+            assert!(!outcome.missing_local_path);
+            assert_eq!(outcome.pages, 0);
+        });
     }
 
-    #[tokio::test]
-    async fn wiki_generate_propagates_invalid_committed_steering() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        for args in [
-            &["init"][..],
-            &["config", "user.email", "crew-wiki-tests@example.invalid"][..],
-            &["config", "user.name", "Crew Wiki Tests"][..],
-        ] {
-            let status = Command::new("git")
-                .args(args)
-                .current_dir(directory.path())
-                .status()
-                .expect("git command");
-            assert!(status.success(), "git command failed: {args:?}");
-        }
-        std::fs::create_dir_all(directory.path().join(".crew")).expect("steering directory");
-        std::fs::write(directory.path().join(".crew/wiki.json"), "{ invalid")
-            .expect("invalid steering");
-        for args in [
-            &["add", "."][..],
-            &["commit", "--quiet", "-m", "invalid steering"][..],
-        ] {
-            let status = Command::new("git")
-                .args(args)
-                .current_dir(directory.path())
-                .status()
-                .expect("git command");
-            assert!(status.success(), "git command failed: {args:?}");
-        }
+    #[test]
+    fn wiki_generate_propagates_invalid_committed_steering() {
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        block_on(async {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            for args in [
+                &["init"][..],
+                &["config", "user.email", "crew-wiki-tests@example.invalid"][..],
+                &["config", "user.name", "Crew Wiki Tests"][..],
+            ] {
+                let status = Command::new("git")
+                    .args(args)
+                    .current_dir(directory.path())
+                    .status()
+                    .expect("git command");
+                assert!(status.success(), "git command failed: {args:?}");
+            }
+            std::fs::create_dir_all(directory.path().join(".crew")).expect("steering directory");
+            std::fs::write(directory.path().join(".crew/wiki.json"), "{ invalid")
+                .expect("invalid steering");
+            for args in [
+                &["add", "."][..],
+                &["commit", "--quiet", "-m", "invalid steering"][..],
+            ] {
+                let status = Command::new("git")
+                    .args(args)
+                    .current_dir(directory.path())
+                    .status()
+                    .expect("git command");
+                assert!(status.success(), "git command failed: {args:?}");
+            }
 
-        let error = wiki_generate(
-            "ef".repeat(32),
-            "invalid-steering".to_owned(),
-            Some(directory.path().display().to_string()),
-        )
-        .await
-        .expect_err("invalid committed steering must not become an empty success");
-        assert!(
-            error.contains("invalid steering file"),
-            "unexpected worker error: {error}"
-        );
+            let error = wiki_generate(
+                "ef".repeat(32),
+                "invalid-steering".to_owned(),
+                Some(directory.path().display().to_string()),
+            )
+            .await
+            .expect_err("invalid committed steering must not become an empty success");
+            assert!(
+                error.contains("invalid steering file"),
+                "unexpected worker error: {error}"
+            );
+        });
     }
 }
