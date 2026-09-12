@@ -169,6 +169,7 @@ export function WikiPageView({
   const stopScrollRestore = React.useCallback(() => {
     restoreGenerationRef.current += 1;
     restoringRef.current = false;
+    scrollRef.current?.removeAttribute("data-wiki-scroll-restore-pending");
     restoreRequestRef.current = null;
     lastRestoreScrollTopRef.current = null;
     if (restoreTimerRef.current !== null) {
@@ -204,6 +205,7 @@ export function WikiPageView({
       stopScrollRestore();
       const generation = restoreGenerationRef.current;
       restoringRef.current = true;
+      scrollRef.current?.setAttribute("data-wiki-scroll-restore-pending", "");
       restoreRequestRef.current = request;
       const deadline = Date.now() + 1_000;
       const scheduleRetry = () => {

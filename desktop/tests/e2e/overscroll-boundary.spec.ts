@@ -31,6 +31,52 @@ test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
 });
 
+test("lets a pending Wiki restore receive a locked boundary wheel", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByTestId("workspace-menu-trigger")).toBeVisible();
+
+  const result = await page.evaluate(() => {
+    const pending = document.createElement("section");
+    pending.dataset.wikiScrollRestorePending = "";
+    const normal = document.createElement("section");
+    let pendingReached = false;
+    let normalReached = false;
+    pending.addEventListener("wheel", () => {
+      pendingReached = true;
+    });
+    normal.addEventListener("wheel", () => {
+      normalReached = true;
+    });
+    document.body.append(pending, normal);
+
+    const dispatch = (target: HTMLElement) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: 120,
+      });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+
+    return {
+      pendingPrevented: dispatch(pending),
+      normalPrevented: dispatch(normal),
+      pendingReached,
+      normalReached,
+    };
+  });
+
+  expect(result).toEqual({
+    pendingPrevented: true,
+    normalPrevented: true,
+    pendingReached: true,
+    normalReached: false,
+  });
+});
+
 test("locks viewport rubber-band outside conversation scrollers", async ({
   page,
 }) => {
