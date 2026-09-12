@@ -34,6 +34,7 @@ use crate::app_state::owner_scope::{assert_current, capture, OwnerScopeToken};
 use crate::owner_operations::Operation;
 
 /// How this context reaches the durable recovery journal.
+#[derive(Clone)]
 pub(super) enum NativeJournal {
     /// Production: the trusted platform app-data anchor, resolved on use.
     FromApp,
@@ -44,13 +45,8 @@ pub(super) enum NativeJournal {
     Path(PathBuf),
 }
 
-/// The production journal source, borrowable for a `'static` lifetime.
-pub(super) static FROM_APP: NativeJournal = NativeJournal::FromApp;
-/// The production clock, borrowable for a `'static` lifetime.
-pub(super) static SYSTEM_CLOCK: NativeClock = NativeClock::System;
-
 impl NativeJournal {
-    fn resolve<R: Runtime>(&self, app: &AppHandle<R>) -> Result<PathBuf, String> {
+    pub(super) fn resolve<R: Runtime>(&self, app: &AppHandle<R>) -> Result<PathBuf, String> {
         match self {
             Self::FromApp => journal_path(app),
             #[cfg(test)]
@@ -60,6 +56,7 @@ impl NativeJournal {
 }
 
 /// The clock the lease fence compares against.
+#[derive(Clone)]
 pub(super) enum NativeClock {
     /// Production: the system clock through the existing `now` helper.
     System,
@@ -70,7 +67,7 @@ pub(super) enum NativeClock {
 }
 
 impl NativeClock {
-    fn now(&self) -> Result<i64, String> {
+    pub(super) fn now(&self) -> Result<i64, String> {
         match self {
             Self::System => now(),
             #[cfg(test)]
