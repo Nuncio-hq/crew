@@ -117,6 +117,8 @@ pub(crate) struct RecapLaunchPlan {
     profile_source: Option<PathBuf>,
     profile_digest: Option<String>,
     profile_identity: Option<super::recap_capability::RecapProfileIdentity>,
+    profile_destination: Option<PathBuf>,
+    profile_destination_identity: Option<super::recap_capability::RecapProfileIdentity>,
     usage_file: Option<PathBuf>,
     /// On macOS this is a fixed process-fork denial policy. The policy is
     /// passed to `/usr/bin/sandbox-exec`; the installed runtime and all of its
@@ -166,6 +168,15 @@ impl RecapLaunchPlan {
                     && admission.selection.profile_identity == self.profile_identity
                     && profile_identity(source).ok().as_ref() == self.profile_identity.as_ref()
                     && profile_tree_digest(source).ok().as_deref() == Some(expected.as_str())
+                    && self
+                        .profile_destination
+                        .as_deref()
+                        .is_some_and(|destination| {
+                            profile_identity(destination).ok().as_ref()
+                                == self.profile_destination_identity.as_ref()
+                                && profile_tree_digest(destination).ok().as_deref()
+                                    == Some(expected.as_str())
+                        })
             }
             _ => false,
         }
@@ -339,6 +350,8 @@ pub(crate) fn claude_recap_plan(
         profile_source: None,
         profile_digest: None,
         profile_identity: None,
+        profile_destination: None,
+        profile_destination_identity: None,
         usage_file: None,
         sandbox_profile: None,
     })
@@ -383,7 +396,7 @@ pub(crate) fn hermes_recap_plan(
     {
         return Err(RecapRunFailure::ProfileUnavailable);
     }
-    profile_identity(&destination)?;
+    let destination_identity = profile_identity(&destination)?;
 
     let usage_file = root.join("usage.json");
     prepare_usage_file(&usage_file)?;
@@ -421,6 +434,8 @@ pub(crate) fn hermes_recap_plan(
         profile_source: Some(profile.to_owned()),
         profile_digest: Some(profile_digest),
         profile_identity: Some(source_identity),
+        profile_destination: Some(destination),
+        profile_destination_identity: Some(destination_identity),
         usage_file: Some(usage_file),
         sandbox_profile,
     })
@@ -720,7 +735,12 @@ fn same_profile_file_identity(before: &std::fs::Metadata, after: &std::fs::Metad
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        before.dev() == after.dev() && before.ino() == after.ino()
+        before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.mtime() == after.mtime()
+            && before.mtime_nsec() == after.mtime_nsec()
+            && before.ctime() == after.ctime()
+            && before.ctime_nsec() == after.ctime_nsec()
     }
     #[cfg(not(unix))]
     {

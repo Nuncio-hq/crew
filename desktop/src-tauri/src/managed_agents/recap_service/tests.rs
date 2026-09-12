@@ -81,6 +81,74 @@ fn executable_replacement_after_planning_is_rejected_before_spawn() {
 }
 
 #[test]
+fn copied_profile_replacement_after_planning_is_rejected_before_spawn() {
+    let fixture = tempfile::tempdir().unwrap();
+    let base = fixture.path().canonicalize().unwrap();
+    let profile = base.join("profiles").join("scout");
+    std::fs::create_dir_all(&profile).unwrap();
+    #[cfg(unix)]
+    {
+        std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    let executable = base.join("fixture-hermes");
+    let marker = base.join("spawned");
+    std::fs::write(
+        &executable,
+        format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let run = OwnedRecapRun::create(&base, 100).unwrap();
+    let plan = hermes_recap_plan(
+        &executable,
+        run.path(),
+        "hermes-low",
+        &profile,
+        b"private prompt",
+    )
+    .unwrap();
+    let executable_fingerprint = hex::encode(Sha256::digest(std::fs::read(&executable).unwrap()));
+    let admission = RecapAdmission {
+        runtime_id: "hermes".into(),
+        executable: super::super::recap_capability::RecapExecutableIdentity {
+            resolved_path: executable,
+            version: "fixture-1".into(),
+            fingerprint: executable_fingerprint,
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        },
+        selection: super::super::recap_capability::RecapSelection {
+            model: "hermes-low".into(),
+            profile: Some(profile),
+            profile_digest: plan.profile_digest.clone(),
+            profile_identity: plan.profile_identity.clone(),
+            auth_available: true,
+        },
+    };
+    let copied_config = run.path().join("hermes/profiles/scout/config.yaml");
+    std::fs::write(&copied_config, "model: hermes-high\n").unwrap();
+
+    let result = execute_admitted_recap(
+        admission,
+        run,
+        plan,
+        b"private prompt",
+        Duration::from_secs(5),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(
+        result,
+        Err(RecapServiceFailure::Admission(
+            RecapFailure::InvalidExecutableIdentity
+        ))
+    );
+    assert!(
+        !marker.exists(),
+        "mutated copied profile must not be spawned"
+    );
+}
+
+#[test]
 fn admitted_execution_uses_private_stdin_and_cleans_finished_run() {
     let root = tempfile::tempdir().unwrap();
     let base = root.path().canonicalize().unwrap();
