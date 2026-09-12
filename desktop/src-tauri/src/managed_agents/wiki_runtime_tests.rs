@@ -357,6 +357,17 @@ fn hermes_dotenv_routing_assignments_are_rejected_without_rewriting_safe_bytes()
     let safe = b"PROFILE_NOTE=preserve\r\n";
     assert!(validate_hermes_dotenv_bytes(safe).is_ok());
     assert_eq!(safe, b"PROFILE_NOTE=preserve\r\n");
+    for contents in [
+        "\u{00a0}HERMES_HOME=/tmp/redirect",
+        "export\u{00a0}HERMES_MANAGED_DIR=/tmp/redirect",
+        "NOTE=x\rHERMES_HOME=/tmp/redirect",
+    ] {
+        assert_eq!(
+            validate_hermes_dotenv_bytes(contents.as_bytes()),
+            Err(WikiRuntimeFailure::ProfileBinding),
+            "routing form should be rejected: {contents:?}"
+        );
+    }
     assert_eq!(
         validate_hermes_dotenv_bytes(b"\xef\xbb\xbfPROFILE_NOTE=value"),
         Err(WikiRuntimeFailure::ProfileBinding)
@@ -402,6 +413,54 @@ fn hermes_secret_gate_rejects_enabled_yaml_forms_and_merges() {
         reject_enabled_hermes_secret_sources(&merged),
         Err(WikiRuntimeFailure::ProfileBinding)
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn staging_rejects_routing_assignments_in_each_profile_dotenv_file() {
+    for (file_name, contents) in [
+        (".env", "\u{00a0}HERMES_HOME=/tmp/redirect\n"),
+        (
+            ".op.env",
+            "export\u{00a0}HERMES_MANAGED_DIR=/tmp/redirect\n",
+        ),
+        (".env", "NOTE=x\rHERMES_HOME=/tmp/redirect\n"),
+    ] {
+        let fixture = tempfile::tempdir().expect("fixture dir");
+        let source_home = fixture.path().join("source-hermes");
+        let source_profile = source_home.join("profiles/wiki-proof");
+        std::fs::create_dir_all(&source_profile).expect("profile");
+        std::fs::write(
+            source_profile.join("config.yaml"),
+            "model:\n  provider: profile-provider\n  default: profile-model\n",
+        )
+        .expect("profile config");
+        std::fs::write(source_profile.join(file_name), contents).expect("profile dotenv");
+        let state = fixture.path().join("state");
+        let executable = fixture.path().join("fake-runtime");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf 'child-ran' > \"$PWD/child-ran\"\nexit 0\n",
+        )
+        .expect("fake runtime");
+        std::fs::set_permissions(
+            &executable,
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .expect("fake permissions");
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let _home_guard = HermesHomeGuard::set(&source_home);
+        let generator =
+            WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state.clone())
+                .expect("generator");
+
+        assert_eq!(
+            generator.stage_hermes_profile(),
+            Err(WikiRuntimeFailure::ProfileBinding),
+            "routing file should be rejected: {file_name}"
+        );
+        assert!(!state.join("child-ran").exists());
+    }
 }
 
 #[cfg(unix)]

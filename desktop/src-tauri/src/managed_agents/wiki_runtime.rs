@@ -626,7 +626,7 @@ fn validate_hermes_dotenv_bytes(contents: &[u8]) -> Result<(), WikiRuntimeFailur
         return Err(WikiRuntimeFailure::ProfileBinding);
     }
     if text
-        .split('\n')
+        .split(|character| character == '\n' || character == '\r')
         .any(dotenv_line_has_hermes_binding_assignment)
     {
         return Err(WikiRuntimeFailure::ProfileBinding);
@@ -635,14 +635,13 @@ fn validate_hermes_dotenv_bytes(contents: &[u8]) -> Result<(), WikiRuntimeFailur
 }
 
 fn dotenv_line_has_hermes_binding_assignment(line: &str) -> bool {
-    let mut candidate = line.strip_suffix('\r').unwrap_or(line);
-    candidate = candidate.trim_start_matches(|character| character == ' ' || character == '\t');
+    let mut candidate = line.trim_start_matches(|character: char| character.is_whitespace());
     if candidate.is_empty() || candidate.starts_with('#') {
         return false;
     }
     if let Some(rest) = candidate.strip_prefix("export") {
-        if rest.starts_with(|character| character == ' ' || character == '\t') {
-            candidate = rest.trim_start_matches(|character| character == ' ' || character == '\t');
+        if rest.starts_with(|character: char| character.is_whitespace()) {
+            candidate = rest.trim_start_matches(|character: char| character.is_whitespace());
         }
     }
     HERMES_PROFILE_BINDING_KEYS
@@ -986,4 +985,5 @@ fn build_prompt(
 }
 
 #[cfg(test)]
+#[path = "wiki_runtime_tests.rs"]
 mod wiki_runtime_tests;
