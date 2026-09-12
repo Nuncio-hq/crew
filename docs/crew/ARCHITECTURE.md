@@ -539,9 +539,10 @@ extended with caller-owned stdin, cancellation and per-stream budgets. The
 registered recap service binds those pieces at one production seam and keeps
 its command unavailable without the grant and matching retention row.
 Hermes binds the selected profile path, canonical directory device/inode
-identity and bounded content digest, rechecking all three when a grant is
-loaded and immediately before launch, then copies the selected profile into
-the disposable run. It disables its configured MCP
+identity and bounded content digest. Plan construction copies the selected
+profile into the disposable run; immediately before launch, the source and
+destination are revalidated against the bound identity and digest. It disables
+its configured MCP
 path and rule injection, binds a one-shot prompt, and checks the written usage
 model before accepting output. Empty toolsets, `--safe-mode`, or an ACP
 read-only session do not certify tool isolation: the producer requires an

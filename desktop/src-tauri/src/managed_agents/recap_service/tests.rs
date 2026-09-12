@@ -142,7 +142,7 @@ fn copied_profile_replacement_after_planning_is_rejected_before_spawn() {
     assert_eq!(
         result,
         Err(RecapServiceFailure::Admission(
-            RecapFailure::InvalidExecutableIdentity
+            RecapFailure::ProfileMismatch
         ))
     );
     assert!(

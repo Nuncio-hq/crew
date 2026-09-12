@@ -244,6 +244,8 @@ fn hermes_profile_copy_rejects_symlinked_entries() {
     let root = fixture.path().join("run");
     std::fs::create_dir_all(&profile).unwrap();
     std::fs::create_dir_all(&root).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::write(fixture.path().join("outside"), b"outside").unwrap();
     std::os::unix::fs::symlink(fixture.path().join("outside"), profile.join("link")).unwrap();
     let error = hermes_recap_plan(
