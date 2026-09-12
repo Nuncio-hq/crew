@@ -1463,9 +1463,8 @@ impl AppState {
     ) -> (Self, AuditShutdownHandle) {
         let max_connections = config.max_connections;
         let max_concurrent_handlers = config.max_concurrent_handlers;
-        let relay_membership_fanout_batches = max_concurrent_handlers
-            .max(1)
-            .min(RELAY_MEMBERSHIP_FANOUT_MAX_CONCURRENT_BATCHES);
+        let relay_membership_fanout_batches =
+            max_concurrent_handlers.clamp(1, RELAY_MEMBERSHIP_FANOUT_MAX_CONCURRENT_BATCHES);
         let search_arc = Arc::new(search);
 
         let audit_arc = audit.into().map(Arc::new);
