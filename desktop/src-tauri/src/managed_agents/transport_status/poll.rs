@@ -372,16 +372,45 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    fn poll_test_app() -> tauri::App<tauri::test::MockRuntime> {
-        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-        // Storage-backed poll_once tests must never resolve the production
-        // application-data directory from the mock context's empty default
-        // identifier.
-        context.config_mut().identifier = "xyz.nuncio.crew.test.transport-status-poll".into();
-        tauri::test::mock_builder()
-            .manage(crate::app_state::build_app_state())
-            .build(context)
-            .expect("mock app")
+    struct PollTestApp {
+        app: tauri::App<tauri::test::MockRuntime>,
+        app_data_dir: PathBuf,
+    }
+
+    impl PollTestApp {
+        fn new() -> Self {
+            let identifier = format!(
+                "xyz.nuncio.crew.test.transport-status-poll-{}",
+                uuid::Uuid::new_v4().simple()
+            );
+            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+            // Storage-backed poll_once tests must never resolve the production
+            // application-data directory from the mock context's empty default
+            // identifier. A per-test identifier keeps this path isolated from
+            // another test run and lets the guard below prove ownership before
+            // removing it.
+            context.config_mut().identifier = identifier.into();
+            let app = tauri::test::mock_builder()
+                .manage(crate::app_state::build_app_state())
+                .build(context)
+                .expect("mock app");
+            let app_data_dir = app.path().app_data_dir().expect("mock app data directory");
+            assert!(
+                !app_data_dir.exists(),
+                "unique poll test app data path already exists: {}",
+                app_data_dir.display()
+            );
+            Self { app, app_data_dir }
+        }
+    }
+
+    impl Drop for PollTestApp {
+        fn drop(&mut self) {
+            if self.app_data_dir.exists() {
+                std::fs::remove_dir_all(&self.app_data_dir)
+                    .expect("remove owned poll test app data");
+            }
+        }
     }
 
     struct EnvVarGuard {
@@ -492,8 +521,8 @@ mod tests {
         let _env = crate::managed_agents::lock_env_mutex();
         let _export = EnvVarGuard::set(export::NATIVE_AUTH_EVIDENCE_EXPORT_ENV, "1");
 
-        let app = poll_test_app();
-        let state = app.state::<AppState>();
+        let test_app = PollTestApp::new();
+        let state = test_app.app.state::<AppState>();
         let owner = state.keys.lock().unwrap().public_key().to_hex();
         let ticket = retired_auth_ticket(owner.clone());
         let record = retired_auth_record(&ticket);
@@ -528,7 +557,7 @@ mod tests {
         // The final retired read is already applied, so this worker tick has
         // no file-read tickets. It must still emit registration and leave AUTH
         // queued for the next tick.
-        assert_eq!(poll_once(app.handle(), 0).unwrap(), 0);
+        assert_eq!(poll_once(test_app.app.handle(), 0).unwrap(), 0);
         let auth = diagnostics
             .lock()
             .unwrap()
@@ -544,7 +573,7 @@ mod tests {
         // A second retired-only tick must reach the export phase and retry the
         // failed AUTH marker. With the old early return, this take would find
         // the still-due candidate and fail the assertion.
-        assert_eq!(poll_once(app.handle(), 0).unwrap(), 0);
+        assert_eq!(poll_once(test_app.app.handle(), 0).unwrap(), 0);
         assert!(diagnostics
             .lock()
             .unwrap()
