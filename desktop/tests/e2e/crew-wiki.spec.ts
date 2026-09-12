@@ -244,21 +244,42 @@ test.describe("Crew Wiki (#200)", () => {
 
     const projectDetailScroll = page.getByTestId("project-detail-scroll");
     const projectTabGeometry = await page.evaluate(() => {
-      const tab = document.querySelector<HTMLElement>(
-        '[data-testid="project-wiki-tab"]',
+      const scroll = document.querySelector<HTMLElement>(
+        '[data-testid="project-detail-scroll"]',
       );
       const header = document.querySelector<HTMLElement>(
         '[data-testid="wiki-header-bar"]',
       );
-      if (!tab || !header) {
+      const tabs = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-testid="project-workspace-tab-menu"] [role="tab"]',
+        ),
+      );
+      if (!scroll || !header || tabs.length === 0) {
         throw new Error("Project Wiki tab geometry targets are missing");
       }
+      const headerRect = header.getBoundingClientRect();
+      const targetIndex = tabs
+        .map((tab, index) => {
+          const rect = tab.getBoundingClientRect();
+          return {
+            index,
+            overlap:
+              Math.min(rect.right, headerRect.right) -
+              Math.max(rect.left, headerRect.left),
+          };
+        })
+        .filter(({ overlap }) => overlap > 0)
+        .sort((left, right) => right.overlap - left.overlap)[0]?.index;
+      const target = targetIndex === undefined ? null : tabs[targetIndex];
+      if (!target) {
+        throw new Error("No project navigation tab intersects Wiki header");
+      }
       return {
-        scrollTop: document.querySelector<HTMLElement>(
-          '[data-testid="project-detail-scroll"]',
-        )?.scrollTop,
-        tabTop: tab.getBoundingClientRect().top,
-        headerTop: header.getBoundingClientRect().top,
+        scrollTop: scroll.scrollTop,
+        targetIndex,
+        tabTop: target.getBoundingClientRect().top,
+        headerTop: headerRect.top,
       };
     });
     await projectDetailScroll.evaluate(
@@ -273,32 +294,79 @@ test.describe("Crew Wiki (#200)", () => {
     await expect
       .poll(() => projectDetailScroll.evaluate((element) => element.scrollTop))
       .toBeGreaterThan(0);
-    const overlap = await page.evaluate(() => {
-      const tab = document.querySelector<HTMLElement>(
-        '[data-testid="project-wiki-tab"]',
-      );
+    const measureProjectTabHit = () =>
+      page.evaluate((targetIndex) => {
+        const tabs = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[data-testid="project-workspace-tab-menu"] [role="tab"]',
+          ),
+        );
+        const header = document.querySelector<HTMLElement>(
+          '[data-testid="wiki-header-bar"]',
+        );
+        const tab = tabs[targetIndex];
+        if (!tab || !header) {
+          throw new Error("Project Wiki tab geometry targets are missing");
+        }
+        const tabRect = tab.getBoundingClientRect();
+        const headerRect = header.getBoundingClientRect();
+        const intersection = {
+          bottom: Math.min(tabRect.bottom, headerRect.bottom),
+          left: Math.max(tabRect.left, headerRect.left),
+          right: Math.min(tabRect.right, headerRect.right),
+          top: Math.max(tabRect.top, headerRect.top),
+        };
+        const point = {
+          x: (intersection.left + intersection.right) / 2,
+          y: (intersection.top + intersection.bottom) / 2,
+        };
+        const hit = document.elementFromPoint(point.x, point.y);
+        const hitTab = hit?.closest<HTMLElement>('[role="tab"]');
+        return {
+          hitTabLabel: hitTab?.textContent?.trim() ?? null,
+          intersection,
+          point,
+          tabLabel: tab.textContent?.trim() ?? "",
+        };
+      }, projectTabGeometry.targetIndex);
+    const initialOverlap = await measureProjectTabHit();
+    expect(initialOverlap.intersection.right).toBeGreaterThan(
+      initialOverlap.intersection.left,
+    );
+    expect(initialOverlap.intersection.bottom).toBeGreaterThan(
+      initialOverlap.intersection.top,
+    );
+    const legacyHit = await page.evaluate((point) => {
       const header = document.querySelector<HTMLElement>(
         '[data-testid="wiki-header-bar"]',
       );
-      if (!tab || !header) {
-        throw new Error("Project Wiki tab geometry targets are missing");
+      if (!header) {
+        throw new Error("Project Wiki header geometry target is missing");
       }
-      const tabRect = tab.getBoundingClientRect();
-      const headerRect = header.getBoundingClientRect();
-      const point = {
-        x: tabRect.left + tabRect.width / 2,
-        y: tabRect.top + tabRect.height / 2,
-      };
-      const hit = document.elementFromPoint(point.x, point.y);
-      return {
-        tabRect,
-        headerRect,
-        hitTestId: hit?.closest<HTMLElement>("[data-testid]")?.dataset.testid,
-      };
-    });
-    expect(overlap.headerRect.top).toBeLessThan(overlap.tabRect.bottom);
-    expect(overlap.headerRect.bottom).toBeGreaterThan(overlap.tabRect.top);
-    expect(overlap.hitTestId).toBe("project-wiki-tab");
+      const originalStyle = header.getAttribute("style");
+      try {
+        header.style.zIndex = "40";
+        const hit = document.elementFromPoint(point.x, point.y);
+        return (
+          hit?.closest<HTMLElement>('[role="tab"]')?.textContent?.trim() ?? null
+        );
+      } finally {
+        if (originalStyle === null) {
+          header.removeAttribute("style");
+        } else {
+          header.setAttribute("style", originalStyle);
+        }
+      }
+    }, initialOverlap.point);
+    expect(legacyHit).toBeNull();
+    const overlap = await measureProjectTabHit();
+    expect(overlap.intersection.right).toBeGreaterThan(
+      overlap.intersection.left,
+    );
+    expect(overlap.intersection.bottom).toBeGreaterThan(
+      overlap.intersection.top,
+    );
+    expect(overlap.hitTabLabel).toBe(overlap.tabLabel);
     await waitForAnimations(page);
     await projectDetailScroll.screenshot({
       path: `${SHOTS}/15-project-tab-outer-scroll.png`,
