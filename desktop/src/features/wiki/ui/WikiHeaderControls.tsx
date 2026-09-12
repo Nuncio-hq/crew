@@ -84,7 +84,7 @@ export function WikiHeaderControls({
       ? wikiRecoveryActionLabel(affordance)
       : null;
   return (
-    <div className="flex items-center gap-2 text-2xs text-muted-foreground">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-2xs text-muted-foreground">
       <span
         className={freshness === "stale" ? "text-attention" : undefined}
         data-testid="wiki-freshness"
@@ -246,7 +246,7 @@ export function WikiHeaderControls({
       {onSearchChange ? (
         <input
           aria-label="Search wiki"
-          className="h-7 w-32 rounded-md border border-border bg-background px-2 text-2xs"
+          className="h-7 w-32 max-w-full shrink rounded-md border border-border bg-background px-2 text-2xs"
           data-testid="wiki-page-search"
           maxLength={MAX_WIKI_SEARCH_QUERY_CHARS}
           onChange={(event) => onSearchChange(event.target.value)}

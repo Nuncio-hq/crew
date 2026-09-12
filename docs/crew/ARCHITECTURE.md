@@ -471,9 +471,12 @@ parent Project, repository coordinate, and door; when a saved page is gone, it
 selects a surviving page and explains the fallback. Source file controls are
 fail-closed: they require a native grant in the current scope and an exact
 recorded page reference, and never open current checkout bytes or arbitrary
-line ranges when that evidence is unavailable. Native reads still require the
-selected root and live snapshot checks, and real cross-client acceptance
-remains a separate gate. #365
+line ranges when that evidence is unavailable. The source list and Markdown
+citations both open a dismissible verified-source pane; the pane hides the
+table of contents, returns focus to its activating control, and is scoped to
+the exact owner, repository, path, and line range recorded on the page.
+Native reads still require the selected root and live snapshot checks, and real
+cross-client acceptance remains a separate gate. #365
 proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
 and ACL-safe origin links. These are gates, not source-handoff implementations.

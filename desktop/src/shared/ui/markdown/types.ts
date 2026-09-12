@@ -45,8 +45,11 @@ export type MarkdownRuntime = {
   leadingInlineContent?: React.ReactNode;
   mentionPubkeysByName?: Record<string, string>;
   onOpenChannel: (channelId: string) => void;
-  /** Navigate to a Buzz git entity (`buzz://pr|issue|repo` deep link). */
-  onOpenEntityLink: (link: ParsedEntityLink) => void;
+  /** Navigate to a Buzz git entity and optionally retain its activation node. */
+  onOpenEntityLink: (
+    link: ParsedEntityLink,
+    trigger?: HTMLElement | null,
+  ) => void;
   onOpenMessageLink: (link: ParsedMessageLink) => void;
   /**
    * When true, unknown channel ids may look up the member list via
@@ -120,4 +123,9 @@ export type MarkdownProps = {
    * a nudge card.
    */
   configNudgeAuthorPubkey?: string | null;
+  /** Override entity navigation for a scoped document surface. */
+  onOpenEntityLink?: (
+    link: ParsedEntityLink,
+    trigger?: HTMLElement | null,
+  ) => void;
 };

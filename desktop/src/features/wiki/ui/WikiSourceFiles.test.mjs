@@ -25,7 +25,7 @@ const pageEvent = {
   tags: [
     [
       "wiki-source-files",
-      JSON.stringify([[SOURCE_PATH, "d".repeat(64), 2, 3, 3]]),
+      JSON.stringify([[SOURCE_PATH, "d".repeat(64), 2, 2, 3]]),
     ],
   ],
 };
@@ -64,6 +64,7 @@ function installBridge(
   {
     granted = false,
     failOpen = false,
+    failGrants = false,
     deferOpen = false,
     grantToken = scope,
   } = {},
@@ -74,6 +75,7 @@ function installBridge(
     invoke: async (command, args) => {
       calls.push({ command, args });
       if (command === "wiki_source_grants") {
+        if (failGrants) throw new Error("grant lookup unavailable");
         return granted ? [grant(grantToken)] : [];
       }
       if (command === "wiki_open_verified_source") {
@@ -156,6 +158,31 @@ test("source files fail closed without a grant instead of opening a current chec
   }
 });
 
+test("grant lookup failure stays visible as an error instead of pretending no folder is selected", async () => {
+  const calls = [];
+  installBridge(calls, { failGrants: true });
+  const client = queryClient();
+  const view = mount(client);
+  try {
+    await waitFor(() => screen.getByTestId("wiki-source-grants-error"));
+    assert.equal(screen.queryByText("Choose folder to open source"), null);
+    assert.equal(
+      screen.getByTestId(`wiki-source-file-${SOURCE_PATH}`).disabled,
+      true,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-source-grants-retry"));
+    });
+    assert.ok(
+      calls.filter((call) => call.command === "wiki_source_grants").length >= 2,
+    );
+  } finally {
+    await act(async () => view.unmount());
+    client.clear();
+    client.unmount();
+  }
+});
+
 test("a granted source file opens the exact page reference through native IPC", async () => {
   const calls = [];
   installBridge(calls, { granted: true });
@@ -179,6 +206,54 @@ test("a granted source file opens the exact page reference through native IPC", 
       page: pageEvent,
       referenceIndex: 0,
     });
+  } finally {
+    await act(async () => view.unmount());
+    client.clear();
+    client.unmount();
+  }
+});
+
+test("pane mode opens the requested immutable citation and exposes a dismiss action", async () => {
+  const calls = [];
+  installBridge(calls, { granted: true });
+  const client = queryClient();
+  let closed = false;
+  const view = render(
+    React.createElement(
+      QueryClientProvider,
+      { client },
+      React.createElement(WikiSourceFiles, {
+        files: [SOURCE_PATH],
+        initialRequest: {
+          path: SOURCE_PATH,
+          startLine: 2,
+          endLine: 3,
+        },
+        mode: "pane",
+        onClosePane: () => {
+          closed = true;
+        },
+        operationScope: scope,
+        owner: OWNER,
+        pageEvent,
+        repoD: REPO_D,
+      }),
+    ),
+  );
+  try {
+    await waitFor(() => screen.getByTestId("wiki-source-pane"));
+    await waitFor(() => screen.getByTestId("wiki-source-preview"));
+    assert.equal(
+      screen.getByTestId("wiki-source-preview").textContent,
+      "line 2\nline 3",
+    );
+    fireEvent.click(screen.getByTestId("wiki-source-pane-close"));
+    assert.equal(closed, true);
+    assert.equal(
+      calls.filter((call) => call.command === "wiki_open_verified_source")
+        .length,
+      1,
+    );
   } finally {
     await act(async () => view.unmount());
     client.clear();

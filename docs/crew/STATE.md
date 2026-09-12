@@ -32,8 +32,9 @@ publication, Ask/History, and installed staging acceptance remain separate
 gates (#348/#362/#363/#366/#367).
 The reader remembers page and scroll position only within the captured
 owner/community, Project, repository, and door. Source controls require a
-current native grant and an exact recorded page reference; unavailable source
-evidence leaves the control disabled instead of opening checkout bytes.
+current native grant and an exact recorded page reference; the source list and
+Markdown citations open a dismissible verified-source pane, while unavailable
+source evidence leaves the control disabled instead of opening checkout bytes.
 The Project/Wiki Ask composer is visible but disabled with a plain unavailable
 message; its former sample answer and channel prefill are removed while
 #366/#367's private runtime, history, storage, and dispatch gates remain open.
