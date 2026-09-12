@@ -37,7 +37,8 @@ mod platform {
     use super::super::reader;
     use super::*;
     use buzz_core_pkg::transport_status::{
-        TransportRecord, TransportState, GENERATION_ENTRY_RESERVATION, MAX_DIRECTORY_ENTRIES,
+        decode_transport_record, TransportRecordEnvelope, TransportState,
+        GENERATION_ENTRY_RESERVATION, MAX_DIRECTORY_ENTRIES,
     };
     use fs4::fs_std::FileExt;
     use nix::dir::Dir;
@@ -139,15 +140,19 @@ mod platform {
         canonical_nonce(nonce).then_some(nonce)
     }
 
-    fn valid_record(record: &TransportRecord, runtime_id: &str, nonce: &str) -> bool {
-        record.version == 1
-            && record.sequence > 0
-            && record.runtime_id == runtime_id
-            && record.start_nonce == nonce
-            && record.transport.has_safe_error()
-            && (!record.terminal
+    fn valid_record(record: &TransportRecordEnvelope, runtime_id: &str, nonce: &str) -> bool {
+        (matches!(record, TransportRecordEnvelope::V1(record) if record.version == 1)
+            || matches!(record, TransportRecordEnvelope::V2(record) if record.version == 2))
+            && record.sequence() > 0
+            && record.runtime_id() == runtime_id
+            && record.start_nonce() == nonce
+            && record.transport().has_safe_error()
+            && record
+                .v2()
+                .is_none_or(|record| record.validate_shape().is_ok())
+            && (!record.terminal()
                 || matches!(
-                    record.transport.state,
+                    record.transport().state,
                     TransportState::Exhausted
                         | TransportState::AuthRejected
                         | TransportState::Unknown
@@ -189,7 +194,7 @@ mod platform {
                     continue;
                 }
                 let bytes = reader::read_owned_entry(&directory, &entry.name)?;
-                let Ok(record) = serde_json::from_slice::<TransportRecord>(&bytes) else {
+                let Ok(record) = decode_transport_record(&bytes) else {
                     continue;
                 };
                 if valid_record(&record, runtime_id, nonce) {

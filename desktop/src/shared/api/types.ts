@@ -332,6 +332,45 @@ export type ManagedAgentTransportStatus = {
   lastError: string | null;
 };
 
+export type ManagedAgentTransportAuthEvidence = {
+  record: {
+    version: 2;
+    runtimeId: string;
+    startNonce: string;
+    sequence: number;
+    timestampMs: number;
+    terminal: boolean;
+    transport: ManagedAgentTransportStatus;
+    processId: number;
+    spawnStartedAtMs: number;
+    connectionAttempt: {
+      sequence: number;
+      id: string;
+      startedAtMs: number;
+    } | null;
+    receivedAuth: {
+      authEventId: string;
+      attemptId: string;
+      attemptSequence: number;
+      accepted: false;
+      classification: "community_banned" | "other_denial";
+      receivedAtMs: number;
+    } | null;
+  };
+  nativeBinding: {
+    runtimeId: string;
+    startNonce: string;
+    processId: number;
+    spawnStartedAtMs: number;
+    owner: string;
+    epoch: number;
+  };
+  statusPath: string;
+  retired: boolean;
+  failedExit: boolean;
+  retiredAtMs: number | null;
+};
+
 export type ManagedAgentRuntimeStatus = {
   pubkey: string;
   /** Exact submitted descriptor, present only on startup reconcile results. */
@@ -343,6 +382,7 @@ export type ManagedAgentRuntimeStatus = {
   /** Optional only for compatibility with older native/mock payloads. */
   transport?: ManagedAgentTransportStatus;
   transportRetired?: boolean;
+  transportAuthEvidence?: ManagedAgentTransportAuthEvidence;
   /** Current native harness generation; absent for stopped/retired rows. */
   startNonce?: string;
   lifecycle: ManagedAgentRuntimeLifecycle;

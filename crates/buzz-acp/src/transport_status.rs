@@ -1,8 +1,9 @@
 //! Owned local transport diagnostics for a Desktop-managed harness generation.
 use crate::secure_spool;
 use buzz_core::transport_status::{
-    TransportRecord, TransportStatus, GENERATION_ENTRY_RESERVATION, MAX_DIRECTORY_ENTRIES,
-    MAX_RECORD_BYTES, STORAGE_REVIEW_ERROR,
+    TransportConnectionAttempt, TransportReceivedAuth, TransportRecord, TransportRecordV2,
+    TransportStatus, GENERATION_ENTRY_RESERVATION, MAX_DIRECTORY_ENTRIES, MAX_RECORD_BYTES,
+    STORAGE_REVIEW_ERROR,
 };
 use std::ffi::OsString;
 use std::path::{Component, PathBuf};
@@ -11,12 +12,38 @@ use std::path::{Component, PathBuf};
 pub(super) struct StatusConfig {
     pub path: PathBuf,
     pub nonce: String,
+    pub version: u32,
+    pub spawn_started_at_ms: Option<u64>,
 }
 
 impl StatusConfig {
+    #[cfg(test)]
     pub fn parse(path: Option<OsString>, nonce: Option<OsString>) -> Result<Option<Self>, String> {
+        Self::parse_with_schema(path, nonce, None, None)
+    }
+
+    pub fn parse_environment() -> Result<Option<Self>, String> {
+        Self::parse_with_schema(
+            std::env::var_os("CREW_ACP_TRANSPORT_STATUS_PATH"),
+            std::env::var_os("CREW_ACP_TRANSPORT_START_NONCE"),
+            std::env::var_os("CREW_ACP_TRANSPORT_STATUS_VERSION"),
+            std::env::var_os("CREW_ACP_TRANSPORT_SPAWN_STARTED_AT_MS"),
+        )
+    }
+
+    fn parse_with_schema(
+        path: Option<OsString>,
+        nonce: Option<OsString>,
+        version: Option<OsString>,
+        spawn_started_at_ms: Option<OsString>,
+    ) -> Result<Option<Self>, String> {
+        let schema_requested = version.is_some() || spawn_started_at_ms.is_some();
+        let (version, spawn_started_at_ms) = parse_schema(version, spawn_started_at_ms)?;
         let (path, nonce) = match (path, nonce) {
-            (None, None) => return Ok(None),
+            (None, None) if !schema_requested => return Ok(None),
+            (None, None) => {
+                return Err("managed transport requires both status path and start nonce".into())
+            }
             (Some(path), Some(nonce)) => (path, nonce),
             _ => return Err("managed transport requires both status path and start nonce".into()),
         };
@@ -50,7 +77,46 @@ impl StatusConfig {
         Ok(Some(Self {
             path: path_value,
             nonce,
+            version,
+            spawn_started_at_ms,
         }))
+    }
+}
+
+fn parse_schema(
+    version: Option<OsString>,
+    spawn_started_at_ms: Option<OsString>,
+) -> Result<(u32, Option<u64>), String> {
+    let Some(version) = version else {
+        if spawn_started_at_ms.is_some() {
+            return Err(
+                "managed transport spawn timestamp requires an explicit status version".into(),
+            );
+        }
+        return Ok((1, None));
+    };
+    let version = version
+        .to_str()
+        .ok_or("managed transport status version must be UTF-8")?
+        .parse::<u32>()
+        .map_err(|_| "managed transport status version must be 1 or 2")?;
+    match version {
+        1 if spawn_started_at_ms.is_none() => Ok((1, None)),
+        1 => Err("managed transport status version 1 cannot carry a spawn timestamp".into()),
+        2 => {
+            let spawn_started_at_ms = spawn_started_at_ms
+                .ok_or("managed transport status version 2 requires a spawn timestamp")?;
+            let spawn_started_at_ms = spawn_started_at_ms
+                .to_str()
+                .ok_or("managed transport spawn timestamp must be UTF-8")?
+                .parse::<u64>()
+                .map_err(|_| "managed transport spawn timestamp must be a positive integer")?;
+            if spawn_started_at_ms == 0 {
+                return Err("managed transport spawn timestamp must be a positive integer".into());
+            }
+            Ok((2, Some(spawn_started_at_ms)))
+        }
+        _ => Err("managed transport status version must be 1 or 2".into()),
     }
 }
 
@@ -85,7 +151,18 @@ impl StatusWriter {
         })
     }
 
+    #[cfg(test)]
     pub async fn write(&mut self, status: TransportStatus, terminal: bool) -> Result<(), String> {
+        self.write_snapshot(status, terminal, None, None).await
+    }
+
+    pub async fn write_snapshot(
+        &mut self,
+        status: TransportStatus,
+        terminal: bool,
+        connection_attempt: Option<TransportConnectionAttempt>,
+        received_auth: Option<TransportReceivedAuth>,
+    ) -> Result<(), String> {
         if !status.has_safe_error() {
             return Err("managed transport status contains an untrusted error message".into());
         }
@@ -97,17 +174,40 @@ impl StatusWriter {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "managed transport status clock unavailable")?
             .as_millis();
-        let record = TransportRecord {
-            version: 1,
-            runtime_id: self.runtime_id.clone(),
-            start_nonce: self.config.nonce.clone(),
-            sequence: self.sequence,
-            timestamp_ms: u64::try_from(timestamp_ms).unwrap_or(u64::MAX),
-            terminal,
-            transport: status,
+        let timestamp_ms = u64::try_from(timestamp_ms)
+            .map_err(|_| "managed transport status clock unavailable")?;
+        let bytes = if self.config.version == 2 {
+            let spawn_started_at_ms = self
+                .config
+                .spawn_started_at_ms
+                .ok_or("managed transport status version 2 has no spawn timestamp")?;
+            let record = TransportRecordV2 {
+                version: 2,
+                runtime_id: self.runtime_id.clone(),
+                start_nonce: self.config.nonce.clone(),
+                sequence: self.sequence,
+                timestamp_ms,
+                terminal,
+                transport: status,
+                process_id: std::process::id(),
+                spawn_started_at_ms,
+                connection_attempt,
+                received_auth,
+            };
+            record.validate_shape()?;
+            serde_json::to_vec(&record).map_err(|_| "cannot encode managed transport status")?
+        } else {
+            let record = TransportRecord {
+                version: 1,
+                runtime_id: self.runtime_id.clone(),
+                start_nonce: self.config.nonce.clone(),
+                sequence: self.sequence,
+                timestamp_ms,
+                terminal,
+                transport: status,
+            };
+            serde_json::to_vec(&record).map_err(|_| "cannot encode managed transport status")?
         };
-        let bytes =
-            serde_json::to_vec(&record).map_err(|_| "cannot encode managed transport status")?;
         if bytes.len() as u64 > MAX_RECORD_BYTES {
             return Err("managed transport status exceeds the size limit".into());
         }
@@ -194,9 +294,17 @@ async fn check_capacity(config: &StatusConfig) -> Result<(), String> {
 #[derive(Debug)]
 struct RenewingWriter {
     writer: StatusWriter,
-    latest: Option<(TransportStatus, bool)>,
+    latest: Option<StatusSnapshot>,
     last_attempt: tokio::time::Instant,
     dirty: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct StatusSnapshot {
+    pub status: TransportStatus,
+    pub terminal: bool,
+    pub connection_attempt: Option<TransportConnectionAttempt>,
+    pub received_auth: Option<TransportReceivedAuth>,
 }
 
 impl RenewingWriter {
@@ -209,13 +317,32 @@ impl RenewingWriter {
         }
     }
 
+    #[cfg(test)]
     async fn update(&mut self, status: TransportStatus, terminal: bool) -> Result<(), String> {
-        if !self.dirty && self.latest.as_ref() == Some(&(status.clone(), terminal)) {
+        self.update_snapshot(StatusSnapshot {
+            status,
+            terminal,
+            connection_attempt: None,
+            received_auth: None,
+        })
+        .await
+    }
+
+    async fn update_snapshot(&mut self, snapshot: StatusSnapshot) -> Result<(), String> {
+        if !self.dirty && self.latest.as_ref() == Some(&snapshot) {
             return Ok(());
         }
-        self.latest = Some((status.clone(), terminal));
+        self.latest = Some(snapshot.clone());
         self.last_attempt = tokio::time::Instant::now();
-        let result = self.writer.write(status, terminal).await;
+        let result = self
+            .writer
+            .write_snapshot(
+                snapshot.status,
+                snapshot.terminal,
+                snapshot.connection_attempt,
+                snapshot.received_auth,
+            )
+            .await;
         self.dirty = result.is_err();
         result
     }
@@ -226,11 +353,19 @@ impl RenewingWriter {
         {
             return Ok(());
         }
-        let Some((status, false)) = self.latest.clone() else {
+        let Some(snapshot) = self.latest.clone().filter(|snapshot| !snapshot.terminal) else {
             return Ok(());
         };
         self.last_attempt = tokio::time::Instant::now();
-        let result = self.writer.write(status, false).await;
+        let result = self
+            .writer
+            .write_snapshot(
+                snapshot.status,
+                false,
+                snapshot.connection_attempt,
+                snapshot.received_auth,
+            )
+            .await;
         self.dirty = result.is_err();
         result
     }
@@ -264,8 +399,8 @@ impl StatusReporter {
         Self { writer, renewal }
     }
 
-    pub async fn publish(&self, status: TransportStatus, terminal: bool) -> Result<(), String> {
-        self.writer.lock().await.update(status, terminal).await
+    pub async fn publish_snapshot(&self, snapshot: StatusSnapshot) -> Result<(), String> {
+        self.writer.lock().await.update_snapshot(snapshot).await
     }
 }
 
@@ -295,6 +430,32 @@ mod tests {
         .expect("complete pair must opt into managed transport");
         assert_eq!(config.path, PathBuf::from("/private/tmp/crew/status.json"));
         assert_eq!(config.nonce, nonce);
+    }
+
+    #[test]
+    fn v2_schema_requires_explicit_spawn_timestamp_and_rejects_partial_keys() {
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let config = StatusConfig::parse_with_schema(
+            Some("/private/tmp/crew/status.json".into()),
+            Some(nonce.into()),
+            Some("2".into()),
+            Some("42".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(config.version, 2);
+        assert_eq!(config.spawn_started_at_ms, Some(42));
+        assert!(StatusConfig::parse_with_schema(
+            Some("/private/tmp/crew/status.json".into()),
+            Some(uuid::Uuid::new_v4().to_string().into()),
+            Some("2".into()),
+            None,
+        )
+        .is_err());
+        assert!(
+            StatusConfig::parse_with_schema(None, None, Some("2".into()), Some("42".into()),)
+                .is_err()
+        );
     }
 
     #[test]
@@ -366,7 +527,8 @@ mod tests {
 mod writer_tests {
     use super::*;
     use buzz_core::transport_status::{
-        TransportCode, TransportRecord, TransportState, TransportStatus,
+        TransportAuthClassification, TransportCode, TransportRecord, TransportRecordV2,
+        TransportState, TransportStatus,
     };
     use std::os::unix::fs::{symlink, PermissionsExt};
 
@@ -385,6 +547,17 @@ mod writer_tests {
             StatusConfig {
                 path: self.0.join("status.json"),
                 nonce: uuid::Uuid::new_v4().to_string(),
+                version: 1,
+                spawn_started_at_ms: None,
+            }
+        }
+
+        fn v2_config(&self) -> StatusConfig {
+            StatusConfig {
+                path: self.0.join("status.json"),
+                nonce: uuid::Uuid::new_v4().to_string(),
+                version: 2,
+                spawn_started_at_ms: Some(1),
             }
         }
     }
@@ -454,6 +627,48 @@ mod writer_tests {
                 .unwrap()
                 .len(),
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_writer_persists_only_typed_exact_auth_evidence() {
+        let fixture = Fixture::new();
+        let mut writer = StatusWriter::new(fixture.v2_config(), &"a".repeat(64), "ws://fixture")
+            .await
+            .unwrap();
+        let attempt_id = uuid::Uuid::new_v4().to_string();
+        writer
+            .write_snapshot(
+                status(TransportState::AuthRejected),
+                true,
+                Some(TransportConnectionAttempt {
+                    sequence: 1,
+                    id: attempt_id.clone(),
+                    started_at_ms: 2,
+                }),
+                Some(TransportReceivedAuth {
+                    auth_event_id: "a".repeat(64),
+                    attempt_id,
+                    attempt_sequence: 1,
+                    accepted: false,
+                    classification: TransportAuthClassification::CommunityBanned,
+                    received_at_ms: 3,
+                }),
+            )
+            .await
+            .unwrap();
+        let record: TransportRecordV2 =
+            serde_json::from_slice(&std::fs::read(fixture.0.join("status.json")).unwrap()).unwrap();
+        assert_eq!(record.version, 2);
+        assert_eq!(record.process_id, std::process::id());
+        assert_eq!(
+            record.received_auth.unwrap().classification,
+            TransportAuthClassification::CommunityBanned
+        );
+        assert!(
+            !String::from_utf8(std::fs::read(fixture.0.join("status.json")).unwrap())
+                .unwrap()
+                .contains("blocked: you are banned from this community")
         );
     }
 

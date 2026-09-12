@@ -757,6 +757,115 @@ invalidation command. These cases cannot prove native process behavior,
 installed staging, or in-flight turn/receipt acceptance. Those remain #338
 gates; real staging requires #348.
 
+### Queued built ACP producer to native reader proof
+
+This is an opt-in whole-chain proof for the #338 producer-to-reader seam. It
+must run against the ACP binary built from the same source revision as the
+checkout, with a real loopback socket and the production native reader. Its
+source lives at
+`desktop/src-tauri/src/managed_agents/transport_status/producer_fixture.rs`;
+execution remains queued pending an explicit validation allocation. Do not
+replace it with a unit fixture that writes the status JSON directly. The fixture owns the loopback listener, child
+process, status directory and cleanup guard. It must pass `--lazy-pool` to the
+actual ACP binary, bind only `127.0.0.1`, use fixed bounded deadlines, and leave
+no child or temporary state after a timeout.
+
+Run from an activated Hermit shell after building ACP at a pinned source SHA.
+The validation harness must supply preallocated private paths for its Cargo
+home, target directory, isolated process environment, and evidence directory;
+it owns the wall-clock, process-tree, disk, and log caps and retains the
+evidence directory after the run. This recipe never creates a build cache or
+deletes the evidence directory. Before invoking it, the harness must verify its
+exact frozen source manifest/patch digest over the candidate's tracked and
+untracked files; a clean `HEAD` is not required for this pre-commit validation.
+It fails before the test when the binary is not absolute, executable,
+freshly-built and hash-matched, or source-bound, or when the exact ignored
+filter does not resolve to one test.
+
+```sh
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+ACP_BIN="${ACP_BIN:?absolute path to the built buzz-acp binary}"
+ACP_SHA256="${ACP_SHA256:?sha256 of ACP_BIN}"
+ACP_SOURCE_ROOT="${ACP_SOURCE_ROOT:?absolute path to the checked-out crates/buzz-acp source}"
+ACP_SOURCE_SHA256="${ACP_SOURCE_SHA256:?SHA-256 binding of ACP_SOURCE_ROOT}"
+VALIDATION_CARGO_HOME="${CREW_VALIDATION_CARGO_HOME:?preallocated private Cargo home}"
+VALIDATION_TARGET_DIR="${CREW_VALIDATION_TARGET_DIR:?preallocated private Cargo target directory}"
+VALIDATION_EVIDENCE_DIR="${CREW_VALIDATION_EVIDENCE_DIR:?retained private evidence directory}"
+VALIDATION_HOME="${CREW_VALIDATION_HOME:?preallocated private HOME directory}"
+VALIDATION_CONFIG="${CREW_VALIDATION_CONFIG:?preallocated private config directory}"
+VALIDATION_CACHE="${CREW_VALIDATION_CACHE:?preallocated private cache directory}"
+VALIDATION_DATA="${CREW_VALIDATION_DATA:?preallocated private data directory}"
+VALIDATION_TMP="${CREW_VALIDATION_TMP:?preallocated private temporary directory}"
+VALIDATION_CWD="${CREW_VALIDATION_CWD:?preallocated private working directory}"
+FIXTURE_FILTER="managed_agents::transport_status::producer_fixture::actual_built_acp_writes_atomic_v2_record_and_native_accepts_only_bound_generation"
+
+case "$ACP_BIN" in /*) ;; *) echo "ACP_BIN must be absolute" >&2; exit 2 ;; esac
+test -x "$ACP_BIN"
+test "$(shasum -a 256 "$ACP_BIN" | awk '{print $1}')" = "$ACP_SHA256"
+case "$ACP_SOURCE_ROOT" in /*) ;; *) echo "ACP_SOURCE_ROOT must be absolute" >&2; exit 2 ;; esac
+test -d "$ACP_SOURCE_ROOT"
+for path in \
+  "$VALIDATION_CARGO_HOME" "$VALIDATION_TARGET_DIR" "$VALIDATION_EVIDENCE_DIR" \
+  "$VALIDATION_HOME" "$VALIDATION_CONFIG" "$VALIDATION_CACHE" \
+  "$VALIDATION_DATA" "$VALIDATION_TMP" "$VALIDATION_CWD"; do
+  test -d "$path"
+done
+
+SOURCE_DIGEST="$(python3 - "$ACP_SOURCE_ROOT" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+files = []
+for path in root.rglob("*"):
+    if path.is_symlink():
+        raise SystemExit(f"source binding contains a symlink: {path}")
+    if path.is_file():
+        files.append(path.relative_to(root))
+
+digest = hashlib.sha256()
+for relative in sorted(files, key=lambda path: path.as_posix()):
+    digest.update(relative.as_posix().encode())
+    digest.update(b"\0")
+    with (root / relative).open("rb") as source:
+        for chunk in iter(lambda: source.read(64 * 1024), b""):
+            digest.update(chunk)
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+)"
+test "$SOURCE_DIGEST" = "$ACP_SOURCE_SHA256"
+
+run_fixture() {
+  env -i \
+  PATH="$PATH" HOME="$VALIDATION_HOME" TMPDIR="$VALIDATION_TMP" \
+  XDG_CONFIG_HOME="$VALIDATION_CONFIG" XDG_CACHE_HOME="$VALIDATION_CACHE" \
+  XDG_DATA_HOME="$VALIDATION_DATA" \
+  CARGO_HOME="$VALIDATION_CARGO_HOME" CARGO_TARGET_DIR="$VALIDATION_TARGET_DIR" \
+  CREW_ACP_FIXTURE_BINARY="$ACP_BIN" CREW_ACP_FIXTURE_BINARY_SHA256="$ACP_SHA256" \
+  CREW_ACP_FIXTURE_SOURCE_ROOT="$ACP_SOURCE_ROOT" \
+  CREW_ACP_FIXTURE_SOURCE_SHA256="$ACP_SOURCE_SHA256" \
+  cargo test --manifest-path "$ROOT/desktop/src-tauri/Cargo.toml" \
+    "$FIXTURE_FILTER" "$@"
+}
+
+cd "$VALIDATION_CWD"
+run_fixture -- --list --ignored --exact >"$VALIDATION_EVIDENCE_DIR/test-list.txt"
+TEST_COUNT="$(awk '$NF == "test" { count += 1 } END { print count + 0 }' "$VALIDATION_EVIDENCE_DIR/test-list.txt")"
+test "$TEST_COUNT" -eq 1
+run_fixture -- --ignored --exact --nocapture
+```
+
+The marker assertion proves the selected path used the inert provider stub only
+as a poison guard; any accidental provider launch fails the proof. The isolated
+environment intentionally excludes inherited relay, identity, provider and
+desktop configuration. The command proves local producer/reader attribution;
+it does not establish installed staging or live relay health, which remain the
+separate #348 gate.
+
 ## CompanyOS grouped evidence (#344)
 
 For the #349 shell, `companyos-shell-navigation.spec.ts` checks stable Projects

@@ -16,7 +16,21 @@ worktree leases, Cowork, elicitation, receipts, subscription/turn recovery,
 governor, desktop-control env, lazy slots, and Hermes tier-1. #7332/#7335 are
 cherry-picked; #6732/#7337 remain unadopted pending a decision. ACP AUTH
 fencing, reconnect bursts, native diagnostics, bounded storage, and pair-scoped
-retry are shipped. Staging and turn/receipt acceptance remain #338 gates.
+retry are shipped. ACP startup/reconnect AUTH acknowledgements match the exact
+sent event ID; unrelated OK/CLOSED frames remain buffered for normal processing
+(#338 slice 1). Desktop-managed ACP generations use a bounded reconnect burst
+and then a slow probe; exact AUTH rejection ends the burst, and authentication
+plus subscription recovery must finish before health resets. Native transport
+diagnostics remain separate from process lifecycle, fenced by native owner,
+runtime key, start nonce, and leave/rejoin epoch. Missing or expired records
+become unknown; exited-generation results are historical. The additive v2 record
+binds child PID and native pre-spawn timestamp, carries a monotonic per-generation
+connection attempt, and records only the exact negative AUTH acknowledgement with
+a fixed classification. v1 health records remain valid for legacy generations.
+Desktop exposes the optional AUTH wrapper only after those fences pass; retired
+final reads stay bounded and cannot become live process authority. The opt-in
+native marker export is bounded, stderr-only, and deduplicated by generation,
+attempt, and AUTH event. Staging and turn/receipt acceptance remain #338 gates.
 
 ## Desktop
 
