@@ -437,7 +437,11 @@ export function WorkspaceTabs({
       {!isDetailSelected ? (
         <div
           className={`sticky top-0 z-30 -mx-4 flex h-13 min-w-0 items-center gap-1 px-4 ${
-            sharedHeaderBackdrop ? "" : PROJECT_COLUMN_HEADER_BACKDROP_CLASS
+            selectedTab === "wiki"
+              ? "bg-background"
+              : sharedHeaderBackdrop
+                ? ""
+                : PROJECT_COLUMN_HEADER_BACKDROP_CLASS
           }`}
           data-testid="project-workspace-tab-menu"
         >

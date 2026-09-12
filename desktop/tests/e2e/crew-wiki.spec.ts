@@ -367,6 +367,11 @@ test.describe("Crew Wiki (#200)", () => {
       overlap.intersection.top,
     );
     expect(overlap.hitTabLabel).toBe(overlap.tabLabel);
+    const projectTabMenuBackground = await page
+      .getByTestId("project-workspace-tab-menu")
+      .evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(projectTabMenuBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(projectTabMenuBackground).not.toBe("transparent");
     await waitForAnimations(page);
     await projectDetailScroll.screenshot({
       path: `${SHOTS}/15-project-tab-outer-scroll.png`,
