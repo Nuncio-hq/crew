@@ -251,8 +251,7 @@ fn lock_guard_releases_an_inherited_open_file_description() {
     let directory = super::super::reader::open_owned_directory(&fixture.directory, false).unwrap();
     let lock = super::platform::lock(&directory).unwrap();
     let inherited = lock.try_clone_file().unwrap();
-    // Use an absolute system path: the Hermit toolchain PATH used by the
-    // Linux CI lane intentionally omits host utilities such as `cat`.
+    // Bind this child fixture to the system executable independently of PATH.
     let mut child = Command::new("/bin/cat")
         .stdin(Stdio::piped())
         .stdout(Stdio::from(inherited))
