@@ -9,7 +9,13 @@ import { sameOwnerOperationScope } from "@/shared/api/ownerOperations";
 import type { Repository } from "@/features/projects/hooks";
 import { wikiRepositoryCoordinate } from "@/shared/api/wikiSnapshot";
 
-export function WikiProjectTab({ project }: { project: Repository }) {
+export function WikiProjectTab({
+  project,
+  projectId,
+}: {
+  project: Repository;
+  projectId: string;
+}) {
   const coordinate = wikiRepositoryCoordinate(project.owner, project.dtag);
   const eventsQuery = useWikiEventsQuery([project], {
     priorityCoordinates: [coordinate],
@@ -65,6 +71,7 @@ export function WikiProjectTab({ project }: { project: Repository }) {
       channelId={project.channelId ?? null}
       door="project"
       owner={project.owner}
+      navigationProjectId={projectId}
       page={pages[0] ?? null}
       pages={pages}
       repoD={project.dtag}

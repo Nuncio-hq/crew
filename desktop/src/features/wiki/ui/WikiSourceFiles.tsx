@@ -1,10 +1,12 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { buildFileLink } from "@/shared/lib/entityLink";
-import { useOpenEntityLink } from "@/shared/ui/markdown/entityLinks";
-import { parseEntityLink } from "@/shared/lib/entityLink";
+import {
+  sameOwnerOperationScope,
+  type OwnerOperationScope,
+} from "@/shared/api/ownerOperations";
 import type { RelayEvent } from "@/shared/api/types";
+import { wikiRepositoryCoordinate } from "@/shared/api/wikiSnapshot";
 import {
   chooseWikiSourceRoot,
   forgetWikiSourceRoot,
@@ -53,17 +55,22 @@ export function WikiSourceFiles({
   owner,
   pageEvent,
   repoD,
+  operationScope,
 }: {
   files: string[];
   owner: string;
   pageEvent: RelayEvent;
   repoD: string;
+  operationScope?: OwnerOperationScope;
 }) {
-  const open = useOpenEntityLink();
   const queryClient = useQueryClient();
-  const coordinate = `30617:${owner}:${repoD}`;
+  const coordinate = wikiRepositoryCoordinate(owner, repoD);
+  const scopeKey = operationScope
+    ? `${operationScope.scope.owner}:${operationScope.scope.community}:${operationScope.workspace_generation}:${operationScope.identity_generation}`
+    : "unscoped";
+  const grantsQueryKey = ["wiki-source-grants", coordinate, scopeKey] as const;
   const grantsQuery = useQuery({
-    queryKey: ["wiki-source-grants", coordinate],
+    queryKey: grantsQueryKey,
     queryFn: async () => {
       try {
         return await listWikiSourceGrants();
@@ -71,22 +78,30 @@ export function WikiSourceFiles({
         return [];
       }
     },
-    enabled: owner.length === 64 && repoD.length > 0,
+    enabled: Boolean(operationScope) && owner.length === 64 && repoD.length > 0,
     staleTime: 5_000,
   });
+  const [preview, setPreview] = React.useState<WikiSourceContent | null>(null);
+  const openRequestRef = React.useRef(0);
+  const cancelPendingOpen = React.useCallback(() => {
+    openRequestRef.current += 1;
+    setPreview(null);
+  }, []);
   const choose = useMutation({
     mutationFn: () => chooseWikiSourceRoot(coordinate),
+    onMutate: cancelPendingOpen,
     onSuccess: () => {
       void queryClient.invalidateQueries({
-        queryKey: ["wiki-source-grants", coordinate],
+        queryKey: grantsQueryKey,
       });
     },
   });
   const forget = useMutation({
     mutationFn: (capabilityId: string) => forgetWikiSourceRoot(capabilityId),
+    onMutate: cancelPendingOpen,
     onSuccess: () => {
       void queryClient.invalidateQueries({
-        queryKey: ["wiki-source-grants", coordinate],
+        queryKey: grantsQueryKey,
       });
     },
   });
@@ -94,16 +109,52 @@ export function WikiSourceFiles({
     mutationFn: ({ id, index }: { id: string; index: number }) =>
       openWikiSource(id, pageEvent, index),
   });
-  const [preview, setPreview] = React.useState<WikiSourceContent | null>(null);
-  React.useEffect(() => {
-    if (!pageEvent.id) return;
-    setPreview(null);
-  }, [pageEvent.id]);
-  if (files.length === 0) return null;
+  const resetMutationsRef = React.useRef<() => void>(() => undefined);
+  resetMutationsRef.current = () => {
+    openSource.reset();
+    choose.reset();
+    forget.reset();
+  };
   const grant = grantsQuery.data?.find(
-    (candidate) => candidate.repositoryCoordinate === coordinate,
+    (candidate) =>
+      candidate.repositoryCoordinate === coordinate &&
+      operationScope !== undefined &&
+      sameOwnerOperationScope(candidate.token, operationScope),
   );
   const references = sourceReferences(pageEvent);
+  const hasUnavailableReference = files.some(
+    (file) => references.findIndex((reference) => reference[0] === file) < 0,
+  );
+  const sourceContextRef = React.useRef<{
+    pageId: string;
+    coordinate: string;
+    scope: OwnerOperationScope | undefined;
+    grantId: string | null;
+  }>({
+    pageId: pageEvent.id,
+    coordinate,
+    scope: operationScope,
+    grantId: grant?.capabilityId ?? null,
+  });
+  sourceContextRef.current = {
+    pageId: pageEvent.id,
+    coordinate,
+    scope: operationScope,
+    grantId: grant?.capabilityId ?? null,
+  };
+  const sourceContextKey = JSON.stringify([
+    coordinate,
+    grant?.capabilityId ?? null,
+    pageEvent.id,
+    scopeKey,
+  ]);
+  React.useEffect(() => {
+    if (!sourceContextKey) return;
+    openRequestRef.current += 1;
+    setPreview(null);
+    resetMutationsRef.current();
+  }, [sourceContextKey]);
+  if (files.length === 0) return null;
   return (
     <details
       className="mb-4 rounded-md border border-border bg-muted/20 p-3"
@@ -131,7 +182,7 @@ export function WikiSourceFiles({
         ) : (
           <button
             className="rounded border border-border px-2 py-1 text-primary hover:text-foreground"
-            disabled={choose.isPending}
+            disabled={choose.isPending || !operationScope}
             onClick={(event) => {
               event.preventDefault();
               void choose.mutateAsync();
@@ -155,36 +206,47 @@ export function WikiSourceFiles({
       </div>
       <ul className="mt-2 space-y-1">
         {files.map((file) => {
-          const href =
-            owner.length === 64
-              ? buildFileLink({
-                  owner,
-                  dtag: repoD,
-                  path: file,
-                  lines: "1-40",
-                })
-              : null;
+          const referenceIndex = references.findIndex(
+            (reference) => reference[0] === file,
+          );
+          const canOpen = Boolean(grant && referenceIndex >= 0);
           return (
             <li key={file}>
               <button
                 className="font-mono text-2xs text-primary"
+                data-testid={`wiki-source-file-${file}`}
+                disabled={!canOpen}
                 onClick={(event) => {
                   event.preventDefault();
-                  const referenceIndex = references.findIndex(
-                    (reference) => reference[0] === file,
-                  );
-                  if (grant && referenceIndex >= 0) {
-                    void openSource
-                      .mutateAsync({
-                        id: grant.capabilityId,
-                        index: referenceIndex,
-                      })
-                      .then(setPreview);
-                    return;
-                  }
-                  if (!href) return;
-                  const parsed = parseEntityLink(href);
-                  if (parsed.ok) open(parsed.value);
+                  if (!grant || referenceIndex < 0) return;
+                  const requestId = ++openRequestRef.current;
+                  const requestContext = { ...sourceContextRef.current };
+                  void openSource
+                    .mutateAsync({
+                      id: grant.capabilityId,
+                      index: referenceIndex,
+                    })
+                    .then(
+                      (result) => {
+                        const current = sourceContextRef.current;
+                        if (
+                          requestId !== openRequestRef.current ||
+                          current.pageId !== requestContext.pageId ||
+                          current.coordinate !== requestContext.coordinate ||
+                          current.grantId !== requestContext.grantId ||
+                          (current.scope && requestContext.scope
+                            ? !sameOwnerOperationScope(
+                                current.scope,
+                                requestContext.scope,
+                              )
+                            : current.scope !== requestContext.scope)
+                        ) {
+                          return;
+                        }
+                        setPreview(result);
+                      },
+                      () => undefined,
+                    );
                 }}
                 type="button"
               >
@@ -194,6 +256,24 @@ export function WikiSourceFiles({
           );
         })}
       </ul>
+      {!grant ? (
+        <p
+          className="mt-2 text-2xs text-muted-foreground"
+          data-testid="wiki-source-unavailable"
+        >
+          {operationScope
+            ? "Choose the linked folder to open cited source at its recorded revision."
+            : "Source access is unavailable until the current Wiki scope is ready."}
+        </p>
+      ) : references.length === 0 || hasUnavailableReference ? (
+        <p
+          className="mt-2 text-2xs text-muted-foreground"
+          data-testid="wiki-source-unavailable"
+        >
+          The cited source reference is unavailable for one or more files on
+          this page.
+        </p>
+      ) : null}
       {preview ? (
         <pre
           className="mt-3 max-h-64 overflow-auto rounded border border-border bg-muted/20 p-3 text-xs"

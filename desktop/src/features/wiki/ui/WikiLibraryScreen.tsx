@@ -116,8 +116,10 @@ export function WikiLibraryScreen() {
           eventsQuery.companyQuery.isPending || eventsQuery.scopeQuery.isPending
         }
         door="library"
+        navigationProjectId="company"
         onBack={() => setSelected(null)}
         onRetryCompany={() => void eventsQuery.companyQuery.refetch()}
+        operationScope={operationScope}
         page={companyPageAsWiki(page)}
         proposals={proposals}
         repoName="Company Wiki"
@@ -186,6 +188,7 @@ export function WikiLibraryScreen() {
           if (repo) void goProject(repo.id);
         }}
         owner={repo?.owner ?? toc?.owner ?? ""}
+        navigationProjectId={repo?.id ?? selectedCoordinate}
         operationScope={selectedScope}
         page={page}
         pages={repoPages}
