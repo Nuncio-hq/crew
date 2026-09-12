@@ -3,28 +3,30 @@
 //! This test intentionally has no embedded relay or provider.  It is ignored
 //! by default and only runs when the caller supplies an owned relay, signer,
 //! repository coordinate, SQLite journal path, and receipt path.  The test
-//! drives the production generation, reservation, dispatch, and restart
-//! worker seams; a second native app handle then verifies the same durable row
-//! and exact signed graph.
+//! drives the production generation, reservation, and restart worker seams; a
+//! second native app handle then resumes the unresolved row and verifies the
+//! same durable row and exact signed graph.
 
 use std::path::{Path, PathBuf};
 
 use nostr::{Event, Keys};
 use serde_json::{json, Value};
+use std::time::Duration;
 use tauri::Manager;
 
 use super::owner_operations::owner_operation_load_at_path;
 use super::wiki_publication_commands::{
-    dispatch_row_with_context, reserve_generated_publication_at_path, WikiPublicationBuildInput,
+    reserve_generated_publication_at_path, WikiPublicationBuildInput,
 };
 use super::wiki_publication_native_reads::{NativeClock, NativeJournal};
 use super::wiki_publication_record::WikiPublicationRecord;
 use super::wiki_publication_runtime::NativeWikiPublication;
 use super::wiki_publication_test_fixture;
-use super::wiki_publication_worker::run_due_with_context;
+use super::wiki_publication_worker::start_with_context;
 use crate::app_state::owner_scope::{capture, OwnerScopeToken};
 use crate::app_state::{build_app_state, AppState};
 use crate::owner_operations::{CreateResult, Operation, OperationStatus};
+use tokio::sync::oneshot;
 
 const RECEIPT_LIMIT: usize = 1024 * 1024;
 
@@ -239,54 +241,51 @@ async fn native_wiki_publication_roundtrip_against_owned_relay() -> Result<(), S
         &operation.id,
     )
     .await?;
-    let dispatched = dispatch_row_with_context(
-        app_a.handle().clone(),
-        scope_a.clone(),
-        operation.id.clone(),
-        operation.revision,
-        false,
-        false,
-        (journal.clone(), clock.clone()),
-    )
-    .await?;
-    let final_a = runtime_a
-        .current_publication()
-        .await?
-        .ok_or_else(|| "relay has no graph after native dispatch".to_string())?;
-    if final_a.head.id != reserved_record.head.id
-        || final_a.manifest.id != reserved_record.manifest.id
-        || final_a
-            .pages
-            .iter()
-            .map(|event| event.id)
-            .collect::<Vec<_>>()
-            != reserved_record
-                .pages
-                .iter()
-                .map(|event| event.id)
-                .collect::<Vec<_>>()
-    {
-        return Err("relay head differs from the production-built publication".into());
-    }
-    let row_a = load_operation(
+    let row_before_restart = load_operation(
         app_a.handle().clone(),
         cfg.journal.clone(),
         &scope_a,
         &operation.id,
     )
     .await?;
+    if row_before_restart.status != OperationStatus::Preparing || row_before_restart.reconciled {
+        return Err("app A did not leave a genuinely unresolved Wiki row".into());
+    }
     drop(runtime_a);
     drop(app_a);
 
     let app_b = app_with_identity(&cfg.keys, &cfg.relay_ws);
     let scope_b = scope_for(&app_b).await?;
-    run_due_with_context(
+    let (stop_tx, stop_rx) = oneshot::channel();
+    let worker_task = start_with_context(
         app_b.handle().clone(),
-        scope_b.clone(),
         journal.clone(),
         clock.clone(),
+        Some(stop_rx),
     )
-    .await?;
+    .ok_or_else(|| "fresh app did not start its Wiki recovery worker".to_string())?;
+    let recovered = async {
+        for _ in 0..240 {
+            let row = load_operation(
+                app_b.handle().clone(),
+                cfg.journal.clone(),
+                &scope_b,
+                &operation.id,
+            )
+            .await?;
+            if row.status == OperationStatus::Complete && row.reconciled {
+                return Ok::<_, String>(row);
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        Err("fresh app did not reconcile the unresolved Wiki row in time".into())
+    }
+    .await;
+    let _ = stop_tx.send(());
+    worker_task
+        .await
+        .map_err(|_| "fresh Wiki recovery worker did not stop".to_string())?;
+    let row_b = recovered?;
     let runtime_b = NativeWikiPublication::new_with_context(
         app_b.handle().clone(),
         scope_b.clone(),
@@ -299,34 +298,43 @@ async fn native_wiki_publication_roundtrip_against_owned_relay() -> Result<(), S
         .current_publication()
         .await?
         .ok_or_else(|| "recreated native app cannot verify v1 graph".to_string())?;
-    if final_b.head.id != final_a.head.id || final_b.manifest.id != final_a.manifest.id {
+    if final_b.head.id != reserved_record.head.id
+        || final_b.manifest.id != reserved_record.manifest.id
+        || final_b
+            .pages
+            .iter()
+            .map(|event| event.id)
+            .collect::<Vec<_>>()
+            != reserved_record
+                .pages
+                .iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>()
+    {
         return Err("recreated app observed a different exact graph".into());
     }
-    let row_b = load_operation(
-        app_b.handle().clone(),
-        cfg.journal.clone(),
-        &scope_b,
-        &operation.id,
-    )
-    .await?;
-    if row_b.revision != row_a.revision
+    if row_b.id != operation.id
+        || row_b.revision <= row_before_restart.revision
         || row_b.status != OperationStatus::Complete
         || !row_b.reconciled
     {
-        return Err("recreated app did not retain the completed durable row".into());
+        return Err("recreated app did not resume and reconcile the durable row".into());
     }
 
     write_receipt(
         &cfg.receipt,
         &json!({
-            "schema": "crew-362-native-wiki-acceptance-v1",
+            "schema": "crew-362-native-wiki-acceptance-v2",
             "relayOrigin": cfg.relay_http,
             "owner": cfg.keys.public_key().to_hex(),
             "repository": {"coordinate": coordinate, "d": cfg.repo_d},
             "initial": {"repository": event_value(&repository), "graph": graph_value(&initial)},
             "final": graph_value(&final_b),
             "operation": operation_value(&row_b),
-            "dispatch": serde_json::to_value(&dispatched.value).expect("dispatch JSON"),
+            "restart": {
+                "before": operation_value(&row_before_restart),
+                "resumed": true,
+            },
             "scopeGenerations": {
                 "a": {"workspace": scope_a.workspace_generation, "identity": scope_a.identity_generation},
                 "b": {"workspace": scope_b.workspace_generation, "identity": scope_b.identity_generation},
