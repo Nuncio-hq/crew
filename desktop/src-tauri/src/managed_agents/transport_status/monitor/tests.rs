@@ -438,21 +438,22 @@ fn retired_matching_terminal_record_is_the_only_evidence_source() {
         .as_mut()
         .expect("fixture has AUTH evidence")
         .auth_event_id = "b".repeat(64);
-    assert!(!diagnostics.lock().unwrap().apply(
+    assert!(diagnostics.lock().unwrap().apply(
         &ticket,
         TransportRecordEnvelope::V2(changed_ack),
         false,
         now + Duration::from_secs(1),
         100_000,
     ));
-    assert!(diagnostics
+    let unavailable = diagnostics
         .lock()
         .unwrap()
         .projection(&ticket.key, &ticket.owner, now)
-        .unwrap()
-        .auth_record
-        .is_none());
-    assert!(!diagnostics.lock().unwrap().apply(
+        .unwrap();
+    assert_eq!(unavailable.status.state, TransportState::Unknown);
+    assert_eq!(unavailable.status.code, TransportCode::StatusUnavailable);
+    assert!(unavailable.auth_record.is_none());
+    assert!(diagnostics.lock().unwrap().apply(
         &ticket,
         TransportRecordEnvelope::V2(terminal),
         false,
@@ -464,5 +465,7 @@ fn retired_matching_terminal_record_is_the_only_evidence_source() {
         .unwrap()
         .projection(&ticket.key, &ticket.owner, now)
         .unwrap();
+    assert_eq!(after.status.state, TransportState::AuthRejected);
+    assert_eq!(after.status.code, TransportCode::AuthDenied);
     assert!(after.auth_record.is_some());
 }
