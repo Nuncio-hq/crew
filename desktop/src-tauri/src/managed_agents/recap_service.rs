@@ -120,6 +120,7 @@ pub(crate) enum RecapServiceFailure {
 /// The caller must have built `plan` from the same admission. The check here
 /// binds the plan's executable and model again at the production seam, so a
 /// future adapter cannot accidentally pair a valid grant with another recipe.
+#[cfg(test)]
 pub(crate) fn execute_admitted_recap(
     admission: RecapAdmission,
     run: OwnedRecapRun,
@@ -550,23 +551,30 @@ pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
     // Identity imports use this mutex for every key replacement. Hold it
     // together with the workspace guard through the synchronous final scope
     // check and child spawn, then release both from the runner's on-spawn hook.
-    let identity_guard = state.identity_mutation.lock().map_err(|_| {
-        error_code(RecapServiceFailure::State(
-            RecapStateFailure::RuntimeNotReady,
-        ))
-        .to_string()
-    })?;
+    let identity_guard = match state.identity_mutation.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return abort_before_start(
+                run,
+                RecapServiceFailure::State(RecapStateFailure::RuntimeNotReady),
+            )
+            .map_err(|error| error_code(error).to_string())
+        }
+    };
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return abort_before_start(run, RecapServiceFailure::Runner(BoundedFailure::Cancelled))
             .map_err(|error| error_code(error).to_string());
     }
-    crate::app_state::owner_scope::assert_current_blocking(app.clone(), &scope.owner.token)
-        .map_err(|_| {
-            error_code(RecapServiceFailure::State(
-                RecapStateFailure::RuntimeNotReady,
-            ))
-            .to_string()
-        })?;
+    if crate::app_state::owner_scope::assert_current_blocking(app.clone(), &scope.owner.token)
+        .is_err()
+    {
+        drop(identity_guard);
+        return abort_before_start(
+            run,
+            RecapServiceFailure::State(RecapStateFailure::RuntimeNotReady),
+        )
+        .map_err(|error| error_code(error).to_string());
+    }
     let release_launch_lease = move || {
         drop(identity_guard);
         drop(launch_workspace_guard.take());
