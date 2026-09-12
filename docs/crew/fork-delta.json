@@ -90,6 +90,12 @@
       "filesAtRecord": 2
     },
     {
+      "area": "crates/buzz-pair-relay/tests/integration.rs",
+      "why": "Stabilize pair-relay virtual-time timeout coverage by synchronizing server readiness before pausing the test clock.",
+      "resolve": "Keep the readiness handshake and wall-clock close assertion around the production 120-second deadline; preserve upstream pair-relay protocol behavior and integration coverage.",
+      "filesAtRecord": 1
+    },
+    {
       "area": "crates/buzz-db/**",
       "why": "Crew migration numbering (0031_wiki_fts_allowlist inserted → upstream 0031+ shift by one); migrator tests count Crew files. D-080 composes channel/owner/exact-event persistence and canonical discovery using existing tables (#361). D-079 conditional replacement, immutable Wiki admission and owner/community live-storage bounds (#362).",
       "resolve": "on sync, rename incoming upstream migrations to Crew numbering (N+1) and never keep both copies; update migrator counts. Retain transaction-bound event insertion with thread metadata and the community/TTL/replacement/membership/channel lock order. Wiki reserved writes take the owner quota lock before the coordinate lock; compare the locked live head, and only exact current replay succeeds. Keep legacy Project replacement semantics outside the opt-in contract.",
