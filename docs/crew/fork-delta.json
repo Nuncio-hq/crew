@@ -641,9 +641,9 @@
     },
     {
       "area": "*",
-      "why": "root: AGENTS.md (Crew banner + Cursor Cloud notes), README/CONTRIBUTING/RELEASING/SECURITY/ARCHITECTURE/CHANGELOG Crew sections, Justfile Crew recipes, Cargo workspace members (crew-wiki, buzz-worktree, buzz-cowork…), .env.example, lefthook, renovate, deploy chart README.",
-      "resolve": "Crew sections are self-contained blocks; on conflict keep upstream body and re-place the Crew block.",
-      "filesAtRecord": 15
+      "why": "root: AGENTS.md (Crew banner + Cursor Cloud notes), README/CONTRIBUTING/RELEASING/SECURITY/ARCHITECTURE/CHANGELOG Crew sections, Justfile Crew recipes, Cargo workspace members (crew-wiki, buzz-worktree, buzz-cowork…), .env.example, lefthook, renovate, deploy chart README, and verified multi-arch MinIO CI image pins.",
+      "resolve": "Crew sections are self-contained blocks; on conflict keep upstream body and re-place the Crew block. Keep the MinIO and mc compose pins on the verified official Quay manifest digests.",
+      "filesAtRecord": 18
     },
     {
       "area": "admin-web/**",
