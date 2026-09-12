@@ -31,6 +31,7 @@ import { useWikiSearch, type WikiSearchResult } from "@/shared/api/wikiSearch";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { OFFICE_SURFACE } from "@/shared/layout/officeChrome";
 import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
+import { cn } from "@/shared/lib/cn";
 
 /**
  * Wiki page + TOC (#200 / #205). TOC rail min 200px; below 520px container the
@@ -546,7 +547,7 @@ export function WikiPageView({
       ) : null}
       <div className="flex min-w-0 flex-1 flex-col">
         <TopChromeInsetHeader
-          className="border-b border-border"
+          className={cn("border-b border-border", door === "project" && "z-20")}
           data-office-surface={OFFICE_SURFACE.headerBar}
           data-testid="wiki-header-bar"
         >
