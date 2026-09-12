@@ -19,7 +19,6 @@ fn identifier_prefix_does_not_match_longer_id() {
     let id = b"xyz.block.buzz.app";
     assert!(!super::buffer_contains_identifier(buf, id));
 }
-
 #[test]
 fn identifier_prefix_does_not_match_worktree_slug() {
     // Main dev identifier should NOT match inside a worktree desktop's buffer.
@@ -1227,6 +1226,7 @@ fn make_pair_runtime_placeholder() -> crate::managed_agents::ManagedAgentPairRun
     let process = crate::managed_agents::ManagedAgentProcess {
         child,
         log_path: Default::default(),
+        spawn_started_at_ms: 1,
         spawn_config: crate::managed_agents::spawn_snapshot::prospective_spawn_config_snapshot(
             &minimal_record(&"cc".repeat(32)),
             &[],

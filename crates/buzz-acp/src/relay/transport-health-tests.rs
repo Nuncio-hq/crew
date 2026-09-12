@@ -410,6 +410,62 @@ async fn local_signing_failure_is_not_verified_server_auth_rejection() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn typed_auth_evidence_is_bound_to_attempt_and_cleared_on_success() {
+    let mut health = TransportHealth::managed();
+    let auth_event_id = "a".repeat(64);
+    let result: Result<(), RelayError> = health
+        .connect_with_context(|attempt| async move {
+            Err(RelayError::AuthDenied(AuthDeniedInfo::from_ack(
+                &attempt,
+                auth_event_id,
+                "blocked: you are banned from this community",
+                attempt.started_at_ms.saturating_add(1),
+            )))
+        })
+        .await;
+    assert!(result.is_err());
+    let first_attempt = health.current_attempt.clone().expect("attempt context");
+    let received = health.received_auth.clone().expect("exact auth evidence");
+    assert_eq!(received.attempt_id, first_attempt.id);
+    assert_eq!(received.attempt_sequence, first_attempt.sequence);
+    assert_eq!(
+        received.classification,
+        buzz_core::transport_status::TransportAuthClassification::CommunityBanned
+    );
+
+    health
+        .connect_with_context(|_| async { Ok::<(), RelayError>(()) })
+        .await
+        .unwrap();
+    assert!(health.received_auth.is_none());
+    assert!(health
+        .current_attempt
+        .as_ref()
+        .is_some_and(|attempt| attempt.sequence > first_attempt.sequence));
+    health.recovered().await;
+    assert!(health.current_attempt.is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn mismatched_typed_auth_evidence_is_not_projected() {
+    let mut health = TransportHealth::managed();
+    let result: Result<(), RelayError> = health
+        .connect_with_context(|attempt| async move {
+            let mut wrong_attempt = attempt.clone();
+            wrong_attempt.sequence = wrong_attempt.sequence.saturating_add(1);
+            Err(RelayError::AuthDenied(AuthDeniedInfo::from_ack(
+                &wrong_attempt,
+                "a".repeat(64),
+                "blocked: fixture identity",
+                attempt.started_at_ms.saturating_add(1),
+            )))
+        })
+        .await;
+    assert!(result.is_err());
+    assert!(health.received_auth.is_none());
+}
+
+#[tokio::test(start_paused = true)]
 async fn burst_deadline_bounds_resubscription_and_preserves_deferred_intent() {
     let (mut ws, _server) = super::tests::test_ws_pair().await;
     let mut state = BgState::new();

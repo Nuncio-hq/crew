@@ -76,19 +76,28 @@ pub(super) fn status_for_with<R: tauri::Runtime>(
     } else {
         None
     };
-    let transport = runtime
+    let live_monitor = runtime
         .and_then(|runtime| runtime.transport.as_ref())
         .filter(|monitor| {
             owner
                 .as_deref()
                 .is_some_and(|owner| monitor.belongs_to(owner, &key.relay_url))
-        })
+        });
+    let transport = live_monitor
         .map(|monitor| monitor.status().clone())
-        .or_else(|| retired.as_ref().map(|(status, _)| status.clone()))
+        .or_else(|| retired.as_ref().map(|projection| projection.status.clone()))
         .unwrap_or_else(buzz_core_pkg::transport_status::TransportStatus::unknown);
+    let transport_auth_evidence = live_monitor
+        .and_then(super::transport_status::live_auth_evidence)
+        .or_else(|| {
+            retired
+                .as_ref()
+                .and_then(super::transport_status::retired_auth_evidence)
+        });
     ManagedAgentRuntimeStatus {
         transport,
         transport_retired: retired.is_some(),
+        transport_auth_evidence,
         start_nonce: runtime.map(|runtime| runtime.start_nonce.clone()),
         pubkey: key.pubkey.clone(),
         relay_url: key.relay_url.clone(),
@@ -98,7 +107,10 @@ pub(super) fn status_for_with<R: tauri::Runtime>(
         lifecycle: runtime
             .map(|runtime| runtime.lifecycle.clone())
             .unwrap_or_else(|| {
-                if retired.as_ref().is_some_and(|(_, failed)| *failed) {
+                if retired
+                    .as_ref()
+                    .is_some_and(|projection| projection.failed_exit)
+                {
                     ManagedAgentRuntimeLifecycle::Failed
                 } else {
                     ManagedAgentRuntimeLifecycle::Stopped
@@ -112,7 +124,10 @@ pub(super) fn status_for_with<R: tauri::Runtime>(
     }
 }
 
-pub(super) fn emit_status(app: &AppHandle, status: &ManagedAgentRuntimeStatus) {
+pub(super) fn emit_status<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    status: &ManagedAgentRuntimeStatus,
+) {
     let _ = app.emit(STATUS_EVENT, status);
 }
 
@@ -587,6 +602,7 @@ fn unkeyable_failed_status(
     ManagedAgentRuntimeStatus {
         transport: buzz_core_pkg::transport_status::TransportStatus::unknown(),
         transport_retired: false,
+        transport_auth_evidence: None,
         start_nonce: None,
         pubkey: record.pubkey.clone(),
         relay_url: requested.clone(),
@@ -925,6 +941,7 @@ mod tests {
         let process = super::super::ManagedAgentProcess {
             child,
             log_path: Default::default(),
+            spawn_started_at_ms: 1,
             spawn_config,
             setup_mode: false,
             adapter_availability: None,

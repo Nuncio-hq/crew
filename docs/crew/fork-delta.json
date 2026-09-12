@@ -11,7 +11,7 @@
     },
     {
       "area": "crates/buzz-acp/**",
-      "why": "Crew's agent kernel: session ledger + resume-first (#169/#180), thread worktree leases + Cowork (#187/#188), elicitation, receipts + recovery (#91/#339/#340), governor/desktop-control env (#196/#197), lazy slot fill (#302), roles (#116/#148), Crew prompt sections. Crew has NOT adopted upstream #6732 thread-per-session (`session_owners`/`SessionPolicy`); scope.rs + session_model_*.md are present but unwired.",
+      "why": "Crew's agent kernel: session ledger + resume-first (#169/#180), thread worktree leases + Cowork (#187/#188), elicitation, receipts + recovery (#91/#339/#340), governor/desktop-control env (#196/#197), lazy slot fill (#302), roles (#116/#148), Crew prompt sections, and #338 exact AUTH correlation plus bounded transport-status production. Crew has NOT adopted upstream #6732 thread-per-session (`session_owners`/`SessionPolicy`); scope.rs + session_model_*.md are present but unwired.",
       "resolve": "Crew is ahead here: cherry-pick upstream commits onto Crew (do not rebase Crew onto upstream). Keep one idle reaper, additive Crew modules, `Option<&'static str>` base prompt. A change that touches session ownership needs a decision first.",
       "filesAtRecord": 13,
       "fileHints": [
@@ -49,7 +49,7 @@
     },
     {
       "area": "crates/buzz-core/**",
-      "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields; Crew-owned role parser/read/bulk mutation and cleanup contracts (#350).",
+      "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields; Crew-owned role parser/read/bulk mutation and cleanup contracts (#350); strict additive v1/v2 local transport records and lease freshness (#338).",
       "resolve": "keep constants in ALL_KINDS / P_GATED_KINDS / parameterized asserts.",
       "filesAtRecord": 4,
       "fileHints": [
@@ -482,8 +482,8 @@
     {
       "area": "desktop/src-tauri/**",
 
-      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362); #350 bulk canvas command registration and startup recovery worker; #362 coherent Wiki reads, native publication recovery and scoped relay-self discovery.",
-      "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; keep selected path separate from Git ancestor, bound probe output/time, and report unavailable access as an error; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve the shared guarded key-replacement and native scope capture seams; relay events remain domain authority. Wiki retry reuses the journal's signed graph and fences every send; the reader verifies exact immutable dependencies. Keep scoped relay-self lookup uncached and bounded while preserving archive consumers' cache behavior.",
+      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json; #338 native transport registration, v1/v2 reader fences, retired diagnostics and opt-in evidence projection/export. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362); #350 bulk canvas command registration and startup recovery worker; #362 coherent Wiki reads, native publication recovery and scoped relay-self discovery.",
+      "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; keep selected path separate from Git ancestor, bound probe output/time, and report unavailable access as an error; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve the shared guarded key-replacement, native scope capture, and managed transport registration seams; relay events remain domain authority. Keep v1 health compatibility while v2 process/AUTH evidence stays fenced by the native ticket. Wiki retry reuses the journal's signed graph and fences every send; the reader verifies exact immutable dependencies. Keep scoped relay-self lookup uncached and bounded while preserving archive consumers' cache behavior.",
 
       "filesAtRecord": 88,
       "fileHints": [
@@ -566,6 +566,16 @@
           "path": "desktop/src-tauri/src/invoke.rs",
           "why": "D-079 register scoped recovery metadata commands with fixed native path and limits",
           "resolve": "Keep the small production seam; recovery implementation lives in Crew-owned modules."
+        },
+        {
+          "path": "desktop/src-tauri/src/managed_agents/transport_status/producer_fixture.rs",
+          "why": "#338 queued whole-chain ACP producer to native-reader proof; bounded loopback child, secure reader, retired final read and native binding falsification",
+          "resolve": "keep ignored and source/hash-bound; run only through the retained validation recipe with the exact test filter"
+        },
+        {
+          "path": "desktop/src-tauri/src/managed_agents/transport_status/producer_fixture/helpers.rs",
+          "why": "#338 queued whole-chain fixture support: bounded provenance hashing, process/output caps and cleanup guards",
+          "resolve": "keep helper bounds and cleanup adjacent to the producer fixture; do not turn the fixture into a generic process runner"
         }
       ]
     },

@@ -120,6 +120,7 @@ use buzz_core::kind::{
     KIND_AGENT_OBSERVER_FRAME, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_TYPING_INDICATOR,
 };
+use buzz_core::transport_status::TransportAuthClassification;
 use futures_util::{SinkExt, StreamExt};
 use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag};
 use serde_json::{json, Value};
@@ -692,8 +693,12 @@ pub enum RelayError {
     AuthFailed(String),
 
     /// Negative OK for the exact AUTH event on the current connection attempt.
-    #[error("Auth failed: {0}")]
-    AuthDenied(String),
+    ///
+    /// The relay's denial text is classified at the ACK boundary and is never
+    /// retained in this error. This keeps `Display`, tracing, and any later
+    /// status projection free of relay-controlled text.
+    #[error("Auth denied")]
+    AuthDenied(AuthDeniedInfo),
 
     #[error("No auth challenge received")]
     NoAuthChallenge,
@@ -728,6 +733,77 @@ pub enum RelayError {
 
     #[error("Unexpected message: {0}")]
     UnexpectedMessage(String),
+}
+
+/// Immutable identity minted before one physical socket attempt starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AuthAttemptContext {
+    pub sequence: u64,
+    pub id: String,
+    pub started_at_ms: u64,
+}
+
+/// Safe, typed result of an exact negative NIP-42 AUTH acknowledgement.
+///
+/// The enclosing [`RelayError`] is public, so this carrier is public as well;
+/// its fields remain crate-visible because relay-controlled diagnostics must
+/// not become a public string API.
+///
+/// `auth_event_id`, `received_at_ms`, and the attempt identity are populated
+/// only for an ACK that was correlated to the AUTH event sent by this attempt.
+/// Directly constructed fixture errors can omit those fields without
+/// introducing relay text or fabricating receipt evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthDeniedInfo {
+    pub(crate) classification: TransportAuthClassification,
+    pub(crate) retryable: bool,
+    pub(crate) auth_event_id: Option<String>,
+    pub(crate) received_at_ms: Option<u64>,
+    pub(crate) attempt_id: Option<String>,
+    pub(crate) attempt_sequence: Option<u64>,
+}
+
+impl AuthDeniedInfo {
+    fn from_message(message: &str) -> Self {
+        Self {
+            classification: if message == "blocked: you are banned from this community" {
+                TransportAuthClassification::CommunityBanned
+            } else {
+                TransportAuthClassification::OtherDenial
+            },
+            retryable: message.trim_start().starts_with("error:"),
+            auth_event_id: None,
+            received_at_ms: None,
+            attempt_id: None,
+            attempt_sequence: None,
+        }
+    }
+
+    fn from_ack(
+        attempt: &AuthAttemptContext,
+        auth_event_id: String,
+        message: &str,
+        received_at_ms: u64,
+    ) -> Self {
+        let mut info = Self::from_message(message);
+        info.auth_event_id = Some(auth_event_id);
+        info.received_at_ms = Some(received_at_ms);
+        info.attempt_id = Some(attempt.id.clone());
+        info.attempt_sequence = Some(attempt.sequence);
+        info
+    }
+}
+
+impl From<String> for AuthDeniedInfo {
+    fn from(message: String) -> Self {
+        Self::from_message(&message)
+    }
+}
+
+impl From<&str> for AuthDeniedInfo {
+    fn from(message: &str) -> Self {
+        Self::from_message(message)
+    }
 }
 
 impl RelayError {
@@ -902,9 +978,10 @@ impl HarnessRelay {
         // `is_terminal_connect_error`.
         let mut health = TransportHealth::from_environment(agent_pubkey_hex, relay_url).await?;
         let (ws, handshake_buffer) =
-            transport_reconnect::retry_initial_connect_with_health(&mut health, || {
-                do_connect(relay_url, keys, auth_tag.as_ref())
-            })
+            transport_reconnect::retry_initial_connect_with_health_context(
+                &mut health,
+                |attempt| do_connect(relay_url, keys, auth_tag.as_ref(), attempt),
+            )
             .await?;
 
         let (event_tx, event_rx) = mpsc::channel::<Option<BuzzEvent>>(event_channel_capacity());
@@ -4116,9 +4193,8 @@ fn is_terminal_connect_error(err: &RelayError) -> bool {
         | RelayError::Json(_)
         | RelayError::UnexpectedMessage(_) => true,
         RelayError::WebSocket(e) => is_terminal_ws_error(e.as_ref()),
-        RelayError::AuthFailed(message) | RelayError::AuthDenied(message) => {
-            is_terminal_auth_failure(message)
-        }
+        RelayError::AuthFailed(message) => is_terminal_auth_failure(message),
+        RelayError::AuthDenied(info) => !info.retryable,
         RelayError::NoAuthChallenge
         | RelayError::ConnectionClosed
         | RelayError::Timeout
@@ -4244,6 +4320,7 @@ async fn do_connect(
     relay_url: &str,
     keys: &Keys,
     auth_tag: Option<&nostr::Tag>,
+    attempt: AuthAttemptContext,
 ) -> Result<(WsStream, VecDeque<RelayMessage>), RelayError> {
     let parsed = relay_url
         .parse::<url::Url>()
@@ -4261,9 +4338,16 @@ async fn do_connect(
     let challenge = wait_for_auth_challenge(&mut ws, &mut buffer, AUTH_TIMEOUT).await?;
 
     let auth_event_id = send_auth_response(&mut ws, &challenge, relay_url, keys, auth_tag).await?;
-    let ok = wait_for_auth_ok(&mut ws, &mut buffer, &auth_event_id, AUTH_TIMEOUT).await?;
+    let ok = wait_for_auth_ok(&mut ws, &mut buffer, &auth_event_id, AUTH_TIMEOUT, &attempt).await?;
     if !ok.accepted {
-        return Err(RelayError::AuthDenied(ok.message));
+        // Convert relay-controlled text at the exact-ACK boundary. The raw
+        // message is not carried into the error or any later status path.
+        return Err(RelayError::AuthDenied(AuthDeniedInfo::from_ack(
+            &ok.attempt,
+            ok.event_id,
+            &ok.message,
+            ok.received_at_ms,
+        )));
     }
     let event_id = ok.event_id;
 
@@ -4328,6 +4412,17 @@ struct OkResponse {
     event_id: String,
     accepted: bool,
     message: String,
+    received_at_ms: u64,
+    attempt: AuthAttemptContext,
+}
+
+fn wall_clock_ms() -> Result<u64, RelayError> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| RelayError::TransportStatus("managed transport clock unavailable".into()))?
+        .as_millis();
+    u64::try_from(millis)
+        .map_err(|_| RelayError::TransportStatus("managed transport clock unavailable".into()))
 }
 
 /// Wait for the exact sent AUTH event acknowledgement, buffering unrelated frames.
@@ -4336,6 +4431,7 @@ async fn wait_for_auth_ok(
     buffer: &mut VecDeque<RelayMessage>,
     auth_event_id: &str,
     timeout_dur: Duration,
+    attempt: &AuthAttemptContext,
 ) -> Result<OkResponse, RelayError> {
     // Check if there's already one buffered.
     if let Some(idx) = buffer
@@ -4352,6 +4448,8 @@ async fn wait_for_auth_ok(
                 event_id,
                 accepted,
                 message,
+                received_at_ms: wall_clock_ms()?,
+                attempt: attempt.clone(),
             });
         }
     }
@@ -4386,6 +4484,8 @@ async fn wait_for_auth_ok(
                             event_id,
                             accepted,
                             message,
+                            received_at_ms: wall_clock_ms()?,
+                            attempt: attempt.clone(),
                         });
                     }
                     other => buffer.push_back(other),
@@ -6500,9 +6600,18 @@ mod tests {
     #[tokio::test]
     async fn do_connect_wrong_scheme_is_terminal() {
         let keys = nostr::Keys::generate();
-        let err = do_connect("https://example.com", &keys, None)
-            .await
-            .unwrap_err();
+        let err = do_connect(
+            "https://example.com",
+            &keys,
+            None,
+            AuthAttemptContext {
+                sequence: 1,
+                id: Uuid::new_v4().to_string(),
+                started_at_ms: 1,
+            },
+        )
+        .await
+        .unwrap_err();
         assert!(
             is_terminal_connect_error(&err),
             "wrong-scheme URL should be terminal, got: {err}"

@@ -100,11 +100,42 @@ pub struct ManagedAgentRuntimeStatus {
     pub transport: buzz_core_pkg::transport_status::TransportStatus,
     /// Diagnostic belongs to an explicitly retired generation.
     pub transport_retired: bool,
+    /// Optional native-auth receipt, exported only after the native monitor
+    /// or retired diagnostics cache has validated the exact generation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport_auth_evidence: Option<ManagedAgentTransportAuthEvidence>,
     /// Identity of the currently tracked harness generation, when one is
     /// running. Desktop uses this to reject observer frames from a prior
     /// process that happen to arrive after a restart.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_nonce: Option<String>,
+}
+
+/// Native context that makes an AUTH receipt attributable to one local child.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedAgentTransportNativeBinding {
+    pub runtime_id: String,
+    pub start_nonce: String,
+    pub process_id: u32,
+    pub spawn_started_at_ms: u64,
+    pub owner: String,
+    pub epoch: u64,
+}
+
+/// Optional status projection for an exact negative AUTH acknowledgement.
+/// The existing `transport` health shape remains the primary compatibility
+/// surface; this wrapper is additive and omitted when no validated receipt is
+/// available.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedAgentTransportAuthEvidence {
+    pub record: buzz_core_pkg::transport_status::TransportRecordV2,
+    pub native_binding: ManagedAgentTransportNativeBinding,
+    pub status_path: String,
+    pub retired: bool,
+    pub failed_exit: bool,
+    pub retired_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

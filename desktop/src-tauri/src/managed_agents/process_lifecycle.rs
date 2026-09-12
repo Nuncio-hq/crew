@@ -186,6 +186,7 @@ pub fn finish_spawn(
     setup_mode: bool,
     adapter_availability: Option<super::AcpAvailabilityStatus>,
     start_nonce: String,
+    spawn_started_at_ms: u64,
     agent_name: &str,
 ) -> super::ManagedAgentProcess {
     let job = create_job_for_child(child.id());
@@ -198,6 +199,7 @@ pub fn finish_spawn(
     super::ManagedAgentProcess {
         child,
         log_path,
+        spawn_started_at_ms,
         spawn_config,
         setup_mode,
         adapter_availability,

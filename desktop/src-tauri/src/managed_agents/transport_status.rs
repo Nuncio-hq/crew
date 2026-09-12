@@ -1,7 +1,10 @@
 //! Local transport diagnostics owned by existing managed-runtime generations.
 mod eligibility;
+mod export;
 mod monitor;
 mod poll;
+#[cfg(all(test, unix))]
+mod producer_fixture;
 mod reader;
 mod retention;
 pub use eligibility::*;
@@ -9,6 +12,9 @@ pub(crate) use poll::start;
 
 use crate::app_state::AppState;
 use crate::managed_agents::ManagedAgentRuntimeKey;
+pub(crate) use export::{
+    live_auth_evidence, retired_auth_evidence, NATIVE_AUTH_EVIDENCE_EXPORT_ENV,
+};
 #[cfg(test)]
 pub(crate) use monitor::ReadTicket;
 pub(crate) use monitor::{Diagnostics, Monitor};
@@ -21,6 +27,8 @@ pub(crate) const PROCESS_INSPECTION_ERROR: &str =
 
 const STATUS_PATH_ENV: &str = "CREW_ACP_TRANSPORT_STATUS_PATH";
 const START_NONCE_ENV: &str = "CREW_ACP_TRANSPORT_START_NONCE";
+pub(crate) const STATUS_VERSION_ENV: &str = "CREW_ACP_TRANSPORT_STATUS_VERSION";
+pub(crate) const SPAWN_STARTED_AT_ENV: &str = "CREW_ACP_TRANSPORT_SPAWN_STARTED_AT_MS";
 
 fn status_path(log_path: &Path, nonce: &str) -> PathBuf {
     log_path
@@ -30,6 +38,21 @@ fn status_path(log_path: &Path, nonce: &str) -> PathBuf {
 
 fn can_monitor(nonce: &str, owner: Option<&str>, setup: bool) -> bool {
     can_monitor_with_storage(cfg!(unix), nonce, owner, setup)
+}
+
+pub(crate) fn can_monitor_for_spawn(nonce: &str, owner: Option<&str>, setup: bool) -> bool {
+    can_monitor(nonce, owner, setup)
+}
+
+pub(crate) fn pre_spawn_started_at_ms() -> Result<u64, String> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "local transport clock unavailable")?
+        .as_millis();
+    let millis = u64::try_from(millis).map_err(|_| "local transport clock unavailable")?;
+    (millis > 0)
+        .then_some(millis)
+        .ok_or_else(|| "local transport clock unavailable".into())
 }
 
 fn can_monitor_with_storage(
@@ -72,12 +95,53 @@ pub(crate) fn configure_child_with_storage(
 ) {
     command
         .env_remove(STATUS_PATH_ENV)
-        .env_remove(START_NONCE_ENV);
+        .env_remove(START_NONCE_ENV)
+        .env_remove(STATUS_VERSION_ENV)
+        .env_remove(SPAWN_STARTED_AT_ENV)
+        .env_remove(NATIVE_AUTH_EVIDENCE_EXPORT_ENV);
     if storage_available && can_monitor(nonce, owner, setup) {
         command
             .env(STATUS_PATH_ENV, status_path(log_path, nonce))
             .env(START_NONCE_ENV, nonce);
     }
+}
+
+/// Add the negotiated v2 capability and native spawn lower bound only after
+/// all caller-provided environment entries have been applied. Setup and
+/// unavailable-storage children keep both keys absent.
+pub(crate) fn configure_child_transport_version(
+    command: &mut std::process::Command,
+    enabled: bool,
+    spawn_started_at_ms: u64,
+) {
+    command
+        .env_remove(STATUS_VERSION_ENV)
+        .env_remove(SPAWN_STARTED_AT_ENV);
+    if enabled {
+        command
+            .env(STATUS_VERSION_ENV, "2")
+            .env(SPAWN_STARTED_AT_ENV, spawn_started_at_ms.to_string());
+    }
+}
+
+/// Compute and stamp the v2 capability once, immediately before the child is
+/// spawned. A legacy or unavailable generation receives no stamp and remains
+/// on the v1 health-only contract.
+pub(crate) fn configure_child_transport_stamp(
+    command: &mut std::process::Command,
+    storage_available: bool,
+    nonce: &str,
+    owner: Option<&str>,
+    setup: bool,
+) -> Result<u64, String> {
+    let enabled = storage_available && can_monitor_for_spawn(nonce, owner, setup);
+    let spawn_started_at_ms = if enabled {
+        pre_spawn_started_at_ms()?
+    } else {
+        0
+    };
+    configure_child_transport_version(command, enabled, spawn_started_at_ms);
+    Ok(spawn_started_at_ms)
 }
 
 /// Called at the shared spawn boundary only after existing lifecycle guards
@@ -128,10 +192,13 @@ pub(crate) fn preflight_child(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn registered_monitor(
     key: &ManagedAgentRuntimeKey,
     log_path: &Path,
     nonce: &str,
+    process_id: u32,
+    spawn_started_at_ms: u64,
     owner: Option<&str>,
     setup: bool,
     diagnostics: &Arc<Mutex<Diagnostics>>,
@@ -159,6 +226,9 @@ fn registered_monitor(
             path,
             owner: owner?.to_ascii_lowercase(),
             epoch: 0,
+            process_id,
+            spawn_started_at_ms,
+            wire_version: if spawn_started_at_ms > 0 { 2 } else { 1 },
         },
         diagnostics,
     ))
@@ -175,6 +245,8 @@ pub(crate) fn bind_registered(
         key,
         &runtime.log_path,
         &runtime.start_nonce,
+        runtime.child.id(),
+        runtime.spawn_started_at_ms,
         owner,
         runtime.setup_mode,
         &state.managed_transport_diagnostics,
@@ -210,6 +282,15 @@ mod tests {
     fn transport_environment_keys_are_reserved_from_user_overrides() {
         assert!(super::super::env_vars::is_reserved_env_key(STATUS_PATH_ENV));
         assert!(super::super::env_vars::is_reserved_env_key(START_NONCE_ENV));
+        assert!(super::super::env_vars::is_reserved_env_key(
+            STATUS_VERSION_ENV
+        ));
+        assert!(super::super::env_vars::is_reserved_env_key(
+            SPAWN_STARTED_AT_ENV
+        ));
+        assert!(super::super::env_vars::is_reserved_env_key(
+            NATIVE_AUTH_EVIDENCE_EXPORT_ENV
+        ));
     }
 
     #[test]
@@ -221,7 +302,8 @@ mod tests {
         let mut command = std::process::Command::new("fixture");
         command
             .env(STATUS_PATH_ENV, "/untrusted/path")
-            .env(START_NONCE_ENV, "untrusted");
+            .env(START_NONCE_ENV, "untrusted")
+            .env(NATIVE_AUTH_EVIDENCE_EXPORT_ENV, "1");
         configure_child(&mut command, log, &nonce, Some(&owner), false);
         let env: HashMap<_, _> = command.get_envs().collect();
         assert_eq!(
@@ -232,10 +314,18 @@ mod tests {
             env[std::ffi::OsStr::new(START_NONCE_ENV)],
             Some(std::ffi::OsStr::new(&nonce))
         );
+        assert_eq!(
+            env[std::ffi::OsStr::new(NATIVE_AUTH_EVIDENCE_EXPORT_ENV)],
+            None
+        );
         configure_child(&mut command, log, &nonce, Some(&owner), true);
         let env: HashMap<_, _> = command.get_envs().collect();
         assert_eq!(env[std::ffi::OsStr::new(STATUS_PATH_ENV)], None);
         assert_eq!(env[std::ffi::OsStr::new(START_NONCE_ENV)], None);
+        assert_eq!(
+            env[std::ffi::OsStr::new(NATIVE_AUTH_EVIDENCE_EXPORT_ENV)],
+            None
+        );
     }
 
     #[test]
@@ -295,14 +385,29 @@ mod tests {
         let key = ManagedAgentRuntimeKey::new("a".repeat(64), "ws://fixture").unwrap();
         let log = Path::new("/fixture/runtime.log");
         let nonce = uuid::Uuid::new_v4().simple().to_string();
-        assert!(registered_monitor(&key, log, &nonce, None, false, &diagnostics).is_none());
-        assert!(
-            registered_monitor(&key, log, "", Some(&"b".repeat(64)), false, &diagnostics).is_none()
-        );
-        assert!(
-            registered_monitor(&key, log, &nonce, Some(&"b".repeat(64)), true, &diagnostics)
-                .is_none()
-        );
+        assert!(registered_monitor(&key, log, &nonce, 1, 1, None, false, &diagnostics).is_none());
+        assert!(registered_monitor(
+            &key,
+            log,
+            "",
+            1,
+            1,
+            Some(&"b".repeat(64)),
+            false,
+            &diagnostics,
+        )
+        .is_none());
+        assert!(registered_monitor(
+            &key,
+            log,
+            &nonce,
+            1,
+            1,
+            Some(&"b".repeat(64)),
+            true,
+            &diagnostics,
+        )
+        .is_none());
     }
 
     #[test]
@@ -329,6 +434,9 @@ mod tests {
             path: log.clone(),
             owner: owner.clone(),
             epoch: 0,
+            process_id: 1,
+            spawn_started_at_ms: 1,
+            wire_version: 1,
         };
         Monitor::new(old_ticket, &diagnostics).retire(true, std::time::Instant::now());
         assert!(diagnostics
@@ -336,8 +444,9 @@ mod tests {
             .unwrap()
             .projection(&key, &owner, std::time::Instant::now())
             .is_some());
-        let monitor = registered_monitor(&key, &log, &nonce, Some(&owner), false, &diagnostics)
-            .expect("registered generation must own a monitor");
+        let monitor =
+            registered_monitor(&key, &log, &nonce, 1, 1, Some(&owner), false, &diagnostics)
+                .expect("registered generation must own a monitor");
         let ticket = monitor.snapshot().unwrap();
         assert_eq!(ticket.key, key);
         assert_eq!(ticket.nonce, nonce);

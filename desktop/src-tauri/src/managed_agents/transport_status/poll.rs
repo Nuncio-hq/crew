@@ -10,7 +10,21 @@ use crate::managed_agents::{
 };
 use tauri::{AppHandle, Manager};
 
+use super::export::{self, ExportCandidate};
+
 const MAX_READS_PER_TICK: usize = 256;
+
+#[derive(Debug, Clone, Copy)]
+enum ExportTarget {
+    Live,
+    Retired,
+}
+
+#[derive(Debug)]
+struct ExportWork {
+    target: ExportTarget,
+    candidate: ExportCandidate,
+}
 
 /// Exactly one task is created during native app setup. Removing a generation
 /// removes its read capability; already-running reads still require exact apply.
@@ -54,7 +68,7 @@ pub(crate) fn start(app: AppHandle) {
     });
 }
 
-fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
+fn poll_once<R: tauri::Runtime>(app: &AppHandle<R>, cursor: usize) -> Result<usize, String> {
     let state = app.state::<AppState>();
     let owner = state
         .keys
@@ -88,7 +102,12 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
         );
         tickets
     };
-    if tickets.is_empty() {
+    // Retired final reads are removed from `tickets` once they set
+    // `final_applied`, but their registration and AUTH markers are still
+    // drained below. Keep the export-enabled worker alive for that
+    // retired-only phase; otherwise the first marker can be emitted on the
+    // final-read tick and the following AUTH marker is stranded forever.
+    if tickets.is_empty() && !export::enabled() {
         return Ok(cursor);
     }
     tickets.sort_by(|left, right| {
@@ -105,7 +124,7 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
     let results: Vec<_> = selected
         .into_iter()
         .map(|ticket| {
-            let result = super::reader::read_owned_record(&ticket.path);
+            let result = super::reader::read_owned_envelope(&ticket.path);
             (ticket, result)
         })
         .collect();
@@ -126,9 +145,10 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
         .as_millis();
     let wall_ms = u64::try_from(wall_ms).unwrap_or(u64::MAX);
     let mut records_changed = false;
-    apply_with_current_owner(&state, &owner, |runtimes| {
+    let exports = apply_with_current_owner(&state, &owner, |runtimes| {
         let now = Instant::now();
         let mut changed = HashSet::new();
+        let mut exports = Vec::new();
         let previous_errors: std::collections::HashMap<_, _> = runtimes
             .iter()
             .map(|(key, runtime)| (key.clone(), runtime.error.clone()))
@@ -189,6 +209,30 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
                 }
             }
         }
+        if export::enabled() {
+            for runtime in runtimes.values_mut() {
+                if let Some(monitor) = runtime.transport.as_mut() {
+                    if let Some(candidate) = monitor.take_export_candidate(now) {
+                        exports.push(ExportWork {
+                            target: ExportTarget::Live,
+                            candidate,
+                        });
+                    }
+                }
+            }
+            let mut diagnostics = state
+                .managed_transport_diagnostics
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for ticket in diagnostics.export_tickets(&owner, now) {
+                if let Some(candidate) = diagnostics.take_export_candidate(&ticket, now) {
+                    exports.push(ExportWork {
+                        target: ExportTarget::Retired,
+                        candidate,
+                    });
+                }
+            }
+        }
         for key in changed {
             if let Some(record) = records
                 .iter()
@@ -208,15 +252,81 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
                 emit_status(app, &status);
             }
         }
-    })?;
+        exports
+    })?
+    .unwrap_or_default();
     if records_changed {
         save_managed_agents(app, &records)?;
     }
+    // Emission is deliberately outside the process, transition, store, and
+    // diagnostics locks. A pipe or stderr sink must never stall native state.
+    drop(_store);
+    drop(_transition);
+    finish_exports(&state, &owner, exports)?;
     Ok(if total == 0 {
         0
     } else {
         (cursor + MAX_READS_PER_TICK.min(total)) % total
     })
+}
+
+fn finish_exports(state: &AppState, owner: &str, exports: Vec<ExportWork>) -> Result<(), String> {
+    let mut failed = false;
+    for work in exports {
+        let now = Instant::now();
+        let current = apply_with_current_owner(state, owner, |runtimes| match work.target {
+            ExportTarget::Live => {
+                let ticket = match &work.candidate {
+                    ExportCandidate::Registration(candidate) => &candidate.ticket,
+                    ExportCandidate::Auth(candidate) => &candidate.ticket,
+                };
+                runtimes.get_mut(&ticket.key).is_some_and(|runtime| {
+                    let registered_child = runtime.start_nonce == ticket.nonce
+                        && runtime.child.id() == ticket.process_id
+                        && matches!(runtime.child.try_wait(), Ok(None));
+                    runtime.transport.as_mut().is_some_and(|monitor| {
+                        monitor.export_is_current(&work.candidate, now, registered_child)
+                    })
+                })
+            }
+            ExportTarget::Retired => state
+                .managed_transport_diagnostics
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .export_is_current(&work.candidate, now),
+        })?
+        .unwrap_or(false);
+        if !current {
+            continue;
+        }
+        let success = export::emit(&work.candidate).is_ok();
+        failed |= !success;
+        apply_with_current_owner(state, owner, |runtimes| match work.target {
+            ExportTarget::Live => {
+                let ticket = match &work.candidate {
+                    ExportCandidate::Registration(candidate) => &candidate.ticket,
+                    ExportCandidate::Auth(candidate) => &candidate.ticket,
+                };
+                if let Some(runtime) = runtimes.get_mut(&ticket.key) {
+                    if let Some(monitor) = runtime.transport.as_mut() {
+                        monitor.finish_export(&work.candidate, success, now);
+                    }
+                }
+            }
+            ExportTarget::Retired => {
+                state
+                    .managed_transport_diagnostics
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .finish_export(&work.candidate, success, now);
+            }
+        })?;
+    }
+    if failed {
+        Err("native transport evidence export failed".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Guard the complete check-and-apply operation with the actual process map.
@@ -252,6 +362,127 @@ fn apply_with_current_owner<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managed_agents::transport_status::{Monitor, ReadTicket};
+    use buzz_core_pkg::transport_status::{
+        TransportAuthClassification, TransportCode, TransportConnectionAttempt,
+        TransportReceivedAuth, TransportRecordEnvelope, TransportRecordV2, TransportState,
+        TransportStatus,
+    };
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    struct PollTestApp {
+        app: tauri::App<tauri::test::MockRuntime>,
+        app_data_dir: PathBuf,
+    }
+
+    impl PollTestApp {
+        fn new() -> Self {
+            let identifier = format!(
+                "xyz.nuncio.crew.test.transport-status-poll-{}",
+                uuid::Uuid::new_v4().simple()
+            );
+            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+            // Storage-backed poll_once tests must never resolve the production
+            // application-data directory from the mock context's empty default
+            // identifier. A per-test identifier keeps this path isolated from
+            // another test run and lets the guard below prove ownership before
+            // removing it.
+            context.config_mut().identifier = identifier;
+            let app = tauri::test::mock_builder()
+                .manage(crate::app_state::build_app_state())
+                .build(context)
+                .expect("mock app");
+            let app_data_dir = app.path().app_data_dir().expect("mock app data directory");
+            assert!(
+                !app_data_dir.exists(),
+                "unique poll test app data path already exists: {}",
+                app_data_dir.display()
+            );
+            Self { app, app_data_dir }
+        }
+    }
+
+    impl Drop for PollTestApp {
+        fn drop(&mut self) {
+            if self.app_data_dir.exists() {
+                std::fs::remove_dir_all(&self.app_data_dir)
+                    .expect("remove owned poll test app data");
+            }
+        }
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn retired_auth_ticket(owner: String) -> ReadTicket {
+        ReadTicket {
+            key: crate::managed_agents::ManagedAgentRuntimeKey::new("a".repeat(64), "ws://fixture")
+                .unwrap(),
+            nonce: uuid::Uuid::from_u128(7).to_string(),
+            path: PathBuf::from("/fixture/status.json"),
+            owner,
+            epoch: 0,
+            process_id: 7,
+            spawn_started_at_ms: 90_000,
+            wire_version: 2,
+        }
+    }
+
+    fn retired_auth_record(ticket: &ReadTicket) -> TransportRecordV2 {
+        let attempt_id = uuid::Uuid::from_u128(8).to_string();
+        TransportRecordV2 {
+            version: 2,
+            runtime_id: ticket.key.runtime_id(),
+            start_nonce: ticket.nonce.clone(),
+            sequence: 1,
+            timestamp_ms: 100_000,
+            terminal: true,
+            transport: TransportStatus {
+                state: TransportState::AuthRejected,
+                code: TransportCode::AuthDenied,
+                attempts: 1,
+                elapsed_ms: 1,
+                next_retry_at_ms: None,
+                last_error: TransportCode::AuthDenied.message().map(str::to_owned),
+            },
+            process_id: ticket.process_id,
+            spawn_started_at_ms: ticket.spawn_started_at_ms,
+            connection_attempt: Some(TransportConnectionAttempt {
+                sequence: 1,
+                id: attempt_id.clone(),
+                started_at_ms: 91_000,
+            }),
+            received_auth: Some(TransportReceivedAuth {
+                auth_event_id: "c".repeat(64),
+                attempt_id,
+                attempt_sequence: 1,
+                accepted: false,
+                classification: TransportAuthClassification::CommunityBanned,
+                received_at_ms: 92_000,
+            }),
+        }
+    }
 
     #[test]
     fn owner_switch_between_read_and_apply_drops_the_whole_batch() {
@@ -283,5 +514,70 @@ mod tests {
         .unwrap()
         .is_none());
         assert!(!applied);
+    }
+
+    #[test]
+    fn retired_only_ticks_drain_registration_then_auth_without_read_tickets() {
+        let _env = crate::managed_agents::lock_env_mutex();
+        let _export = EnvVarGuard::set(export::NATIVE_AUTH_EVIDENCE_EXPORT_ENV, "1");
+
+        let test_app = PollTestApp::new();
+        let state = test_app.app.state::<AppState>();
+        let owner = state.keys.lock().unwrap().public_key().to_hex();
+        let ticket = retired_auth_ticket(owner.clone());
+        let record = retired_auth_record(&ticket);
+        let now = Instant::now();
+        let diagnostics = Arc::clone(&state.managed_transport_diagnostics);
+        let mut monitor = Monitor::new(ticket.clone(), &diagnostics);
+        assert!(monitor.apply(
+            &ticket,
+            Ok(TransportRecordEnvelope::V2(record.clone())),
+            true,
+            now,
+            100_000,
+        ));
+        monitor.retire(true, now);
+        diagnostics.lock().unwrap().apply(
+            &ticket,
+            TransportRecordEnvelope::V2(record),
+            false,
+            now,
+            100_000,
+        );
+        assert_eq!(
+            diagnostics
+                .lock()
+                .unwrap()
+                .export_tickets(&owner, Instant::now())
+                .len(),
+            1,
+            "the final retired read must be applied before export polling"
+        );
+
+        // The final retired read is already applied, so this worker tick has
+        // no file-read tickets. It must still emit registration and leave AUTH
+        // queued for the next tick.
+        assert_eq!(poll_once(test_app.app.handle(), 0).unwrap(), 0);
+        let auth = diagnostics
+            .lock()
+            .unwrap()
+            .take_export_candidate(&ticket, Instant::now())
+            .expect("registration must have emitted before AUTH becomes due");
+        assert!(matches!(auth, ExportCandidate::Auth(_)));
+        diagnostics.lock().unwrap().finish_export(
+            &auth,
+            false,
+            Instant::now() - std::time::Duration::from_secs(5),
+        );
+
+        // A second retired-only tick must reach the export phase and retry the
+        // failed AUTH marker. With the old early return, this take would find
+        // the still-due candidate and fail the assertion.
+        assert_eq!(poll_once(test_app.app.handle(), 0).unwrap(), 0);
+        assert!(diagnostics
+            .lock()
+            .unwrap()
+            .take_export_candidate(&ticket, Instant::now())
+            .is_none());
     }
 }
