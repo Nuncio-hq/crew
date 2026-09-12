@@ -108,6 +108,8 @@ fn copied_profile_replacement_after_planning_is_rejected_before_spawn() {
         b"private prompt",
     )
     .unwrap();
+    let profile_digest = super::super::recap_adapter::profile_tree_digest(&profile).unwrap();
+    let profile_identity = super::super::recap_adapter::profile_identity(&profile).unwrap();
     let executable_fingerprint = hex::encode(Sha256::digest(std::fs::read(&executable).unwrap()));
     let admission = RecapAdmission {
         runtime_id: "hermes".into(),
@@ -120,8 +122,8 @@ fn copied_profile_replacement_after_planning_is_rejected_before_spawn() {
         selection: super::super::recap_capability::RecapSelection {
             model: "hermes-low".into(),
             profile: Some(profile),
-            profile_digest: plan.profile_digest.clone(),
-            profile_identity: plan.profile_identity.clone(),
+            profile_digest: Some(profile_digest),
+            profile_identity: Some(profile_identity),
             auth_available: true,
         },
     };
