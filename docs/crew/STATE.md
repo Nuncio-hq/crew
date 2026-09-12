@@ -78,9 +78,10 @@ Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 
 ## Known gaps
 
-- #337 projection checks and NIP-43 admission/readback are covered. Full #348
-  staging UI/native acceptance and #338 reconnect/status/receipt acceptance
-  remain open; fixtures do not establish live relay health.
+- #337 projection checks and NIP-43 admission/readback are covered. The #348
+  `crew-staging-348` environment lifecycle is verified. Installed-runtime
+  acceptance (#337/#338) and #357 release acceptance remain open; fixtures do
+  not establish live relay health.
 - Desktop Smoke/Integration E2E remains advisory (D-032, D-047); post-0.5.23
   drift is tracked in [#346](https://github.com/Nuncio-hq/crew/issues/346).
 - Observer priority preserves causal order and two-urgent/one-normal fairness

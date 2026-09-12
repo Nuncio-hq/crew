@@ -36,6 +36,25 @@ checks do not starve the daily relay. Record the effective staging endpoint
 and destinations with each result; do not guess one or fall back to the daily
 relay if staging is unavailable.
 
+The stable lifecycle environment is `/home/oscar/crew-staging-348` with
+baseline `initial-a1fe2c6`. Its stop → restore cycle was verified with real
+authentication against the currently pinned relay revision `a1fe2c6` and
+schema `45`; the deployed production CLI's nine critical files remained
+byte-identical, four owned services were running, and 107 signed baseline and
+daily sentinels were unchanged. Re-run the server-side verification from the
+tooling checkout with:
+
+```sh
+cd /home/oscar/crew-staging-348/tooling-launch-candidate/scripts
+python3 crew-staging.py verify \
+  --config /home/oscar/crew-staging-348/snapshot-config.json \
+  --baseline initial-a1fe2c6
+```
+
+The lifecycle evidence is recorded in [the #348 verification comment](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5644862328).
+It establishes environment readiness and does not certify an installed recap
+runtime or the #351 native observer/grant path.
+
 Choose the environment for the check:
 
 - Unit tests and mock E2E use small deterministic fixtures. Isolated local
