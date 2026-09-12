@@ -208,6 +208,7 @@ export default defineConfig({
         "**/channels-only-sidebar.spec.ts",
         "**/org-removed.spec.ts",
         "**/crew-wiki.spec.ts",
+        "**/wiki-corrective-navigation.spec.ts",
         "**/wiki-office-chrome.spec.ts",
         "**/wiki-empty-repo-probe.spec.ts",
         "**/thread-pr-hub.spec.ts",

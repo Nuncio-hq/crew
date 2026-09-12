@@ -465,8 +465,15 @@ adapter's state, prompt input, stdout/stderr, deadline, and cancellation are
 bounded, and selection is independent from employee sessions and recap
 settings. #348's real installed-runtime staging evidence is still required
 before any runtime combination is called certified. #364 owns scoped full-body
-retrieval and exact-revision source reads. Current
-local file reads use worktree bytes and cannot prove historical source. #365
+retrieval and exact-revision source reads. Desktop Wiki navigation persists the
+selected page and bounded scroll position under the captured owner/community,
+parent Project, repository coordinate, and door; when a saved page is gone, it
+selects a surviving page and explains the fallback. Source file controls are
+fail-closed: they require a native grant in the current scope and an exact
+recorded page reference, and never open current checkout bytes or arbitrary
+line ranges when that evidence is unavailable. Native reads still require the
+selected root and live snapshot checks, and real cross-client acceptance
+remains a separate gate. #365
 proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
 and ACL-safe origin links. These are gates, not source-handoff implementations.

@@ -638,7 +638,7 @@ export function WorkspaceTabs({
         </TabsContent>
 
         <TabsContent className="m-0" value="wiki">
-          <WikiProjectTab project={project} />
+          <WikiProjectTab project={project} projectId={projectId} />
         </TabsContent>
         <TabsContent className="m-0" value="contributors">
           {displayedSnapshotLoading ? (

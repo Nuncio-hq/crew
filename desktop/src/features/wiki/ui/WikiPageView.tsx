@@ -14,6 +14,11 @@ import type {
   WikiSnapshotRead,
 } from "@/shared/api/wikiSnapshot";
 import { wikiRepositoryCoordinate } from "@/shared/api/wikiSnapshot";
+import {
+  readWikiNavigationState,
+  writeWikiNavigationState,
+  type WikiNavigationIdentity,
+} from "@/features/wiki/lib/wikiNavigationState";
 import { WikiAskBox } from "@/features/wiki/ui/WikiAskBox";
 import { WikiCompanyEditor } from "@/features/wiki/ui/WikiCompanyEditor";
 import { WikiHeaderControls } from "@/features/wiki/ui/WikiHeaderControls";
@@ -42,6 +47,7 @@ export function WikiPageView({
   onRetryCompany,
   onRetryRead,
   operationScope,
+  navigationProjectId,
   owner,
   page,
   pages,
@@ -74,6 +80,8 @@ export function WikiPageView({
   onRetryCompany?: () => void;
   onRetryRead?: () => void;
   operationScope?: OwnerOperationScope;
+  /** Parent Project identity used to scope remembered page/scroll state. */
+  navigationProjectId?: string;
   owner?: string;
   page: WikiPage | null;
   pages?: WikiPage[];
@@ -94,13 +102,195 @@ export function WikiPageView({
   recoveryPending?: boolean;
   regeneratePending?: boolean;
 }) {
+  const isCompany = repoName === "Company Wiki";
+  const navigationIdentity =
+    React.useMemo<WikiNavigationIdentity | null>(() => {
+      if (!operationScope || !navigationProjectId) return null;
+      const repositoryCoordinate = isCompany
+        ? "company"
+        : owner && repoD
+          ? wikiRepositoryCoordinate(owner, repoD)
+          : "";
+      if (!repositoryCoordinate) return null;
+      return {
+        community: operationScope.scope.community,
+        viewer: operationScope.scope.owner,
+        projectId: navigationProjectId,
+        repositoryCoordinate,
+        surface: door,
+      };
+    }, [door, isCompany, navigationProjectId, operationScope, owner, repoD]);
+  const navigationKey = React.useMemo(
+    () => (navigationIdentity ? JSON.stringify(navigationIdentity) : null),
+    [navigationIdentity],
+  );
   const [activeSlug, setActiveSlug] = React.useState(page?.slug ?? "");
   const [search, setSearch] = React.useState("");
+  const [navigationNotice, setNavigationNotice] = React.useState<string | null>(
+    null,
+  );
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const loadedNavigationKeyRef = React.useRef<string | null>(null);
+  const availablePages = React.useMemo(
+    () => pages ?? (page ? [page] : []),
+    [page, pages],
+  );
+  const shown = availablePages.find((item) => item.slug === activeSlug) ?? null;
+  const navigationSnapshotRef = React.useRef<{
+    key: string;
+    identity: WikiNavigationIdentity;
+    page: WikiPage;
+    activeSlug: string;
+    scrollTop: number;
+  } | null>(null);
+
+  const selectPage = React.useCallback(
+    (slug: string) => {
+      const next = availablePages.find((item) => item.slug === slug);
+      if (!next) return;
+      setNavigationNotice(null);
+      setActiveSlug(slug);
+      if (navigationIdentity) {
+        writeWikiNavigationState(navigationIdentity, {
+          pageId: next.event.id || null,
+          pageSlug: next.slug,
+          scrollTop: 0,
+        });
+        if (navigationKey) {
+          navigationSnapshotRef.current = {
+            key: navigationKey,
+            identity: navigationIdentity,
+            page: next,
+            activeSlug: slug,
+            scrollTop: 0,
+          };
+        }
+      }
+    },
+    [availablePages, navigationIdentity, navigationKey],
+  );
+
+  const handleContentScroll = React.useCallback(() => {
+    if (!navigationIdentity) return;
+    const current = availablePages.find((item) => item.slug === activeSlug);
+    const scrollTop = scrollRef.current?.scrollTop ?? 0;
+    writeWikiNavigationState(navigationIdentity, {
+      pageId: current?.event.id || null,
+      pageSlug: current?.slug ?? (activeSlug || null),
+      scrollTop,
+    });
+    if (navigationKey && current) {
+      navigationSnapshotRef.current = {
+        key: navigationKey,
+        identity: navigationIdentity,
+        page: current,
+        activeSlug,
+        scrollTop,
+      };
+    }
+  }, [activeSlug, availablePages, navigationIdentity, navigationKey]);
+
   React.useEffect(() => {
-    setActiveSlug(page?.slug ?? "");
-  }, [page?.slug]);
-  const shown = pages?.find((item) => item.slug === activeSlug) ?? page ?? null;
-  const isCompany = repoName === "Company Wiki";
+    if (!navigationKey) {
+      loadedNavigationKeyRef.current = null;
+      return;
+    }
+    if (availablePages.length === 0) return;
+    const firstLoad = loadedNavigationKeyRef.current !== navigationKey;
+    if (firstLoad) {
+      loadedNavigationKeyRef.current = navigationKey;
+      const saved = navigationIdentity
+        ? readWikiNavigationState(navigationIdentity)
+        : null;
+      const savedPage = saved
+        ? (availablePages.find((item) => item.event.id === saved.pageId) ??
+          availablePages.find((item) => item.slug === saved.pageSlug))
+        : null;
+      const fallback =
+        availablePages.find((item) => item.slug === page?.slug) ??
+        availablePages[0];
+      const selected = savedPage ?? fallback;
+      if (selected) {
+        setActiveSlug(selected.slug);
+        if (!savedPage && saved) {
+          setNavigationNotice(
+            `The saved Wiki page is no longer available. Showing “${selected.title}”.`,
+          );
+        }
+        if (navigationIdentity) {
+          writeWikiNavigationState(navigationIdentity, {
+            pageId: selected.event.id || null,
+            pageSlug: selected.slug,
+            scrollTop: savedPage ? (saved?.scrollTop ?? 0) : 0,
+          });
+          if (savedPage && scrollRef.current) {
+            scrollRef.current.scrollTop = saved?.scrollTop ?? 0;
+          }
+        }
+      }
+      return;
+    }
+    if (availablePages.some((item) => item.slug === activeSlug)) return;
+    const fallback = availablePages[0];
+    if (!fallback) return;
+    setActiveSlug(fallback.slug);
+    setNavigationNotice(
+      `This Wiki page is no longer available. Showing “${fallback.title}”.`,
+    );
+    if (navigationIdentity) {
+      writeWikiNavigationState(navigationIdentity, {
+        pageId: fallback.event.id || null,
+        pageSlug: fallback.slug,
+        scrollTop: 0,
+      });
+    }
+  }, [
+    activeSlug,
+    availablePages,
+    navigationIdentity,
+    navigationKey,
+    page?.slug,
+  ]);
+
+  React.useLayoutEffect(() => {
+    if (!navigationIdentity || !navigationKey || !shown) return;
+    if (loadedNavigationKeyRef.current !== navigationKey) return;
+    const saved = readWikiNavigationState(navigationIdentity);
+    if (!saved) return;
+    if (
+      saved.pageId &&
+      saved.pageId !== shown.event.id &&
+      saved.pageSlug !== shown.slug
+    ) {
+      return;
+    }
+    if (saved.pageSlug && saved.pageSlug !== shown.slug) return;
+    if (scrollRef.current) scrollRef.current.scrollTop = saved.scrollTop;
+    navigationSnapshotRef.current = {
+      key: navigationKey,
+      identity: navigationIdentity,
+      page: shown,
+      activeSlug,
+      scrollTop: scrollRef.current?.scrollTop ?? 0,
+    };
+  }, [activeSlug, navigationIdentity, navigationKey, shown]);
+
+  React.useEffect(() => {
+    if (!navigationKey) return;
+    return () => {
+      const current = navigationSnapshotRef.current;
+      if (!current || current.key !== navigationKey) return;
+      writeWikiNavigationState(current.identity, {
+        pageId: current.page.event.id || null,
+        pageSlug: current.page.slug || current.activeSlug || null,
+        scrollTop: current.scrollTop,
+      });
+      if (navigationSnapshotRef.current?.key === navigationKey) {
+        navigationSnapshotRef.current = null;
+      }
+    };
+  }, [navigationKey]);
+
   const emptyCompany = isCompany && !shown && !companyPending && !companyError;
   const readStale = readStatus?.stale ?? false;
   const readUnavailable = readStatus?.unavailable ?? false;
@@ -120,7 +310,7 @@ export function WikiPageView({
       <WikiTocRail
         activeSlug={shown?.slug ?? ""}
         filter={search}
-        onSelect={setActiveSlug}
+        onSelect={selectPage}
         toc={toc}
       />
       <div className="flex min-w-0 flex-1 flex-col">
@@ -145,7 +335,7 @@ export function WikiPageView({
             </h1>
             <WikiTocMenu
               activeSlug={shown?.slug ?? ""}
-              onSelect={setActiveSlug}
+              onSelect={selectPage}
               toc={toc}
             />
             <WikiHeaderControls
@@ -170,7 +360,22 @@ export function WikiPageView({
             />
           </div>
         </TopChromeInsetHeader>
-        <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+        <div
+          className="min-h-0 flex-1 overflow-auto px-6 py-4"
+          data-testid="wiki-page-scroll"
+          onScroll={handleContentScroll}
+          ref={scrollRef}
+        >
+          {navigationNotice ? (
+            <p
+              aria-live="polite"
+              className="mb-3 rounded-md bg-muted/40 p-2 text-2xs text-muted-foreground"
+              data-testid="wiki-navigation-fallback"
+              role="status"
+            >
+              {navigationNotice}
+            </p>
+          ) : null}
           {readStale ? (
             <p
               className="mb-3 text-2xs text-attention"
@@ -236,7 +441,7 @@ export function WikiPageView({
               query={search}
               searchQuery={searchQuery}
               onSelect={(slug) => {
-                setActiveSlug(slug);
+                selectPage(slug);
                 setSearch("");
               }}
               hasSnapshot={snapshot?.state === "complete"}
@@ -257,6 +462,7 @@ export function WikiPageView({
                 owner={owner ?? toc?.owner ?? ""}
                 pageEvent={shown.event}
                 repoD={shown.repoD}
+                operationScope={operationScope}
               />
               <WikiMarkdown
                 owner={owner ?? toc?.owner ?? ""}
