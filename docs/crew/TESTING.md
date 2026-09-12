@@ -130,6 +130,25 @@ after a connection-control Redis reconnect or broadcast lag. A Redis publish
 failure therefore leaves an operator-visible propagation error while the
 durable row remains the authority for the next bounded sweep.
 
+### Closed-relay fan-out liveness (#362)
+
+The fan-out delivery chokepoint authorizes closed-relay recipients in batches
+of at most 512 unique principal and verified NIP-OA owner keys. All writer
+queries for one event share a two-second absolute deadline; a writer timeout or
+other lookup error drops the complete batch. A per-state semaphore, derived
+from the configured handler capacity, bounds concurrent fan-out batches; an
+exhausted semaphore also drops the batch immediately. Current writer results
+retain direct members and owner-admitted agents only when NIP-OA admission is
+enabled, while the receiver's community label is checked before the roster
+lookup. Terminal drops are counted by bounded reason labels in
+`buzz_fanout_membership_terminal_drops_total`.
+
+The production-bound PostgreSQL tests cover a locked writer, semaphore
+exhaustion, and a healthy 515-identity batch crossing the 512-key boundary.
+Run these ignored tests with `scripts/postgres-test-run.sh` and an owned
+isolated PostgreSQL database; the test lane's database wrapper supplies a
+fresh per-test database and removes it after the run.
+
 ## Project Wiki read/search/source slice (#397)
 
 The merged [#397](https://github.com/Nuncio-hq/crew/pull/397) implementation

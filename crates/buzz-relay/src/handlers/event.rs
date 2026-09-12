@@ -2683,6 +2683,20 @@ mod tests {
         }
 
         fn register_conn(state: &AppState, pubkey: Option<Vec<u8>>) -> Uuid {
+            register_conn_for_community(
+                state,
+                buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
+                pubkey,
+                None,
+            )
+        }
+
+        fn register_conn_for_community(
+            state: &AppState,
+            community: buzz_core::tenant::CommunityId,
+            pubkey: Option<Vec<u8>>,
+            admission_owner: Option<Vec<u8>>,
+        ) -> Uuid {
             let conn_id = Uuid::new_v4();
             let (tx, _rx) = mpsc::channel(1);
             let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
@@ -2692,15 +2706,41 @@ mod tests {
                 ctrl_tx,
                 None,
                 CancellationToken::new(),
-                buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
+                community,
                 Arc::new(AtomicU8::new(0)),
                 Arc::new(Mutex::new(HashMap::new())),
                 3,
             );
             if let Some(pk) = pubkey {
-                state.conn_manager.set_authenticated_pubkey(conn_id, pk);
+                state
+                    .conn_manager
+                    .set_authenticated_identity(conn_id, pk, admission_owner);
             }
             conn_id
+        }
+
+        async fn insert_relay_member_rows(
+            pool: &sqlx::PgPool,
+            community_uuid: Uuid,
+            rows: &[(String, String)],
+        ) {
+            assert!(!rows.is_empty(), "test fixture needs at least one member");
+            let community_ids = vec![community_uuid; rows.len()];
+            let pubkeys: Vec<_> = rows.iter().map(|(pubkey, _)| pubkey.clone()).collect();
+            let roles: Vec<_> = rows.iter().map(|(_, role)| role.clone()).collect();
+            crate::test_support::bounded(
+                "insert relay membership batch",
+                sqlx::query(
+                    "INSERT INTO relay_members (community_id, pubkey, role) \
+                     SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::text[])",
+                )
+                .bind(&community_ids)
+                .bind(&pubkeys)
+                .bind(&roles)
+                .execute(pool),
+            )
+            .await
+            .expect("insert relay membership batch");
         }
 
         fn channel_event(channel_id: Option<Uuid>) -> StoredEvent {
@@ -2708,6 +2748,12 @@ mod tests {
                 .sign_with_keys(&Keys::generate())
                 .expect("sign event");
             StoredEvent::new(event, channel_id)
+        }
+
+        fn synthetic_pubkey(index: u64) -> Vec<u8> {
+            let mut pubkey = [0u8; 32];
+            pubkey[24..].copy_from_slice(&index.to_be_bytes());
+            pubkey.to_vec()
         }
 
         /// Production-bound closed-relay regression: after the real writer
@@ -3275,6 +3321,297 @@ mod tests {
             assert_eq!(out, matches);
         }
 
+        /// A writer lock held by an independent PostgreSQL session must make
+        /// the real fan-out chokepoint fail closed at its two-second absolute
+        /// deadline. Keeping the lock until the filter returns also proves
+        /// that the test exercises the writer-backed query rather than a
+        /// test-only stub or an eventually consistent cache.
+        async fn fanout_membership_writer_timeout_fails_closed_impl() {
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("fanout-timeout-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert fanout-timeout community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-timeout community");
+                crate::test_support::bounded(
+                    "insert fanout-timeout membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-timeout membership");
+
+                let tenant = TenantContext::resolved(community, &host);
+                let (conn, _data_rx, _ctrl_rx) = authenticated_conn(&state, &tenant, &keys).await;
+                let sub_id = "fanout-timeout".to_owned();
+                state.sub_registry.register_scoped(
+                    community,
+                    conn.conn_id,
+                    sub_id.clone(),
+                    vec![Filter::new()],
+                    None,
+                );
+                let stored = channel_event(None);
+                let matches = state.sub_registry.fan_out_scoped(community, &stored);
+                assert_eq!(matches, vec![(conn.conn_id, sub_id.clone())]);
+
+                let mut lock_tx = crate::test_support::bounded(
+                    "begin fanout-timeout lock transaction",
+                    body_pool.begin(),
+                )
+                .await
+                .expect("begin fanout-timeout lock transaction");
+                crate::test_support::bounded(
+                    "lock relay_members for fanout-timeout",
+                    sqlx::query("LOCK TABLE relay_members IN ACCESS EXCLUSIVE MODE")
+                        .execute(&mut *lock_tx),
+                )
+                .await
+                .expect("lock relay_members for fanout-timeout");
+
+                let started = std::time::Instant::now();
+                let filtered = crate::test_support::bounded(
+                    "filter fanout after writer timeout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
+                let elapsed = started.elapsed();
+                assert!(
+                    filtered.is_empty(),
+                    "a stalled writer must drop the complete fan-out batch"
+                );
+                assert!(
+                    elapsed >= std::time::Duration::from_millis(1_500),
+                    "writer lock did not hold the production query: {elapsed:?}"
+                );
+                assert!(
+                    elapsed < std::time::Duration::from_millis(2_700),
+                    "writer timeout exceeded the two-second fan-out budget: {elapsed:?}"
+                );
+                drop(lock_tx);
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        /// Saturating the fan-out semaphore must reject a batch immediately.
+        /// The held PostgreSQL table lock makes a missing semaphore guard
+        /// observable: a regression that reaches the writer would wait for
+        /// the two-second query deadline instead of returning promptly.
+        async fn fanout_membership_overload_fails_closed_impl() {
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("fanout-overload-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert fanout-overload community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-overload community");
+                crate::test_support::bounded(
+                    "insert fanout-overload membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-overload membership");
+
+                let tenant = TenantContext::resolved(community, &host);
+                let (conn, _data_rx, _ctrl_rx) = authenticated_conn(&state, &tenant, &keys).await;
+                let sub_id = "fanout-overload".to_owned();
+                state.sub_registry.register_scoped(
+                    community,
+                    conn.conn_id,
+                    sub_id.clone(),
+                    vec![Filter::new()],
+                    None,
+                );
+                let stored = channel_event(None);
+                let matches = state.sub_registry.fan_out_scoped(community, &stored);
+                assert_eq!(matches, vec![(conn.conn_id, sub_id.clone())]);
+
+                let permits = state.relay_membership_fanout_semaphore.available_permits();
+                assert!(permits > 0, "fan-out semaphore must have capacity");
+                let all_permits = state
+                    .relay_membership_fanout_semaphore
+                    .clone()
+                    .acquire_many_owned(permits as u32)
+                    .await
+                    .expect("acquire all fan-out permits");
+
+                let mut lock_tx = crate::test_support::bounded(
+                    "begin fanout-overload lock transaction",
+                    body_pool.begin(),
+                )
+                .await
+                .expect("begin fanout-overload lock transaction");
+                crate::test_support::bounded(
+                    "lock relay_members for fanout-overload",
+                    sqlx::query("LOCK TABLE relay_members IN ACCESS EXCLUSIVE MODE")
+                        .execute(&mut *lock_tx),
+                )
+                .await
+                .expect("lock relay_members for fanout-overload");
+
+                let started = std::time::Instant::now();
+                let filtered = crate::test_support::bounded(
+                    "filter overloaded fanout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
+                let elapsed = started.elapsed();
+                assert!(
+                    filtered.is_empty(),
+                    "an overloaded fan-out batch must fail closed"
+                );
+                assert!(
+                    elapsed < std::time::Duration::from_millis(500),
+                    "semaphore exhaustion reached the locked writer: {elapsed:?}"
+                );
+                drop(lock_tx);
+                drop(all_permits);
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        /// A healthy writer-backed lookup must preserve all recipients across
+        /// the 512-key SQL chunk boundary, allow a verified NIP-OA owner, and
+        /// still enforce the receiver-side community label.
+        async fn fanout_membership_healthy_large_batch_impl() {
+            let (mut state, audit_shutdown, pool) = closed_membership_state().await;
+            let state_mut = Arc::get_mut(&mut state).expect("test state has one owner");
+            let config = Arc::make_mut(&mut state_mut.config);
+            config.allow_nip_oa_auth = true;
+            config.max_connections = 1_024;
+
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let foreign_community = buzz_core::tenant::CommunityId::from_uuid(Uuid::new_v4());
+            let host = format!("fanout-large-{community_uuid}.example");
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert fanout-large community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-large community");
+
+                let mut direct_pubkeys = Vec::with_capacity(513);
+                let mut member_rows = Vec::with_capacity(514);
+                for index in 0..513u64 {
+                    let pubkey = synthetic_pubkey(index);
+                    member_rows.push((hex::encode(&pubkey), "member".to_owned()));
+                    direct_pubkeys.push(pubkey);
+                }
+                let owner = synthetic_pubkey(10_000);
+                member_rows.push((hex::encode(&owner), "owner".to_owned()));
+                insert_relay_member_rows(&body_pool, community_uuid, &member_rows).await;
+
+                let mut matches = Vec::with_capacity(515);
+                let mut direct_connections = Vec::with_capacity(direct_pubkeys.len());
+                for (index, pubkey) in direct_pubkeys.iter().enumerate() {
+                    let conn =
+                        register_conn_for_community(&state, community, Some(pubkey.clone()), None);
+                    direct_connections.push(conn);
+                    matches.push((conn, format!("member-{index}")));
+                }
+
+                let agent = synthetic_pubkey(10_001);
+                let agent_conn =
+                    register_conn_for_community(&state, community, Some(agent), Some(owner));
+                matches.push((agent_conn, "owner-admitted-agent".to_owned()));
+
+                // This connection uses a pubkey that is a current member of
+                // community A, but its receiver-side tenant is B. It must be
+                // removed before the roster lookup can authorize it.
+                let foreign_conn = register_conn_for_community(
+                    &state,
+                    foreign_community,
+                    Some(direct_pubkeys[0].clone()),
+                    None,
+                );
+                matches.push((foreign_conn, "foreign-tenant".to_owned()));
+
+                let stored = channel_event(None);
+                let filtered = crate::test_support::bounded(
+                    "filter healthy large fanout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
+
+                assert_eq!(
+                    filtered.len(),
+                    direct_connections.len() + 1,
+                    "all direct members and the owner-admitted agent must survive"
+                );
+                assert!(
+                    direct_connections
+                        .iter()
+                        .all(|conn| filtered.iter().any(|(id, _)| id == conn)),
+                    "a direct member was lost across the 512-key batch boundary"
+                );
+                assert!(
+                    filtered.iter().any(|(id, _)| *id == agent_conn),
+                    "a verified NIP-OA owner admission must survive the batch lookup"
+                );
+                assert!(
+                    filtered.iter().all(|(id, _)| *id != foreign_conn),
+                    "a connection bound to another tenant must be dropped"
+                );
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
         // Keep these production-bound regressions in the PostgreSQL lane's
         // discoverable namespace while leaving their implementation helpers
         // alongside the fan-out seams they exercise.
@@ -3290,6 +3627,24 @@ mod tests {
             #[ignore = "requires isolated PostgreSQL"]
             async fn self_leave_not_found_ack_wins_over_a_concurrent_revoked_event() {
                 super::self_leave_not_found_ack_wins_over_a_concurrent_revoked_event_impl().await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn fanout_membership_writer_timeout_fails_closed() {
+                super::fanout_membership_writer_timeout_fails_closed_impl().await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn fanout_membership_overload_fails_closed() {
+                super::fanout_membership_overload_fails_closed_impl().await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn fanout_membership_healthy_large_batch() {
+                super::fanout_membership_healthy_large_batch_impl().await;
             }
         }
     }
