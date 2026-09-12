@@ -225,6 +225,13 @@ test.describe("Crew Wiki (#200)", () => {
       page.getByRole("button", { name: "Open project" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Open project" }).click();
+    const buzzWorkspaceCard = page.locator("article").filter({
+      has: page.getByRole("heading", { name: "buzz", exact: true }),
+    });
+    await expect(buzzWorkspaceCard).toBeVisible();
+    await buzzWorkspaceCard
+      .getByRole("button", { name: "Open workspace details" })
+      .click();
     await expect(page.getByTestId("project-wiki-tab")).toBeVisible();
     await page.getByTestId("project-wiki-tab").click();
     await expect(page.getByTestId("wiki-project-tab")).toBeVisible();

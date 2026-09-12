@@ -218,7 +218,7 @@ test.describe("Wiki corrective navigation (#364)", () => {
       await expect
         .poll(() => scroll.evaluate((element) => element.scrollTop))
         .toBe(0);
-      await scroll.hover();
+      await scroll.hover({ position: { x: 4, y: 4 } });
       await page.mouse.wheel(0, 320);
       const cancelledScroll = await scroll.evaluate(
         (element) => element.scrollTop,

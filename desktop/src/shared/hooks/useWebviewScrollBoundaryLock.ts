@@ -2,6 +2,7 @@ import * as React from "react";
 
 const BOUNDARY_EPSILON_PX = 1;
 const CONVERSATION_SCROLL_SELECTOR = "[data-buzz-conversation-scroll]";
+const WIKI_SCROLL_RESTORE_SELECTOR = "[data-wiki-scroll-restore-pending]";
 const TERMINAL_SUBSTRATE_SELECTOR = '[data-terminal-owner="terminal"]';
 const SCROLLABLE_OVERFLOW_VALUES = new Set(["auto", "scroll", "overlay"]);
 
@@ -96,6 +97,10 @@ export function useWebviewScrollBoundaryLock(enabled = true) {
       }
 
       const path = event.composedPath();
+      const pendingWikiRestore = path.some(
+        (target) =>
+          isHTMLElement(target) && target.matches(WIKI_SCROLL_RESTORE_SELECTOR),
+      );
       let firstScrollable: HTMLElement | null = null;
       let targetsTerminal = false;
 
@@ -139,7 +144,9 @@ export function useWebviewScrollBoundaryLock(enabled = true) {
       }
 
       event.preventDefault();
-      event.stopPropagation();
+      if (!pendingWikiRestore) {
+        event.stopPropagation();
+      }
     }
 
     window.addEventListener("wheel", handleWheel, {
