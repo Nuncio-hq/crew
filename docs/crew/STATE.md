@@ -68,19 +68,26 @@ desktop. No org/wiki UI. 1000-line policy.
 The [company deployment choice](ARCHITECTURE.md#company-deployment) is the
 founder's dev-server over Tailscale. Owned #348 snapshot staging is reachable
 at `ws://100.86.143.13:3348`, uses isolated `crew_staging_348_snapshot`, and
-enforces NIP-42 plus NIP-43. Admission denial, admin readback, and kind `30177`
-writes are verified; the daily relay and app-data tree were not used. This is
-separate from the historical AUTH challenge/close symptoms in [#338](https://github.com/Nuncio-hq/crew/issues/338),
-which still have no established transport root cause.
+enforces NIP-42 plus NIP-43. The earlier stop → restore lifecycle remains
+historical evidence for relay `a1fe2c6`/schema `45`; current production CLI
+verification passed against source `37577a3aee801d8bbb7b501732b3bb2b04d9c125`
+and schema `46`, reusing the existing probe without a new event. The daily
+relay and app-data tree were not used. See the [#348 production verification
+comment](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5646675058).
+This is separate from the historical AUTH challenge/close symptoms in
+[#338](https://github.com/Nuncio-hq/crew/issues/338), which still have no
+established transport root cause.
 
 Stock Buzz relay with Crew kinds (30680 inert, 30623 wiki, 24201 overlay).
 Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 
 ## Known gaps
 
-- #337 projection checks and NIP-43 admission/readback are covered. The #348
-  [`crew-staging-348` environment lifecycle](TESTING.md#test-environments-and-real-data-staging-d-077)
-  is verified. Installed-runtime acceptance (#337/#338) and #357 release
+- Source-level #337 projection checks and protocol-level NIP-43
+  admission/readback from the #348 staging verification are covered. The #348
+  [`crew-staging-348` environment lifecycle and production verification](TESTING.md#test-environments-and-real-data-staging-d-077)
+  are verified. Real #337 staging membership add-after-start, removal, and
+  readback, installed-runtime acceptance (#337/#338), and #357 release
   acceptance remain open; fixtures do not establish live relay health.
 - Desktop Smoke/Integration E2E remains advisory (D-032, D-047); post-0.5.23
   drift is tracked in [#346](https://github.com/Nuncio-hq/crew/issues/346).

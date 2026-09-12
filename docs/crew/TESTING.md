@@ -37,10 +37,14 @@ and destinations with each result; do not guess one or fall back to the daily
 relay if staging is unavailable.
 
 The stable lifecycle environment is `/home/oscar/crew-staging-348` with
-baseline `initial-a1fe2c6`. Its stop → restore cycle was verified with real
-authentication against the currently pinned relay revision `a1fe2c6` and
-schema `45`; the stop → restore → verify lifecycle passed. Re-run the
-server-side verification from the tooling checkout with:
+baseline `initial-a1fe2c6`. The earlier stop → restore cycle was verified with
+real authentication against relay revision `a1fe2c6` and schema `45`; that
+historical stop → restore → verify result remains tied to that revision. The
+current staging target has since advanced to source build
+`37577a3aee801d8bbb7b501732b3bb2b04d9c125` and schema `46`. Production CLI
+verification against that source/schema passed at
+`2026-09-12T14:58:03Z`, reusing the existing probe and emitting no new event.
+Re-run the server-side verification from the tooling checkout with:
 
 ```sh
 cd /home/oscar/crew-staging-348/tooling-launch-candidate/scripts
@@ -49,9 +53,12 @@ python3 crew-staging.py verify \
   --baseline initial-a1fe2c6
 ```
 
-The lifecycle evidence is recorded in [the #348 verification comment](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5644862328).
-It establishes environment readiness and does not certify an installed recap
-runtime or the #351 native observer/grant path.
+The historical lifecycle evidence is recorded in [the #348 lifecycle
+comment](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5644862328);
+the current source/schema verification is recorded in [the #348 production
+verify comment](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5646675058).
+These establish staging environment readiness and do not certify an installed
+recap runtime or the #351 native observer/grant path.
 
 Choose the environment for the check:
 
