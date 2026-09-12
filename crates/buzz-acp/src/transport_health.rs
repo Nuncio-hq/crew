@@ -1,6 +1,11 @@
 //! Managed transport health is independent of the socket's backoff ladder.
-use super::{is_terminal_connect_error, RelayError};
-use buzz_core::transport_status::{TransportCode, TransportState, TransportStatus};
+use super::{
+    is_terminal_connect_error, wall_clock_ms, AuthAttemptContext, AuthDeniedInfo, RelayError,
+};
+use buzz_core::transport_status::{
+    TransportCode, TransportConnectionAttempt, TransportReceivedAuth, TransportState,
+    TransportStatus,
+};
 use std::{future::Future, time::Duration};
 use tokio::time::Instant;
 
@@ -28,6 +33,9 @@ pub(super) struct TransportHealth {
     next_at: Instant,
     probe_deadline: Option<Instant>,
     probe_delay: fn() -> Duration,
+    next_attempt_sequence: u64,
+    pub(super) current_attempt: Option<TransportConnectionAttempt>,
+    pub(super) received_auth: Option<TransportReceivedAuth>,
 }
 
 impl Default for TransportHealth {
@@ -46,11 +54,8 @@ impl TransportHealth {
     }
 
     pub async fn from_environment(pubkey: &str, relay_url: &str) -> Result<Self, RelayError> {
-        let config = super::transport_status::StatusConfig::parse(
-            std::env::var_os("CREW_ACP_TRANSPORT_STATUS_PATH"),
-            std::env::var_os("CREW_ACP_TRANSPORT_START_NONCE"),
-        )
-        .map_err(RelayError::TransportStatus)?;
+        let config = super::transport_status::StatusConfig::parse_environment()
+            .map_err(RelayError::TransportStatus)?;
         let Some(config) = config else {
             return Ok(Self::default());
         };
@@ -106,7 +111,12 @@ impl TransportHealth {
             last_error: self.last_code.message().map(str::to_owned),
         };
         reporter
-            .publish(status, terminal)
+            .publish_snapshot(super::transport_status::StatusSnapshot {
+                status,
+                terminal,
+                connection_attempt: self.current_attempt.clone(),
+                received_auth: self.received_auth.clone(),
+            })
             .await
             .map_err(RelayError::TransportStatus)
     }
@@ -145,6 +155,9 @@ impl TransportHealth {
             next_at: now,
             probe_deadline: None,
             probe_delay,
+            next_attempt_sequence: 0,
+            current_attempt: None,
+            received_auth: None,
         }
     }
 
@@ -177,6 +190,10 @@ impl TransportHealth {
         self.probe_deadline = None;
         self.attempts = 0;
         self.auth_rejected = false;
+        // Keep the last successful attempt identity in the ready snapshot.
+        // Native readers enforce a monotonic attempt fence even after the
+        // transport recovers; only the denial evidence is episode-specific.
+        self.received_auth = None;
         self.next_at = Instant::now();
         self.report_or_warn().await;
     }
@@ -202,6 +219,9 @@ impl TransportHealth {
         }
         self.auth_rejected =
             matches!(error, RelayError::AuthDenied(_)) && is_terminal_connect_error(error);
+        if let (Some(attempt), RelayError::AuthDenied(info)) = (&self.current_attempt, error) {
+            self.received_auth = auth_evidence(attempt, info);
+        }
         self.last_code = if self.auth_rejected {
             TransportCode::AuthDenied
         } else if matches!(error, RelayError::Timeout) {
@@ -220,13 +240,24 @@ impl TransportHealth {
 
     /// Count all connection attempts, including DNS. Slow probes have their own
     /// normal connection timeout and never reuse the expired burst deadline.
+    #[cfg(test)]
     pub async fn connect<F, Fut, T>(&mut self, op: F) -> Result<T, RelayError>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, RelayError>>,
     {
+        self.connect_with_context(|_| op()).await
+    }
+
+    /// Count one physical connection attempt after minting immutable context.
+    pub async fn connect_with_context<F, Fut, T>(&mut self, op: F) -> Result<T, RelayError>
+    where
+        F: FnOnce(AuthAttemptContext) -> Fut,
+        Fut: Future<Output = Result<T, RelayError>>,
+    {
         if !self.enabled {
-            return op().await;
+            let context = self.begin_attempt()?;
+            return op(context).await;
         }
         if self.phase == Phase::Healthy {
             self.phase = Phase::Burst;
@@ -238,22 +269,66 @@ impl TransportHealth {
             self.slow_probe();
             return Err(RelayError::Timeout);
         }
+        let context = self.begin_attempt()?;
         if self.slow() {
             self.probe_deadline = Some(Instant::now() + BURST_DURATION);
         }
         self.attempts = self.attempts.saturating_add(1);
         self.report_or_warn().await;
         let result = match self.recovery_deadline() {
-            Some(deadline) => tokio::time::timeout_at(deadline, op())
+            Some(deadline) => tokio::time::timeout_at(deadline, op(context))
                 .await
                 .unwrap_or(Err(RelayError::Timeout)),
-            None => op().await,
+            None => op(context).await,
         };
+        if result.is_ok() {
+            self.received_auth = None;
+        }
         if let Err(error) = &result {
             self.failed(error);
         }
         result
     }
+
+    fn begin_attempt(&mut self) -> Result<AuthAttemptContext, RelayError> {
+        self.next_attempt_sequence =
+            self.next_attempt_sequence.checked_add(1).ok_or_else(|| {
+                RelayError::TransportStatus("managed transport attempt sequence exhausted".into())
+            })?;
+        let context = AuthAttemptContext {
+            sequence: self.next_attempt_sequence,
+            id: uuid::Uuid::new_v4().to_string(),
+            started_at_ms: wall_clock_ms()?,
+        };
+        self.current_attempt = Some(TransportConnectionAttempt {
+            sequence: context.sequence,
+            id: context.id.clone(),
+            started_at_ms: context.started_at_ms,
+        });
+        self.received_auth = None;
+        Ok(context)
+    }
+}
+
+fn auth_evidence(
+    attempt: &TransportConnectionAttempt,
+    info: &AuthDeniedInfo,
+) -> Option<TransportReceivedAuth> {
+    if info.attempt_id.as_deref() != Some(attempt.id.as_str())
+        || info.attempt_sequence != Some(attempt.sequence)
+    {
+        return None;
+    }
+    let auth_event_id = info.auth_event_id.clone()?;
+    let received_at_ms = info.received_at_ms?;
+    Some(TransportReceivedAuth {
+        auth_event_id,
+        attempt_id: attempt.id.clone(),
+        attempt_sequence: attempt.sequence,
+        accepted: false,
+        classification: info.classification,
+        received_at_ms,
+    })
 }
 
 /// Separate from Buzz's existing ±20% ladder jitter. A full random u32 gives

@@ -1,9 +1,23 @@
-use buzz_core_pkg::transport_status::{TransportRecord, MAX_RECORD_BYTES};
+#[cfg(test)]
+use buzz_core_pkg::transport_status::TransportRecord;
+use buzz_core_pkg::transport_status::{
+    decode_transport_record, TransportRecordEnvelope, MAX_RECORD_BYTES,
+};
 use std::path::Path;
 
+#[cfg(test)]
 pub(super) fn read_owned_record(path: &Path) -> Result<TransportRecord, String> {
+    match read_owned_envelope(path)? {
+        TransportRecordEnvelope::V1(record) => Ok(record),
+        TransportRecordEnvelope::V2(_) => {
+            Err("local transport v2 record requires native binding".into())
+        }
+    }
+}
+
+pub(super) fn read_owned_envelope(path: &Path) -> Result<TransportRecordEnvelope, String> {
     let bytes = read_owned_bytes(path)?;
-    serde_json::from_slice(&bytes).map_err(|_| "local transport status malformed".into())
+    decode_transport_record(&bytes)
 }
 
 #[cfg(unix)]

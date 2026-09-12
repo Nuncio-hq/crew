@@ -10,7 +10,21 @@ use crate::managed_agents::{
 };
 use tauri::{AppHandle, Manager};
 
+use super::export::{self, ExportCandidate};
+
 const MAX_READS_PER_TICK: usize = 256;
+
+#[derive(Debug, Clone, Copy)]
+enum ExportTarget {
+    Live,
+    Retired,
+}
+
+#[derive(Debug)]
+struct ExportWork {
+    target: ExportTarget,
+    candidate: ExportCandidate,
+}
 
 /// Exactly one task is created during native app setup. Removing a generation
 /// removes its read capability; already-running reads still require exact apply.
@@ -105,7 +119,7 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
     let results: Vec<_> = selected
         .into_iter()
         .map(|ticket| {
-            let result = super::reader::read_owned_record(&ticket.path);
+            let result = super::reader::read_owned_envelope(&ticket.path);
             (ticket, result)
         })
         .collect();
@@ -126,9 +140,10 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
         .as_millis();
     let wall_ms = u64::try_from(wall_ms).unwrap_or(u64::MAX);
     let mut records_changed = false;
-    apply_with_current_owner(&state, &owner, |runtimes| {
+    let exports = apply_with_current_owner(&state, &owner, |runtimes| {
         let now = Instant::now();
         let mut changed = HashSet::new();
+        let mut exports = Vec::new();
         let previous_errors: std::collections::HashMap<_, _> = runtimes
             .iter()
             .map(|(key, runtime)| (key.clone(), runtime.error.clone()))
@@ -189,6 +204,30 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
                 }
             }
         }
+        if export::enabled() {
+            for runtime in runtimes.values_mut() {
+                if let Some(monitor) = runtime.transport.as_mut() {
+                    if let Some(candidate) = monitor.take_export_candidate(now) {
+                        exports.push(ExportWork {
+                            target: ExportTarget::Live,
+                            candidate,
+                        });
+                    }
+                }
+            }
+            let mut diagnostics = state
+                .managed_transport_diagnostics
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for ticket in diagnostics.export_tickets(&owner, now) {
+                if let Some(candidate) = diagnostics.take_export_candidate(&ticket, now) {
+                    exports.push(ExportWork {
+                        target: ExportTarget::Retired,
+                        candidate,
+                    });
+                }
+            }
+        }
         for key in changed {
             if let Some(record) = records
                 .iter()
@@ -208,15 +247,81 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
                 emit_status(app, &status);
             }
         }
-    })?;
+        exports
+    })?
+    .unwrap_or_default();
     if records_changed {
         save_managed_agents(app, &records)?;
     }
+    // Emission is deliberately outside the process, transition, store, and
+    // diagnostics locks. A pipe or stderr sink must never stall native state.
+    drop(_store);
+    drop(_transition);
+    finish_exports(&state, &owner, exports)?;
     Ok(if total == 0 {
         0
     } else {
         (cursor + MAX_READS_PER_TICK.min(total)) % total
     })
+}
+
+fn finish_exports(state: &AppState, owner: &str, exports: Vec<ExportWork>) -> Result<(), String> {
+    let mut failed = false;
+    for work in exports {
+        let now = Instant::now();
+        let current = apply_with_current_owner(state, owner, |runtimes| match work.target {
+            ExportTarget::Live => {
+                let ticket = match &work.candidate {
+                    ExportCandidate::Registration(candidate) => &candidate.ticket,
+                    ExportCandidate::Auth(candidate) => &candidate.ticket,
+                };
+                runtimes.get_mut(&ticket.key).is_some_and(|runtime| {
+                    let registered_child = runtime.start_nonce == ticket.nonce
+                        && runtime.child.id() == ticket.process_id
+                        && matches!(runtime.child.try_wait(), Ok(None));
+                    runtime.transport.as_mut().is_some_and(|monitor| {
+                        monitor.export_is_current(&work.candidate, now, registered_child)
+                    })
+                })
+            }
+            ExportTarget::Retired => state
+                .managed_transport_diagnostics
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .export_is_current(&work.candidate, now),
+        })?
+        .unwrap_or(false);
+        if !current {
+            continue;
+        }
+        let success = export::emit(&work.candidate).is_ok();
+        failed |= !success;
+        apply_with_current_owner(state, owner, |runtimes| match work.target {
+            ExportTarget::Live => {
+                let ticket = match &work.candidate {
+                    ExportCandidate::Registration(candidate) => &candidate.ticket,
+                    ExportCandidate::Auth(candidate) => &candidate.ticket,
+                };
+                if let Some(runtime) = runtimes.get_mut(&ticket.key) {
+                    if let Some(monitor) = runtime.transport.as_mut() {
+                        monitor.finish_export(&work.candidate, success, now);
+                    }
+                }
+            }
+            ExportTarget::Retired => {
+                state
+                    .managed_transport_diagnostics
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .finish_export(&work.candidate, success, now);
+            }
+        })?;
+    }
+    if failed {
+        Err("native transport evidence export failed".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Guard the complete check-and-apply operation with the actual process map.

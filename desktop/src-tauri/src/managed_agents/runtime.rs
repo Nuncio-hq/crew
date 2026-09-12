@@ -848,6 +848,13 @@ pub fn spawn_agent_child(
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
+    let spawn_started_at_ms = super::transport_status::configure_child_transport_stamp(
+        &mut command,
+        transport_storage_available,
+        &start_nonce,
+        owner_hex,
+        spawned_setup_mode,
+    )?;
     let child = spawn_with_effort_proof(&mut command, effort).map_err(|error| {
         format!(
             "failed to spawn `{}` for agent {}: {error}",
@@ -866,27 +873,16 @@ pub fn spawn_agent_child(
 
     // Receipt persistence belongs to the caller's atomic register transition.
 
-    // Windows: assign the harness to a Job Object so its whole tree dies with
-    // the handle. The Unix process-group equivalent is set above.
-    #[cfg(windows)]
-    return Ok(super::process_lifecycle::finish_spawn(
+    Ok(lifecycle::finish_spawn_process(
         child,
         log_path,
         spawn_config,
         spawned_setup_mode,
         spawned_adapter_availability,
         start_nonce,
+        spawn_started_at_ms,
         &record.name,
-    ));
-    #[cfg(not(windows))]
-    Ok(crate::managed_agents::ManagedAgentProcess {
-        child,
-        log_path,
-        spawn_config,
-        setup_mode: spawned_setup_mode,
-        adapter_availability: spawned_adapter_availability,
-        start_nonce,
-    })
+    ))
 }
 
 pub fn start_managed_agent_process(

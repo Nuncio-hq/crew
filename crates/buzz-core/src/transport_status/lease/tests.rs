@@ -1,5 +1,7 @@
 use super::*;
-use crate::transport_status::{TransportCode, TransportState};
+use crate::transport_status::{
+    TransportCode, TransportRecordEnvelope, TransportRecordV2, TransportState,
+};
 use std::time::Duration;
 
 fn record(sequence: u64) -> TransportRecord {
@@ -18,6 +20,22 @@ fn record(sequence: u64) -> TransportRecord {
             next_retry_at_ms: None,
             last_error: None,
         },
+    }
+}
+
+fn record_v2(sequence: u64) -> TransportRecordV2 {
+    TransportRecordV2 {
+        version: 2,
+        runtime_id: "fixture-runtime".into(),
+        start_nonce: "fixture-nonce".into(),
+        sequence,
+        timestamp_ms: 100_000,
+        terminal: false,
+        transport: record(sequence).transport,
+        process_id: 7,
+        spawn_started_at_ms: 90_000,
+        connection_attempt: None,
+        received_auth: None,
     }
 }
 
@@ -148,4 +166,43 @@ fn read_failure_recovers_without_renewing_same_sequence() {
     assert_eq!(lease.status().state, TransportState::Connected);
     lease.expire(now + Duration::from_secs(15));
     assert_eq!(lease.status().state, TransportState::Unknown);
+}
+
+#[test]
+fn accepted_wire_version_cannot_change_within_one_generation() {
+    let now = Instant::now();
+    let mut lease = TransportLease::default();
+    lease
+        .observe_envelope(
+            TransportRecordEnvelope::V2(record_v2(1)),
+            "fixture-runtime",
+            "fixture-nonce",
+            now,
+            100_000,
+            false,
+        )
+        .unwrap();
+    assert!(lease
+        .observe(
+            record(2),
+            "fixture-runtime",
+            "fixture-nonce",
+            now,
+            100_000,
+            false,
+        )
+        .is_err());
+    // The v2 writer may continue after the rejected v1 receipt, but the
+    // old v2 record cannot be mistaken for a new wire-version negotiation.
+    lease
+        .observe_envelope(
+            TransportRecordEnvelope::V2(record_v2(2)),
+            "fixture-runtime",
+            "fixture-nonce",
+            now + Duration::from_secs(1),
+            100_000,
+            false,
+        )
+        .unwrap();
+    assert_eq!(lease.status().state, TransportState::Connected);
 }
