@@ -200,6 +200,7 @@ fn model_cannot_be_an_argv_option() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn hermes_plan_copies_profile_and_requires_matching_usage_model() {
     let fixture = tempfile::tempdir().unwrap();
@@ -235,6 +236,7 @@ fn hermes_plan_copies_profile_and_requires_matching_usage_model() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn hermes_profile_copy_rejects_symlinked_entries() {
     let fixture = tempfile::tempdir().unwrap();
@@ -255,6 +257,7 @@ fn hermes_profile_copy_rejects_symlinked_entries() {
     assert_eq!(error, RecapRunFailure::ProfileUnavailable);
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn hermes_plan_rechecks_profile_content_and_directory_identity() {
     let fixture = tempfile::tempdir().unwrap();
@@ -303,6 +306,49 @@ fn hermes_plan_rechecks_profile_content_and_directory_identity() {
     }
     std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
     assert!(!plan.profile_matches_admission(&admission));
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn hermes_plan_requires_supported_process_containment() {
+    let fixture = tempfile::tempdir().unwrap();
+    let profile = fixture.path().join("profiles").join("scout");
+    let root = fixture.path().join("run");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    let executable = fixture.path().join("hermes");
+    std::fs::write(&executable, b"fixture").unwrap();
+
+    let error =
+        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap_err();
+    assert_eq!(error, RecapRunFailure::UnsupportedContainment);
+}
+
+#[cfg(unix)]
+#[test]
+fn hermes_profile_binding_helpers_reject_content_and_identity_changes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let profile = fixture.path().join("profiles").join("scout");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+
+    let digest = profile_tree_digest(&profile).unwrap();
+    let identity = profile_identity(&profile).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-high\n").unwrap();
+    assert_ne!(profile_tree_digest(&profile).unwrap(), digest);
+
+    let original_profile = fixture.path().join("profiles").join("scout-original");
+    std::fs::rename(&profile, &original_profile).unwrap();
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    assert_ne!(profile_identity(&profile).unwrap(), identity);
 }
 
 #[test]

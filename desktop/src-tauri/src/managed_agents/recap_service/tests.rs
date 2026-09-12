@@ -80,6 +80,7 @@ fn executable_replacement_after_planning_is_rejected_before_spawn() {
     );
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn copied_profile_replacement_after_planning_is_rejected_before_spawn() {
     let fixture = tempfile::tempdir().unwrap();
