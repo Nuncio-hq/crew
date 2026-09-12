@@ -950,22 +950,28 @@ run one exact staged runtime with a disposable copied profile/config and
 record source revision, runtime/model/profile, output and no employee-session
 mutation.
 
-The Hermes child command sets `HERMES_SAFE_MODE=1` while retaining the copied
-profile's provider/model configuration. The installed Hermes source currently
-checks this guard before plugin discovery (`hermes_cli/plugins.py:1216` and
-`:1391`), configured MCP loading (`tools/mcp_tool_config.py:327`), shell-hook
-registration (`agent/shell_hooks.py:148`), and outbound-webhook registration
-(`agent/outbound_webhooks.py:77`). This environment guard is deliberately
-narrower than Hermes' top-level `--safe-mode`, which also ignores user config
-and rules. The production-bound fake-process regression seeds adversarial
-hook/plugin/MCP configuration and makes the child create markers and fail when
-the guard is absent; it therefore catches removal of the environment assignment
-without claiming that an installed Hermes provider or model has run.
+The Hermes child command sets `HERMES_SAFE_MODE=1` and passes Hermes'
+top-level `--safe-mode` flag, while retaining the copied profile's
+provider/model configuration for the one-shot path. In Hermes Agent v0.21.2
+(source HEAD `eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads
+profile dotenv, external secret sources, and managed dotenv before
+`_prepare_agent_startup` reapplies the safe-mode environment. The installed
+`hermes_cli/oneshot.py` path then loads the selected profile config directly to
+resolve its provider/model. The adapter validates a staged `config.yaml` before
+launch: missing and empty files remain valid first-run states, while malformed
+YAML and non-mapping roots fail with a fixed error before a provider process can
+start. The production-bound fake-process regression stages a real profile copy,
+seeds hostile dotenv/managed values and valid provider/model fields, and
+emulates that native reassertion at the child boundary; it catches removal of
+the CLI guard without claiming that an installed Hermes provider or model has
+run.
 
 This source-level guard does not close the installed-runtime acceptance gap.
 No native Hermes launch, provider/auth check, effective-model receipt, or
-staging generation is implied; #348 still owns that exact installed-runtime
-proof, and mutable Hermes source or wrappers require revalidation.
+staging generation is implied. The #363 installed-runtime acceptance must run
+in the #348 staging environment; #348 owns that environment and #363 owns the
+runtime acceptance result. Mutable Hermes source or wrappers require
+revalidation.
 
 ## Recap capability source proof (#351)
 

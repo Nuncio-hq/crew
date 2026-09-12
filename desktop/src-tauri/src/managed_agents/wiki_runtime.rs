@@ -35,6 +35,7 @@ const HERMES_PROFILE_FILE_LIMIT: usize = 1024;
 const HERMES_PROFILE_ENTRY_LIMIT: usize = 4096;
 const HERMES_PROFILE_DEPTH_LIMIT: usize = 32;
 const HERMES_PROFILE_BYTES_LIMIT: u64 = 32 * 1024 * 1024;
+const HERMES_PROFILE_CONFIG_BYTES_LIMIT: u64 = 1024 * 1024;
 
 /// User-owned Wiki runtime selection.  This is separate from employee agent
 /// settings; the selection names a runtime, and never an employee or session.
@@ -138,6 +139,10 @@ pub(crate) enum WikiRuntimeFailure {
     ProfileUnavailable,
     /// The selected profile exceeded its bounded copy budget.
     ProfileCopyLimit,
+    /// The staged Hermes profile config is not a mapping or valid YAML.
+    InvalidProfileConfig,
+    /// The staged Hermes profile config exceeded its bounded parse budget.
+    ProfileConfigLimit,
     /// The selected process could not be safely owned or completed.
     Process(BoundedFailure),
     /// The process exited unsuccessfully.
@@ -173,6 +178,12 @@ impl std::fmt::Display for WikiRuntimeFailure {
             }
             Self::ProfileCopyLimit => {
                 f.write_str("The selected Wiki runtime profile exceeds its copy limit.")
+            }
+            Self::InvalidProfileConfig => {
+                f.write_str("The selected Wiki runtime profile config is invalid.")
+            }
+            Self::ProfileConfigLimit => {
+                f.write_str("The selected Wiki runtime profile config exceeds its size limit.")
             }
             Self::Process(failure) => {
                 write!(f, "Wiki runtime process was not bounded ({failure:?}).")
@@ -288,7 +299,8 @@ impl WikiRuntimeGenerator {
             self.state_dir.join("hermes").join("profiles").join(profile)
         };
         let mut budget = ProfileCopyBudget::default();
-        copy_profile_tree(&source, &destination, &mut budget, 0)
+        copy_profile_tree(&source, &destination, &mut budget, 0)?;
+        validate_staged_hermes_profile_config(&destination)
     }
 
     /// Cancel the currently owned request.  The bounded runner terminates the
@@ -343,10 +355,13 @@ impl WikiRuntimeGenerator {
                     .env("HERMES_HOME", self.state_dir.join("hermes"))
                     // Hermes checks this child-process guard before discovering plugins,
                     // loading configured MCP servers, or registering user hooks/webhooks.
-                    // Keep the copied profile's provider/model configuration active; the
-                    // CLI `--safe-mode` flag would also discard user config and rules.
+                    // Keep the direct env assignment for early child paths, and pass the
+                    // native flag so Hermes reapplies the guard after profile dotenv and
+                    // managed-env loading. The oneshot path still reads the staged profile
+                    // config for its provider/model selection.
                     .env("HERMES_SAFE_MODE", "1")
                     .args([
+                        "--safe-mode",
                         "--ignore-rules",
                         "--no-restore-cwd",
                         // `context_engine` is the installed Hermes CLI's
@@ -447,6 +462,48 @@ impl WikiRuntimeGenerator {
             return Err(WikiRuntimeFailure::InvalidOutput);
         }
         Ok(text)
+    }
+}
+
+/// Validate the copied Hermes config before an installed provider process can start.
+///
+/// Hermes treats a missing or empty config as a valid first-run state, while a
+/// non-mapping root or malformed YAML is not a usable user config for a
+/// non-interactive launch. Keep this check bounded and return a fixed failure so
+/// config contents never cross the runtime error boundary.
+fn validate_staged_hermes_profile_config(profile_dir: &Path) -> Result<(), WikiRuntimeFailure> {
+    let config = profile_dir.join("config.yaml");
+    let metadata = match std::fs::symlink_metadata(&config) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(WikiRuntimeFailure::InvalidProfileConfig),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(WikiRuntimeFailure::InvalidProfileConfig);
+    }
+    if metadata.len() > HERMES_PROFILE_CONFIG_BYTES_LIMIT {
+        return Err(WikiRuntimeFailure::ProfileConfigLimit);
+    }
+    let file =
+        std::fs::File::open(&config).map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    let mut contents = Vec::new();
+    file.take(HERMES_PROFILE_CONFIG_BYTES_LIMIT + 1)
+        .read_to_end(&mut contents)
+        .map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    if contents.len() as u64 > HERMES_PROFILE_CONFIG_BYTES_LIMIT {
+        return Err(WikiRuntimeFailure::ProfileConfigLimit);
+    }
+    let contents =
+        String::from_utf8(contents).map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(&contents)
+        .map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    if matches!(
+        value,
+        serde_yaml::Value::Null | serde_yaml::Value::Mapping(_)
+    ) {
+        Ok(())
+    } else {
+        Err(WikiRuntimeFailure::InvalidProfileConfig)
     }
 }
 
@@ -899,6 +956,28 @@ mod tests {
     }
 
     #[cfg(unix)]
+    struct HermesHomeGuard(Option<std::ffi::OsString>);
+
+    #[cfg(unix)]
+    impl HermesHomeGuard {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os("HERMES_HOME");
+            std::env::set_var("HERMES_HOME", path);
+            Self(previous)
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for HermesHomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(previous) => std::env::set_var("HERMES_HOME", previous),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
     #[test]
     fn profile_root_symlink_is_rejected_before_canonicalization() {
         let fixture = tempfile::tempdir().expect("fixture dir");
@@ -952,55 +1031,126 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(args.windows(2).any(|pair| pair == ["-p", "wiki-proof"]));
         assert!(args.iter().any(|arg| arg == "--toolsets"));
-        assert!(!args.iter().any(|arg| arg == "--safe-mode"));
+        assert!(args.iter().any(|arg| arg == "--safe-mode"));
         assert!(!args.iter().any(|arg| arg == "--ignore-user-config"));
     }
 
     #[cfg(unix)]
     #[test]
-    fn hermes_generation_skips_adversarial_profile_hooks_plugins_and_mcp() {
+    fn hermes_generation_stages_valid_profile_and_reasserts_native_safe_mode() {
         let (fixture, executable) = fake_runtime(
             r#"#!/bin/sh
 set -eu
 profile="$HERMES_HOME/profiles/wiki-proof"
-grep -q 'hook-marker' "$profile/config.yaml"
-grep -q 'plugin-marker' "$profile/config.yaml"
-grep -q 'mcp-marker' "$profile/config.yaml"
-if [ "${HERMES_SAFE_MODE:-}" != "1" ]; then
-  printf 'hook-ran' > "$profile/hook-marker"
-  printf 'plugin-ran' > "$profile/plugin-marker"
-  printf 'mcp-ran' > "$profile/mcp-marker"
+grep -q 'provider: profile-provider' "$profile/config.yaml"
+grep -q 'default: profile-model' "$profile/config.yaml"
+safe="${HERMES_SAFE_MODE:-}"
+ignore_rules="${HERMES_IGNORE_RULES:-}"
+ignore_user_config="${HERMES_IGNORE_USER_CONFIG:-}"
+managed_dir=""
+apply_env_file() {
+  file="$1"
+  [ -f "$file" ] || return 0
+  while IFS='=' read -r key value; do
+    case "$key" in
+      HERMES_SAFE_MODE) safe="$value" ;;
+      HERMES_IGNORE_RULES) ignore_rules="$value" ;;
+      HERMES_IGNORE_USER_CONFIG) ignore_user_config="$value" ;;
+      HERMES_MANAGED_DIR) managed_dir="$value" ;;
+    esac
+  done < "$file"
+}
+apply_env_file "$profile/.env"
+if [ "$managed_dir" = "managed" ]; then
+  apply_env_file "$PWD/managed/.env"
+fi
+for arg in "$@"; do
+  if [ "$arg" = "--safe-mode" ]; then
+    safe=1
+    ignore_rules=1
+    ignore_user_config=1
+  fi
+done
+if [ "$safe" != "1" ] || [ "$ignore_rules" != "1" ] || [ "$ignore_user_config" != "1" ]; then
+  printf 'child-ran' > "$PWD/child-ran"
   exit 91
 fi
-test ! -e "$profile/hook-marker"
-test ! -e "$profile/plugin-marker"
-test ! -e "$profile/mcp-marker"
-printf 'safe-mode-page'
+provider=$(sed -n 's/^  provider: //p' "$profile/config.yaml")
+model=$(sed -n 's/^  default: //p' "$profile/config.yaml")
+printf 'safe-mode-page|%s|%s' "$provider" "$model"
 "#,
         );
-        let state = fixture.path().join("state");
-        let profile = state.join("hermes/profiles/wiki-proof");
-        std::fs::create_dir_all(&profile).expect("profile");
+        let source_home = fixture.path().join("source-hermes");
+        let source_profile = source_home.join("profiles/wiki-proof");
+        std::fs::create_dir_all(&source_profile).expect("source profile");
         std::fs::write(
-            profile.join("config.yaml"),
-            "hooks:\n  pre_tool_call: hook-marker\nplugins:\n  enabled: [plugin-marker]\nmcp_servers:\n  marker: mcp-marker\n",
+            source_profile.join("config.yaml"),
+            "model:\n  provider: profile-provider\n  default: profile-model\nhooks:\n  pre_tool_call: hook-marker\nplugins:\n  enabled: [plugin-marker]\nmcp_servers:\n  marker: mcp-marker\n",
         )
-        .expect("adversarial profile config");
+        .expect("valid profile config");
+        std::fs::write(
+            source_profile.join(".env"),
+            "HERMES_SAFE_MODE=0\nHERMES_IGNORE_RULES=0\nHERMES_IGNORE_USER_CONFIG=0\nHERMES_MANAGED_DIR=managed\n",
+        )
+        .expect("hostile profile dotenv");
+        let state = fixture.path().join("state");
+        std::fs::create_dir_all(state.join("managed")).expect("managed overlay");
+        std::fs::write(
+            state.join("managed/.env"),
+            "HERMES_SAFE_MODE=0\nHERMES_IGNORE_RULES=0\nHERMES_IGNORE_USER_CONFIG=0\n",
+        )
+        .expect("hostile managed dotenv");
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let _home_guard = HermesHomeGuard::set(&source_home);
 
         let generator =
             WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state.clone())
                 .expect("generator");
+        generator
+            .stage_hermes_profile()
+            .expect("profile staging and config validation");
         let (page, snapshot) = page_snapshot("source-secret-fixture");
         let output = generator
             .generate(&page, &snapshot, "en")
             .expect("safe-mode generation");
-        assert_eq!(output, "safe-mode-page");
-        for marker in ["hook-marker", "plugin-marker", "mcp-marker"] {
-            assert!(
-                !profile.join(marker).exists(),
-                "adversarial {marker} marker must not be created"
-            );
-        }
+        assert_eq!(output, "safe-mode-page|profile-provider|profile-model");
+        assert!(!state.join("child-ran").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn malformed_staged_hermes_config_fails_before_child_launch() {
+        let (fixture, executable) =
+            fake_runtime("#!/bin/sh\nprintf 'child-ran' > \"$PWD/child-ran\"\nexit 0\n");
+        let source_home = fixture.path().join("source-hermes");
+        let source_profile = source_home.join("profiles/wiki-proof");
+        std::fs::create_dir_all(&source_profile).expect("source profile");
+        std::fs::write(source_profile.join("config.yaml"), "model: [").expect("broken config");
+        let state = fixture.path().join("state");
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let _home_guard = HermesHomeGuard::set(&source_home);
+        let generator =
+            WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state.clone())
+                .expect("generator");
+        let error = generator
+            .stage_hermes_profile()
+            .expect_err("malformed config must fail before launch");
+        assert_eq!(error, WikiRuntimeFailure::InvalidProfileConfig);
+        assert_eq!(
+            error.to_string(),
+            "The selected Wiki runtime profile config is invalid."
+        );
+        assert!(!state.join("child-ran").exists());
+    }
+
+    #[test]
+    fn staged_hermes_config_allows_missing_and_empty_first_run_states() {
+        let fixture = tempfile::tempdir().expect("fixture dir");
+        let profile = fixture.path().join("profile");
+        std::fs::create_dir_all(&profile).expect("profile");
+        assert!(validate_staged_hermes_profile_config(&profile).is_ok());
+        std::fs::write(profile.join("config.yaml"), "").expect("empty config");
+        assert!(validate_staged_hermes_profile_config(&profile).is_ok());
     }
 
     #[cfg(unix)]
