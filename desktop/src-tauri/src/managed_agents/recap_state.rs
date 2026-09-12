@@ -20,6 +20,7 @@ pub(crate) enum RecapStateFailure {
     Io,
     InputLimit,
     Ownership,
+    RuntimeNotReady,
     ProcessPending,
     UnsupportedPlatform,
 }
@@ -40,6 +41,11 @@ struct Manifest {
     created_at: u64,
     expires_at: u64,
     phase: Phase,
+    /// Direct child PID persisted after the bounded owner has secured it.
+    /// `None` means a crash may have happened before spawn identity could be
+    /// recorded; startup recovery must preserve that root conservatively.
+    #[serde(default)]
+    process_pid: Option<u32>,
     directory: DirectoryIdentity,
 }
 
@@ -79,6 +85,7 @@ impl OwnedRecapRun {
                 created_at: now,
                 expires_at: now.saturating_add(RECOVERY_AGE_SECONDS),
                 phase: Phase::Prepared,
+                process_pid: None,
                 directory: directory_identity(&path)?,
             },
             path,
@@ -92,6 +99,17 @@ impl OwnedRecapRun {
     /// The only working/cache/config root supplied to the native recipe.
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Create the fixed private runtime directories used by the native recipe.
+    /// No caller-supplied path is accepted and every directory remains below
+    /// the already-validated run generation.
+    pub(crate) fn prepare_runtime_dirs(&self) -> Result<(), RecapStateFailure> {
+        self.verify()?;
+        for name in ["home", "config", "tmp", "cache", "data", "state"] {
+            private_directory(&self.path.join(name))?;
+        }
+        self.verify()
     }
 
     /// Close the writer and return a private read-only stdin handle.
@@ -116,18 +134,42 @@ impl OwnedRecapRun {
 
     /// Mark before spawning; a crash must never make recovery infer no process.
     pub(crate) fn mark_process_pending(&mut self) -> Result<(), RecapStateFailure> {
-        self.set_phase(Phase::ProcessMayBeRunning)
+        self.set_phase(Phase::ProcessMayBeRunning, None)
+    }
+
+    /// Persist the direct child PID once the bounded owner has secured it.
+    /// Recovery may use a recorded, now-dead PID to finish cleanup; an absent
+    /// PID remains conservatively pending because the process boundary is
+    /// unknown after a crash.
+    pub(crate) fn mark_process_started(&mut self, pid: u32) -> Result<(), RecapStateFailure> {
+        if pid == 0 {
+            return Err(RecapStateFailure::Ownership);
+        }
+        self.verify()?;
+        if self.manifest.phase != Phase::ProcessMayBeRunning {
+            return Err(RecapStateFailure::ProcessPending);
+        }
+        let mut next = self.manifest.clone();
+        next.process_pid = Some(pid);
+        self.persist(&next)?;
+        self.manifest = next;
+        Ok(())
     }
 
     /// Mark only after the runner has completed owned-process cleanup.
     pub(crate) fn mark_finished(&mut self) -> Result<(), RecapStateFailure> {
-        self.set_phase(Phase::Finished)
+        self.set_phase(Phase::Finished, None)
     }
 
-    fn set_phase(&mut self, phase: Phase) -> Result<(), RecapStateFailure> {
+    fn set_phase(
+        &mut self,
+        phase: Phase,
+        process_pid: Option<u32>,
+    ) -> Result<(), RecapStateFailure> {
         self.verify()?;
         let mut next = self.manifest.clone();
         next.phase = phase;
+        next.process_pid = process_pid;
         self.persist(&next)?;
         self.manifest = next;
         Ok(())
@@ -256,16 +298,30 @@ fn recover_with_cleanup(
         if manifest.expires_at > now {
             continue;
         }
-        if manifest.phase == Phase::ProcessMayBeRunning {
-            report.pending_process += 1;
-            continue;
-        }
-        match cleanup(OwnedRecapRun {
+        let mut owned = OwnedRecapRun {
             path,
             manifest,
             parent: parent_identity.clone(),
             base: base_identity.clone(),
-        }) {
+        };
+        if owned.manifest.phase == Phase::ProcessMayBeRunning {
+            // A PID that was durably recorded after ownership was secured can
+            // be reclaimed once it is definitely gone. A missing or live PID
+            // remains pending; expiry alone is never permission to remove it.
+            let Some(pid) = owned.manifest.process_pid else {
+                report.pending_process += 1;
+                continue;
+            };
+            if process_is_running_for_recovery(pid) {
+                report.pending_process += 1;
+                continue;
+            }
+            if let Err(failure) = owned.mark_finished() {
+                first_failure.get_or_insert(failure);
+                continue;
+            }
+        }
+        match cleanup(owned) {
             Ok(()) => report.removed += 1,
             Err(failure) => {
                 first_failure.get_or_insert(failure);
@@ -276,6 +332,19 @@ fn recover_with_cleanup(
         Some(failure) => Err(failure),
         None => Ok(report),
     }
+}
+
+/// A post-restart PID check is only a safe positive signal on Unix. On other
+/// platforms this module has no process identity primitive, so preserve the
+/// durable root for an operator/owner recovery path instead of guessing.
+#[cfg(unix)]
+fn process_is_running_for_recovery(pid: u32) -> bool {
+    crate::managed_agents::process_is_running(pid)
+}
+
+#[cfg(not(unix))]
+fn process_is_running_for_recovery(_pid: u32) -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -406,6 +475,7 @@ fn read_manifest(path: &Path) -> Result<Manifest, RecapStateFailure> {
             .as_deref()
             != Some(manifest.run_id.as_str())
         || manifest.expires_at != manifest.created_at.saturating_add(RECOVERY_AGE_SECONDS)
+        || manifest.process_pid == Some(0)
     {
         return Err(RecapStateFailure::Ownership);
     }

@@ -22,10 +22,34 @@ pub(crate) fn output_with_policy(
 /// thread so a runtime that never consumes stdin still reaches the process
 /// deadline and cleanup path.
 pub(crate) fn output_with_policy_and_stdin(
+    command: Command,
+    input: Option<Vec<u8>>,
+    policy: BoundedPolicy,
+    cancelled: &AtomicBool,
+) -> Result<BoundedOutcome, BoundedFailure> {
+    output_with_policy_and_stdin_and_spawn_hook(command, input, policy, cancelled, |_| Ok(()))
+}
+
+/// Run a bounded child and invoke `on_spawn` after tree ownership is secured.
+///
+/// The hook is used by durable callers to persist the owned child identity
+/// before any output is consumed. A hook failure tears down the owned tree and
+/// returns `Cleanup`; callers retain their pre-spawn durable retry record.
+pub(crate) fn output_with_policy_and_spawn_hook(
+    command: Command,
+    policy: BoundedPolicy,
+    cancelled: &AtomicBool,
+    on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
+) -> Result<BoundedOutcome, BoundedFailure> {
+    output_with_policy_and_stdin_and_spawn_hook(command, None, policy, cancelled, on_spawn)
+}
+
+fn output_with_policy_and_stdin_and_spawn_hook(
     mut command: Command,
     input: Option<Vec<u8>>,
     policy: BoundedPolicy,
     cancelled: &AtomicBool,
+    on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
 ) -> Result<BoundedOutcome, BoundedFailure> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(BoundedFailure::Cancelled);
@@ -55,6 +79,12 @@ pub(crate) fn output_with_policy_and_stdin(
     }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = BoundedChild::spawn(command).ok_or(BoundedFailure::ProcessOwnership)?;
+    if on_spawn(child.id()).is_err() {
+        let killed = child.kill_tree();
+        let reaped = child.reap_until(Instant::now() + CLEANUP_BUDGET);
+        let _ = killed.and(reaped);
+        return Err(BoundedFailure::Cleanup);
+    }
     let stdin_stop = Arc::new(AtomicBool::new(false));
     let stdin_writer = input.map(|input| {
         let stdin = child.take_stdin().ok_or(BoundedFailure::Pipe)?;

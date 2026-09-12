@@ -314,12 +314,10 @@ mod tests {
                 .expect("executable");
         }
         let original_home = std::env::var("HERMES_HOME").ok();
-        let original_path = std::env::var("PATH").ok();
         std::env::set_var("HERMES_HOME", &hermes_home);
-        std::env::set_var("PATH", temp.path());
-        crate::managed_agents::clear_resolve_cache();
+        let binary = binary.to_string_lossy().into_owned();
 
-        let state = hermes_profile_readiness("hermes", Some("default"))
+        let state = hermes_profile_readiness(&binary, Some("default"))
             .expect("Hermes command should be evaluated");
         assert!(
             matches!(
@@ -331,7 +329,7 @@ mod tests {
         let env = EffectiveAgentEnv {
             env: BTreeMap::new(),
             config_file_path: None,
-            effective_command: "hermes".to_string(),
+            effective_command: binary,
             hermes_profile: Some("default".to_string()),
         };
         let readiness = agent_readiness(&env);
@@ -353,11 +351,6 @@ mod tests {
             Some(value) => std::env::set_var("HERMES_HOME", value),
             None => std::env::remove_var("HERMES_HOME"),
         }
-        match original_path {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
-        }
-        crate::managed_agents::clear_resolve_cache();
     }
 
     #[test]

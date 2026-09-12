@@ -233,8 +233,8 @@ cannot establish a live process or overwrite a newer generation.
 The opt-in native evidence markers are a diagnostic sink only. Registration is
 emitted before an AUTH marker, each marker is bounded and retried a fixed number
 of times, and generation/attempt/AUTH identities deduplicate renewals and stale
-replays. The producer-to-reader proof remains a queued integration gate; its
-actual built-ACP recipe is in [`TESTING.md`](TESTING.md#queued-built-acp-producer-to-native-reader-proof).
+replays. The producer-to-reader proof is an integration gate; its actual
+built-ACP recipe is in [`TESTING.md`](TESTING.md#built-acp-producer-to-native-reader-proof).
 
 ## Observer completion scheduling (#352)
 
@@ -483,13 +483,29 @@ runbook](TESTING.md#wiki-journal-v3-recovery) and
 snapshot handoff. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
 caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
-profile; Claude/Codex receive an explicit model selection. Missing or failed
-runtime execution is a failed generation with no heuristic or HTTP fallback;
-the unsigned legacy preview remains deterministic for compatibility. The
-adapter's state, prompt input, stdout/stderr, deadline, and cancellation are
-bounded, and selection is independent from employee sessions and recap
-settings. #348's real installed-runtime staging evidence is still required
-before any runtime combination is called certified. #364 owns scoped full-body
+profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Claude/Codex
+receive an explicit model selection. For Hermes Agent v0.21.2 (source HEAD
+`eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads profile dotenv,
+external secret sources, and managed dotenv before its startup guard reapplies
+safe mode; its `hermes_cli/oneshot.py` path still loads the selected profile
+config directly to resolve provider/model. The adapter validates staged
+`config.yaml` as missing/empty or a YAML mapping before launch, rejecting
+malformed/non-mapping config with a fixed error. It also rejects profile
+`.env`/`.op.env` routing assignments for `HERMES_HOME` or
+`HERMES_MANAGED_DIR`, invalid or ambiguous dotenv bytes, and every enabled
+external secret source. Accepted dotenv bytes remain unchanged, a missing
+`.env` is created empty, and `HERMES_MANAGED_DIR` is bound to a fresh empty
+directory under the disposable state root. Missing or failed runtime
+execution is a failed generation with no heuristic or HTTP fallback; the
+unsigned legacy preview remains deterministic for compatibility. The adapter's
+state, prompt input, stdout/stderr, deadline, and cancellation are bounded, and
+selection is independent from employee sessions and recap settings. The source
+guard, config gate, and profile-binding boundary are covered by production
+seam tests in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
+they do not certify a native Hermes launch, provider/auth path,
+effective model, or installed tool isolation. The #363 installed-runtime
+acceptance must run in the #348 staging environment; #348 owns that environment
+and #363 owns the runtime acceptance result. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
 selected page and bounded scroll position under the captured owner/community,
 parent Project, repository coordinate, and door; when a saved page is gone, it
@@ -520,19 +536,41 @@ uses an explicit `recap_native_command` catalog value because ordinary ACP
 discovery remains `hermes-acp` first. Other candidates use the existing
 `underlying_cli` metadata. The native
 CLI candidate and its model/profile selection contract are inventory, not proof
-of one-shot support. `classify_recap` currently returns only failure states;
-there is no positive capability cache, generation command, or runnable recap UI.
+of one-shot support. `classify_recap` still returns only failure states;
+discovery cannot create a positive capability. A typed bounded-probe
+certification is the only input to the native producer, which persists a
+redacted row in the existing scoped managed-agent retention DB (keyed by
+runtime, executable fingerprint/version/platform, with a bounded Hermes
+profile-tree digest when a profile is selected) and atomically projects the
+strict runtime-ready grant. Production consumers require both the grant and
+its matching retention row, so the registered command remains fail-closed
+until an actual native probe and auth binding exist.
 [#356](https://github.com/Nuncio-hq/crew/issues/356) remains dependent on a proven
 runtime combination. Ordinary agent/ACP readiness is a separate contract.
 
-The default-off source slice contains a fixed Claude candidate argv/parser,
-private disposable-state ownership, and the existing bounded discovery process
-helper extended with caller-owned stdin, cancellation and per-stream budgets.
-The Claude recipe remains unapproved for generation. Its native `--tools ''`
-flag is not sufficient to establish that all hooks are disabled. A Unix process
-group bounds ordinary descendants but does not contain a `setsid` escape;
-reader shutdown is not evidence that an escaped process exited. No production
-OS-sandbox recipe is enabled.
+The default-off source slice contains fixed Claude and Hermes candidate
+argv/parsers, private disposable-state ownership, a native-only runtime-ready
+grant loader/producer, and the existing bounded discovery process helper
+extended with caller-owned stdin, cancellation and per-stream budgets. The
+registered recap service binds those pieces at one production seam and keeps
+its command unavailable without the grant and matching retention row.
+Hermes binds the selected profile path, canonical directory device/inode
+identity and bounded content digest. Plan construction copies the selected
+profile into the disposable run; immediately before launch, the source and
+destination are revalidated against the bound identity and digest. It disables
+its configured MCP
+path and rule injection, binds a one-shot prompt, and checks the written usage
+model before accepting output. Empty toolsets, `--safe-mode`, or an ACP
+read-only session do not certify tool isolation: the producer requires an
+actual native observer rather than provider output claims; that observer must
+bind the executed plan and report hostile-tool denial before effect plus an
+unchanged controlled sentinel. No observer is wired yet, so the
+certification entrypoint rejects the parsed envelope and cannot project a
+positive grant. On macOS its plan is launched
+through the fixed `sandbox-exec` process-fork denial policy; the ordinary Unix
+process-group limitation and any escaped-descendant caveat still apply to the
+bounded owner. Neither recipe has a positive staging grant in the current
+inventory, so these adapter tests are not runtime acceptance.
 
 The staging ownership loader reads only native `app_data_dir()` plus
 `crew-staging-ownership-v1.json`. It verifies compiled demo identity, actual
@@ -542,7 +580,13 @@ roots must already exist; reading this receipt does not create them. A receipt
 is tied to the root inode/device generations and revalidates before projecting
 the recap state parent. A manifest claiming generation permission or containing
 auth references is rejected. Ownership does not imply authentication readiness;
-a future, separately reviewed runtime-ready grant is still required.
+the producer still requires a native keyring binding, a completed bounded
+probe, and the matching scoped retention row before it can project a grant.
+
+Owner-local recap settings keep a safe Off value when their JSON is corrupt,
+but the settings snapshot carries `settings_error: "invalid_settings"` so the
+command caller can offer repair instead of treating the fallback as
+authoritative.
 
 The derived `agents` base must be canonical and owned before any run-directory
 creation or recovery; an intermediate symlink is rejected, and active runs fence
@@ -559,14 +603,22 @@ unknown-entry flooding can delay reclamation, and pending-process roots require
 separate verified ownership recovery. Non-Unix private-state ACLs are unproved
 and rejected.
 
+Thread source collection follows the bridge's chronological reply cursor with a
+bounded forward scan (4,096 reply events plus a sentinel page). The source
+builder then keeps the newest complete messages observed that fit the 256-event
+and 128-KiB prompt limits. `source_overflow` is persisted in the recap manifest
+when the scan ceiling is reached, and lookup reports such an artifact as stale,
+so a bounded prefix is never mistaken for a proven newest/EOF snapshot;
+auxiliary edits, deletions and reactions are excluded from this recap source.
+
 ### Bounded inventory limits (2026-09-10)
 
 These observations describe the installed artifacts statically revalidated for
 #351 at Crew HEAD `a179fc99e0558eda2b1ad35eab54b2d26c335336`, not permanent
 limitations of the products. Earlier executed evidence is called out in the
 rows; none is a successful recap generation. The #375 foundation is unchanged:
-`classify_recap` returns failure states only; there is no positive capability
-cache or recap executor.
+`classify_recap` returns failure states only; the native executor is present but
+cannot admit a run without the separately bound runtime-ready grant.
 
 | Candidate inspected | Static identity and evidence scope | Current blocker / execution status |
 | --- | --- | --- |

@@ -35,6 +35,9 @@ const HERMES_PROFILE_FILE_LIMIT: usize = 1024;
 const HERMES_PROFILE_ENTRY_LIMIT: usize = 4096;
 const HERMES_PROFILE_DEPTH_LIMIT: usize = 32;
 const HERMES_PROFILE_BYTES_LIMIT: u64 = 32 * 1024 * 1024;
+const HERMES_PROFILE_CONFIG_BYTES_LIMIT: u64 = 1024 * 1024;
+const HERMES_PROFILE_DOTENV_BYTES_LIMIT: u64 = 1024 * 1024;
+const HERMES_PROFILE_BINDING_KEYS: [&str; 2] = ["HERMES_HOME", "HERMES_MANAGED_DIR"];
 
 /// User-owned Wiki runtime selection.  This is separate from employee agent
 /// settings; the selection names a runtime, and never an employee or session.
@@ -138,6 +141,12 @@ pub(crate) enum WikiRuntimeFailure {
     ProfileUnavailable,
     /// The selected profile exceeded its bounded copy budget.
     ProfileCopyLimit,
+    /// The staged Hermes profile config is not a mapping or valid YAML.
+    InvalidProfileConfig,
+    /// The staged Hermes profile config exceeded its bounded parse budget.
+    ProfileConfigLimit,
+    /// The selected profile attempts to redirect private runtime state.
+    ProfileBinding,
     /// The selected process could not be safely owned or completed.
     Process(BoundedFailure),
     /// The process exited unsuccessfully.
@@ -173,6 +182,15 @@ impl std::fmt::Display for WikiRuntimeFailure {
             }
             Self::ProfileCopyLimit => {
                 f.write_str("The selected Wiki runtime profile exceeds its copy limit.")
+            }
+            Self::InvalidProfileConfig => {
+                f.write_str("The selected Wiki runtime profile config is invalid.")
+            }
+            Self::ProfileConfigLimit => {
+                f.write_str("The selected Wiki runtime profile config exceeds its size limit.")
+            }
+            Self::ProfileBinding => {
+                f.write_str("The selected Wiki runtime profile cannot be bound to isolated state.")
             }
             Self::Process(failure) => {
                 write!(f, "Wiki runtime process was not bounded ({failure:?}).")
@@ -288,7 +306,10 @@ impl WikiRuntimeGenerator {
             self.state_dir.join("hermes").join("profiles").join(profile)
         };
         let mut budget = ProfileCopyBudget::default();
-        copy_profile_tree(&source, &destination, &mut budget, 0)
+        copy_profile_tree(&source, &destination, &mut budget, 0)?;
+        validate_staged_hermes_profile_config(&destination)?;
+        validate_staged_hermes_profile_dotenv(&destination)?;
+        ensure_private_hermes_managed_dir(&self.state_dir)
     }
 
     /// Cancel the currently owned request.  The bounded runner terminates the
@@ -341,7 +362,16 @@ impl WikiRuntimeGenerator {
             "hermes" => {
                 command
                     .env("HERMES_HOME", self.state_dir.join("hermes"))
+                    .env("HERMES_MANAGED_DIR", self.state_dir.join("managed"))
+                    // Hermes checks this child-process guard before discovering plugins,
+                    // loading configured MCP servers, or registering user hooks/webhooks.
+                    // Keep the direct env assignment for early child paths, and pass the
+                    // native flag so Hermes reapplies the guard after profile dotenv and
+                    // managed-env loading. The oneshot path still reads the staged profile
+                    // config for its provider/model selection.
+                    .env("HERMES_SAFE_MODE", "1")
                     .args([
+                        "--safe-mode",
                         "--ignore-rules",
                         "--no-restore-cwd",
                         // `context_engine` is the installed Hermes CLI's
@@ -443,6 +473,231 @@ impl WikiRuntimeGenerator {
         }
         Ok(text)
     }
+}
+
+/// Validate the copied Hermes config before an installed provider process can start.
+///
+/// Hermes treats a missing or empty config as a valid first-run state, while a
+/// non-mapping root or malformed YAML is not a usable user config for a
+/// non-interactive launch. Keep this check bounded and return a fixed failure so
+/// config contents never cross the runtime error boundary.
+fn validate_staged_hermes_profile_config(profile_dir: &Path) -> Result<(), WikiRuntimeFailure> {
+    let config = profile_dir.join("config.yaml");
+    let metadata = match std::fs::symlink_metadata(&config) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(WikiRuntimeFailure::InvalidProfileConfig),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(WikiRuntimeFailure::InvalidProfileConfig);
+    }
+    if metadata.len() > HERMES_PROFILE_CONFIG_BYTES_LIMIT {
+        return Err(WikiRuntimeFailure::ProfileConfigLimit);
+    }
+    let file =
+        std::fs::File::open(&config).map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    let mut contents = Vec::new();
+    file.take(HERMES_PROFILE_CONFIG_BYTES_LIMIT + 1)
+        .read_to_end(&mut contents)
+        .map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    if contents.len() as u64 > HERMES_PROFILE_CONFIG_BYTES_LIMIT {
+        return Err(WikiRuntimeFailure::ProfileConfigLimit);
+    }
+    let contents =
+        String::from_utf8(contents).map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(&contents)
+        .map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
+    if !matches!(
+        value,
+        serde_yaml::Value::Null | serde_yaml::Value::Mapping(_)
+    ) {
+        return Err(WikiRuntimeFailure::InvalidProfileConfig);
+    }
+    reject_enabled_hermes_secret_sources(&value)
+}
+
+/// Reject profile-owned external secret fetches until the native launcher has
+/// a final environment pin. A source can write arbitrary valid environment
+/// names after dotenv loading, including the two paths that bind this child to
+/// its disposable state. Empty and disabled source sections remain harmless.
+fn reject_enabled_hermes_secret_sources(
+    config: &serde_yaml::Value,
+) -> Result<(), WikiRuntimeFailure> {
+    if yaml_contains_merge_key(config) {
+        return Err(WikiRuntimeFailure::ProfileBinding);
+    }
+    let serde_yaml::Value::Mapping(config) = config else {
+        return Ok(());
+    };
+    let Some(secrets) = config.get(serde_yaml::Value::String("secrets".into())) else {
+        return Ok(());
+    };
+    let serde_yaml::Value::Mapping(secrets) = secrets else {
+        return match secrets {
+            serde_yaml::Value::Null => Ok(()),
+            _ => Err(WikiRuntimeFailure::ProfileBinding),
+        };
+    };
+    if secrets.values().any(|source| {
+        let serde_yaml::Value::Mapping(source) = source else {
+            return false;
+        };
+        match source.get(serde_yaml::Value::String("enabled".into())) {
+            None | Some(serde_yaml::Value::Null) | Some(serde_yaml::Value::Bool(false)) => false,
+            Some(_) => true,
+        }
+    }) {
+        return Err(WikiRuntimeFailure::ProfileBinding);
+    }
+    Ok(())
+}
+
+fn yaml_contains_merge_key(value: &serde_yaml::Value) -> bool {
+    match value {
+        serde_yaml::Value::Mapping(mapping) => mapping.iter().any(|(key, value)| {
+            matches!(key, serde_yaml::Value::String(key) if key == "<<")
+                || yaml_contains_merge_key(key)
+                || yaml_contains_merge_key(value)
+        }),
+        serde_yaml::Value::Sequence(sequence) => sequence.iter().any(yaml_contains_merge_key),
+        serde_yaml::Value::Tagged(_) => true,
+        _ => false,
+    }
+}
+
+/// Inspect copied dotenv files without rewriting accepted credentials. The
+/// installed launcher loads the profile `.env` with override semantics, and
+/// `.op.env` is another early source, so either file could otherwise redirect
+/// `HERMES_HOME` or `HERMES_MANAGED_DIR` before the native safe-mode guard.
+fn validate_staged_hermes_profile_dotenv(profile_dir: &Path) -> Result<(), WikiRuntimeFailure> {
+    let env_path = profile_dir.join(".env");
+    match read_staged_hermes_dotenv(&env_path)? {
+        Some(contents) => validate_hermes_dotenv_bytes(&contents)?,
+        None => {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&env_path)
+                .map_err(|_| WikiRuntimeFailure::ProfileUnavailable)?;
+        }
+    }
+    if let Some(contents) = read_staged_hermes_dotenv(&profile_dir.join(".op.env"))? {
+        validate_hermes_dotenv_bytes(&contents)?;
+    }
+    Ok(())
+}
+
+fn read_staged_hermes_dotenv(path: &Path) -> Result<Option<Vec<u8>>, WikiRuntimeFailure> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(WikiRuntimeFailure::ProfileBinding),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(WikiRuntimeFailure::ProfileBinding);
+    }
+    if metadata.len() > HERMES_PROFILE_DOTENV_BYTES_LIMIT {
+        return Err(WikiRuntimeFailure::ProfileConfigLimit);
+    }
+    let mut contents = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| WikiRuntimeFailure::ProfileBinding)?
+        .take(HERMES_PROFILE_DOTENV_BYTES_LIMIT + 1)
+        .read_to_end(&mut contents)
+        .map_err(|_| WikiRuntimeFailure::ProfileBinding)?;
+    if contents.len() as u64 > HERMES_PROFILE_DOTENV_BYTES_LIMIT {
+        return Err(WikiRuntimeFailure::ProfileConfigLimit);
+    }
+    Ok(Some(contents))
+}
+
+fn validate_hermes_dotenv_bytes(contents: &[u8]) -> Result<(), WikiRuntimeFailure> {
+    if contents.contains(&0)
+        || contents
+            .windows(3)
+            .any(|window| window == [0xef, 0xbb, 0xbf])
+    {
+        return Err(WikiRuntimeFailure::ProfileBinding);
+    }
+    let text = std::str::from_utf8(contents).map_err(|_| WikiRuntimeFailure::ProfileBinding)?;
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(WikiRuntimeFailure::ProfileBinding);
+    }
+    if text
+        .split(['\n', '\r'])
+        .any(dotenv_line_has_hermes_binding_assignment)
+    {
+        return Err(WikiRuntimeFailure::ProfileBinding);
+    }
+    Ok(())
+}
+
+fn dotenv_line_has_hermes_binding_assignment(line: &str) -> bool {
+    let mut candidate = line.trim_start_matches(|character: char| character.is_whitespace());
+    if candidate.is_empty() || candidate.starts_with('#') {
+        return false;
+    }
+    if let Some(rest) = candidate.strip_prefix("export") {
+        if rest.starts_with(|character: char| character.is_whitespace()) {
+            candidate = rest.trim_start_matches(|character: char| character.is_whitespace());
+        }
+    }
+    HERMES_PROFILE_BINDING_KEYS
+        .iter()
+        .any(|key| dotenv_candidate_matches_key(candidate, key))
+}
+
+fn dotenv_candidate_matches_key(candidate: &str, key: &str) -> bool {
+    if let Some(rest) = candidate.strip_prefix(key) {
+        let Some(first) = rest.chars().next() else {
+            return true;
+        };
+        if first.is_ascii_alphanumeric() || first == '_' {
+            return false;
+        }
+        return true;
+    }
+    for quote in ['\'', '"'] {
+        let Some(quoted) = candidate.strip_prefix(quote) else {
+            continue;
+        };
+        let Some(end) = quoted.find(quote) else {
+            return quoted.starts_with(key);
+        };
+        if &quoted[..end] == key {
+            return true;
+        }
+    }
+    false
+}
+
+fn ensure_private_hermes_managed_dir(state_dir: &Path) -> Result<(), WikiRuntimeFailure> {
+    let managed = state_dir.join("managed");
+    match std::fs::symlink_metadata(&managed) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(WikiRuntimeFailure::InvalidStateDirectory);
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&managed).map_err(|_| WikiRuntimeFailure::InvalidStateDirectory)?;
+        }
+        Err(_) => return Err(WikiRuntimeFailure::InvalidStateDirectory),
+    }
+    let mut entries =
+        std::fs::read_dir(&managed).map_err(|_| WikiRuntimeFailure::InvalidStateDirectory)?;
+    if entries
+        .next()
+        .transpose()
+        .map_err(|_| WikiRuntimeFailure::InvalidStateDirectory)?
+        .is_some()
+    {
+        return Err(WikiRuntimeFailure::InvalidStateDirectory);
+    }
+    Ok(())
 }
 
 /// Resolve a profile root only after inspecting the path itself.  Checking
@@ -731,265 +986,5 @@ fn build_prompt(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::BTreeMap;
-
-    fn hermes(profile: &str) -> WikiRuntimeSelection {
-        WikiRuntimeSelection {
-            runtime_id: "hermes".into(),
-            model: None,
-            profile: Some(profile.into()),
-        }
-    }
-
-    fn claude(model: &str) -> WikiRuntimeSelection {
-        WikiRuntimeSelection {
-            runtime_id: "claude".into(),
-            model: Some(model.into()),
-            profile: None,
-        }
-    }
-
-    fn codex(model: &str) -> WikiRuntimeSelection {
-        WikiRuntimeSelection {
-            runtime_id: "codex".into(),
-            model: Some(model.into()),
-            profile: None,
-        }
-    }
-
-    fn page_snapshot(content: &str) -> (PlannedPage, RepoSnapshot) {
-        (
-            PlannedPage {
-                slug: "overview".into(),
-                title: "Overview".into(),
-                section: "overview".into(),
-                source_files: vec!["src/lib.rs".into()],
-            },
-            RepoSnapshot {
-                commit: "deadbeef".into(),
-                branch: "main".into(),
-                source_revision: "git:deadbeef".into(),
-                files: vec!["src/lib.rs".into()],
-                contents: BTreeMap::from([("src/lib.rs".into(), content.into())]),
-                ..RepoSnapshot::default()
-            },
-        )
-    }
-
-    #[test]
-    fn selection_is_independent_from_employee_agent_settings() {
-        assert!(hermes("wiki-proof").validate().is_ok());
-        assert!(claude("claude-fable-5-1").validate().is_ok());
-        assert_eq!(hermes("wiki-proof").model, None);
-    }
-
-    #[test]
-    fn unsupported_and_missing_runtime_selections_fail_closed() {
-        let unsupported = WikiRuntimeSelection {
-            runtime_id: "heuristic".into(),
-            model: None,
-            profile: None,
-        };
-        assert_eq!(
-            unsupported.validate(),
-            Err(WikiRuntimeFailure::UnsupportedRuntime("heuristic".into()))
-        );
-        assert_eq!(
-            WikiRuntimeSelection {
-                runtime_id: "hermes".into(),
-                model: None,
-                profile: None,
-            }
-            .validate(),
-            Err(WikiRuntimeFailure::MissingProfile)
-        );
-        assert!(matches!(
-            WikiRuntimeSelection {
-                runtime_id: " hermes".into(),
-                model: None,
-                profile: Some("wiki-proof".into()),
-            }
-            .validate(),
-            Err(WikiRuntimeFailure::UnsupportedRuntime(_))
-        ));
-    }
-
-    #[test]
-    fn profile_owned_runtime_rejects_model_override() {
-        assert_eq!(
-            WikiRuntimeSelection {
-                runtime_id: "hermes".into(),
-                model: Some("ignored-model".into()),
-                profile: Some("wiki-proof".into()),
-            }
-            .validate(),
-            Err(WikiRuntimeFailure::ProfileOwnsModel)
-        );
-    }
-
-    #[test]
-    fn codex_profile_is_rejected_without_a_staged_config_layer() {
-        assert_eq!(
-            WikiRuntimeSelection {
-                runtime_id: "codex".into(),
-                model: Some("codex-fable-5-1".into()),
-                profile: Some("wiki-proof".into()),
-            }
-            .validate(),
-            Err(WikiRuntimeFailure::UnsupportedProfile)
-        );
-    }
-
-    #[test]
-    fn prompt_contains_immutable_source_contents_and_never_filename_only_context() {
-        let (page, snapshot) =
-            page_snapshot("pub fn canonical() -> &'static str { \"fixture\" }\n");
-        let prompt = build_prompt(&page, &snapshot, "en").expect("prompt");
-        assert!(prompt.contains("pub fn canonical()"));
-        assert!(prompt.contains("git:deadbeef"));
-        assert!(prompt.contains("src/lib.rs"));
-    }
-
-    #[test]
-    fn prompt_is_rejected_when_complete_source_context_exceeds_bound() {
-        let (page, snapshot) = page_snapshot(&"x".repeat(WIKI_RUNTIME_INPUT_LIMIT));
-        assert_eq!(
-            build_prompt(&page, &snapshot, "en"),
-            Err(WikiRuntimeFailure::InputLimit)
-        );
-    }
-
-    #[test]
-    fn generated_links_are_limited_to_existing_source_ranges() {
-        let (page, snapshot) = page_snapshot("first\nsecond\n");
-        assert!(validate_generated_links(
-            &page,
-            &snapshot,
-            "[source](buzz://file?path=src/lib.rs&lines=1-2)"
-        )
-        .is_ok());
-        for markdown in [
-            "[external](https://example.com)",
-            "[other](buzz://file?path=src/other.rs&lines=1-1)",
-            "[bad-range](buzz://file?path=src/lib.rs&lines=0-3)",
-        ] {
-            assert_eq!(
-                validate_generated_links(&page, &snapshot, markdown),
-                Err(WikiRuntimeFailure::InvalidOutput)
-            );
-        }
-    }
-
-    #[cfg(unix)]
-    fn fake_runtime(script: &str) -> (tempfile::TempDir, PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("fixture dir");
-        let executable = dir.path().join("fake-runtime");
-        std::fs::write(&executable, script).expect("script");
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
-            .expect("permissions");
-        (dir, executable)
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn profile_root_symlink_is_rejected_before_canonicalization() {
-        let fixture = tempfile::tempdir().expect("fixture dir");
-        let real = fixture.path().join("real");
-        let link = fixture.path().join("profile");
-        std::fs::create_dir(&real).expect("real profile");
-        std::os::unix::fs::symlink(&real, &link).expect("profile symlink");
-
-        assert_eq!(
-            canonical_profile_source(&link),
-            Err(WikiRuntimeFailure::ProfileUnavailable)
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn fake_runtime_positive_path_uses_source_and_isolated_environment() {
-        let (fixture, executable) =
-            fake_runtime(
-                "#!/bin/sh\nseen=no\nfor arg in \"$@\"; do\n  [ \"$arg\" = \"--toolsets\" ] && seen=yes\ndone\nprintf '%s|%s|%s|%s' \"$HOME\" \"$HERMES_HOME\" \"$1\" \"$seen\"\n",
-            );
-        let state = fixture.path().join("state");
-        let generator =
-            WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state.clone())
-                .expect("generator");
-        let (page, snapshot) = page_snapshot("source-secret-fixture");
-        let output = generator
-            .generate(&page, &snapshot, "en")
-            .expect("generated");
-        assert!(output.contains(state.join("home").to_str().expect("home")));
-        assert!(output.contains(state.join("hermes").to_str().expect("hermes")));
-        assert!(output.contains("|yes"));
-        assert!(
-            !output.contains("source-secret-fixture"),
-            "fake output is not the model; prompt is argv and not echoed"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn hermes_profile_launch_keeps_staged_profile_config_enabled() {
-        let (fixture, executable) = fake_runtime("#!/bin/sh\nprintf '%s' \"$@\"\n");
-        let state = fixture.path().join("state");
-        let generator =
-            WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state)
-                .expect("generator");
-        let args = generator
-            .command(Some("prompt"))
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(args.windows(2).any(|pair| pair == ["-p", "wiki-proof"]));
-        assert!(args.iter().any(|arg| arg == "--toolsets"));
-        assert!(!args.iter().any(|arg| arg == "--safe-mode"));
-        assert!(!args.iter().any(|arg| arg == "--ignore-user-config"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn nonzero_runtime_is_not_synthesized_as_success() {
-        let (_fixture, executable) =
-            fake_runtime("#!/bin/sh\nprintf 'provider failure' >&2\nexit 7\n");
-        let generator = WikiRuntimeGenerator::with_executable(
-            claude("claude-fable-5-1"),
-            executable,
-            tempfile::tempdir().expect("state").keep(),
-        )
-        .expect("generator");
-        let (page, snapshot) = page_snapshot("source");
-        let error = generator
-            .generate(&page, &snapshot, "en")
-            .expect_err("nonzero runtime must fail");
-        assert!(matches!(
-            error,
-            WikiError::Generate(message)
-                if message.contains(&WikiRuntimeFailure::NonzeroExit.to_string())
-                    && message.contains("runtime=claude")
-                    && message.contains("model=claude-fable-5-1")
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn codex_style_runtime_receives_the_complete_prompt_on_stdin() {
-        let (_fixture, executable) =
-            fake_runtime("#!/bin/sh\nread -r first || exit 9\nprintf 'stdin-ok'");
-        let generator = WikiRuntimeGenerator::with_executable(
-            codex("codex-fable-5-1"),
-            executable,
-            tempfile::tempdir().expect("state").keep(),
-        )
-        .expect("generator");
-        let (page, snapshot) = page_snapshot("immutable-source");
-        let output = generator
-            .generate(&page, &snapshot, "en")
-            .expect("generated from stdin");
-        assert_eq!(output, "stdin-ok");
-    }
-}
+#[path = "wiki_runtime_tests.rs"]
+mod wiki_runtime_tests;

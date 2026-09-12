@@ -1,21 +1,89 @@
 //! Native staging ownership receipt. It is deliberately not a generation grant.
 
+use super::recap_adapter::RecapAdapterObservation;
+use super::recap_capability::{
+    verify_executable, RecapCertificationParts, RecapExecutableIdentity, RecapGuarantees,
+    RecapProbeTarget, RecapProcessObservation, RecapProfileIdentity, RecapRuntimeCertification,
+    RecapRuntimeReadyProof, RecapSelection, RecapStateObservation,
+};
 use super::recap_state::{
     directory_identity, private_read_file, validate_owned_base, DirectoryIdentity,
     RecapStateFailure,
 };
-use serde::Deserialize;
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 
 pub(crate) const OWNERSHIP_FILENAME: &str = "crew-staging-ownership-v1.json";
+const RUNTIME_READY_FILENAME: &str = "crew-staging-runtime-ready-v1.json";
+
+#[cfg(test)]
+fn test_recap_base_override() -> &'static Mutex<Option<PathBuf>> {
+    static BASE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+    BASE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_recap_base(base: Option<PathBuf>) {
+    *test_recap_base_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = base;
+}
+
+#[cfg(test)]
+pub(crate) fn current_test_recap_base() -> Option<PathBuf> {
+    test_recap_base_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+#[cfg(test)]
+fn test_runtime_proofs() -> &'static Mutex<HashMap<PathBuf, RecapRuntimeReadyProof>> {
+    static PROOFS: OnceLock<Mutex<HashMap<PathBuf, RecapRuntimeReadyProof>>> = OnceLock::new();
+    PROOFS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_runtime_proof(path: PathBuf, proof: RecapRuntimeReadyProof) {
+    test_runtime_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(path, proof);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_runtime_proofs() {
+    test_runtime_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+}
+
+#[cfg(test)]
+fn test_runtime_proof_for_path(path: &Path) -> Option<RecapRuntimeReadyProof> {
+    test_runtime_proofs()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(path)
+        .cloned()
+}
 
 /// Constructed only from native identity and a fixed private app-data file.
 pub(crate) struct VerifiedStagingOwnership {
     app_data: PathBuf,
     document: OwnershipDocument,
+    ownership_digest: String,
     native: NativeIdentity,
     generations: Vec<DirectoryIdentity>,
+    #[cfg(test)]
+    test_recap_base: Option<PathBuf>,
 }
 
 pub(super) struct NativeIdentity {
@@ -62,6 +130,56 @@ struct Roots {
     workspaces: PathBuf,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeReadyDocument {
+    schema: String,
+    version: u8,
+    environment_id: String,
+    ownership_sha256: String,
+    status: String,
+    owner_uid: u32,
+    home: PathBuf,
+    app_data: PathBuf,
+    bundle_id: String,
+    runtime_id: String,
+    executable: RuntimeExecutable,
+    selection: RuntimeSelection,
+    auth_reference: String,
+    auth_service: String,
+    effective_model: String,
+    output_digest: String,
+    tool_probe_digest: String,
+    guarantees: RuntimeGuarantees,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeExecutable {
+    resolved_path: PathBuf,
+    version: String,
+    fingerprint: String,
+    platform: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSelection {
+    model: String,
+    profile: Option<PathBuf>,
+    profile_digest: Option<String>,
+    profile_identity: Option<RecapProfileIdentity>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeGuarantees {
+    one_shot: bool,
+    tool_isolation: bool,
+    state_isolation: bool,
+    process_containment: bool,
+}
+
 impl VerifiedStagingOwnership {
     pub(super) fn from_native(native: NativeIdentity) -> Result<Self, RecapStateFailure> {
         validate_private_root(&native.app_data, native.uid)?;
@@ -89,8 +207,11 @@ impl VerifiedStagingOwnership {
         let mut receipt = Self {
             app_data: native.app_data.clone(),
             document,
+            ownership_digest: hex::encode(Sha256::digest(&bytes)),
             native,
             generations: Vec::new(),
+            #[cfg(test)]
+            test_recap_base: None,
         };
         receipt.validate()?;
         receipt.generations = receipt
@@ -103,6 +224,10 @@ impl VerifiedStagingOwnership {
 
     /// Resolve only an owned disposable-state parent. No runtime/profile launch.
     pub(crate) fn recap_base(&self) -> Result<PathBuf, RecapStateFailure> {
+        #[cfg(test)]
+        if let Some(base) = self.test_recap_base.as_ref() {
+            return Ok(base.clone());
+        }
         self.validate()?;
         let base = self.app_data.join("agents");
         match std::fs::symlink_metadata(&base) {
@@ -113,6 +238,333 @@ impl VerifiedStagingOwnership {
             Err(_) => return Err(RecapStateFailure::Ownership),
         }
         Ok(base)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_recap_base(base: PathBuf) -> Self {
+        let native = NativeIdentity {
+            home: PathBuf::from("/test-home"),
+            app_data: base.clone(),
+            config_home: PathBuf::from("/test-config"),
+            config_base: PathBuf::from("/test-config-base"),
+            slug: "test".to_string(),
+            bundle_id: "com.nuncio.crew.test".to_string(),
+            keyring_service: "test-keyring-service".to_string(),
+            scheme: "buzz-test".to_string(),
+            uid: 0,
+        };
+        let roots = Roots {
+            app_data: base.clone(),
+            config_home: native.config_home.clone(),
+            nest: native.home.join(".buzz-demo-test"),
+            profiles: native.home.join("crew-test/profiles"),
+            workspaces: native.home.join("crew-test/workspaces"),
+        };
+        let document = OwnershipDocument {
+            schema: "crew-staging-ownership".to_string(),
+            version: 1,
+            environment_id: "crew-test".to_string(),
+            status: "OWNERSHIP_ONLY_NOT_RUNTIME_READY".to_string(),
+            mac: MacOwnership {
+                owner_uid: 0,
+                home: native.home.clone(),
+                build_demo_slug: native.slug.clone(),
+                bundle_id: native.bundle_id.clone(),
+                keyring_service: native.keyring_service.clone(),
+                deep_link_scheme: native.scheme.clone(),
+                roots,
+                excluded_roots: Vec::new(),
+                auth_references: Vec::new(),
+                runtime_generation_allowed: false,
+            },
+        };
+        Self {
+            app_data: base.clone(),
+            document,
+            ownership_digest: String::new(),
+            native,
+            generations: Vec::new(),
+            test_recap_base: Some(base),
+        }
+    }
+
+    /// Load a separately-issued native runtime grant. The ownership receipt
+    /// alone can never mint generation authority; the grant is tied to the
+    /// exact ownership bytes, native identity, executable and selection.
+    pub(crate) fn runtime_ready_proof(&self) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+        self.runtime_ready_proof_inner(None)
+    }
+
+    /// Load a runtime grant and require its matching positive probe row in the
+    /// existing scoped managed-agent retention database.
+    pub(crate) fn runtime_ready_proof_with_store(
+        &self,
+        store: &Connection,
+    ) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+        self.runtime_ready_proof_inner(Some(store))
+    }
+
+    fn runtime_ready_proof_inner(
+        &self,
+        store: Option<&Connection>,
+    ) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+        self.validate()?;
+        let ownership = read_private_document(&self.app_data.join(OWNERSHIP_FILENAME), 16 * 1024)?;
+        if hex::encode(Sha256::digest(&ownership)) != self.ownership_digest {
+            return Err(RecapStateFailure::Ownership);
+        }
+        let grant_bytes =
+            read_private_document(&self.app_data.join(RUNTIME_READY_FILENAME), 16 * 1024)
+                .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        let grant: RuntimeReadyDocument =
+            serde_json::from_slice(&grant_bytes).map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        if grant.schema != "crew-staging-runtime-ready"
+            || grant.version != 1
+            || grant.status != "RUNTIME_READY"
+            || grant.environment_id != self.document.environment_id
+            || grant.ownership_sha256 != self.ownership_digest
+            || grant.owner_uid != self.native.uid
+            || grant.home != self.native.home
+            || grant.app_data != self.native.app_data
+            || grant.bundle_id != self.native.bundle_id
+            || grant.auth_service != self.native.keyring_service
+            || grant.effective_model != grant.selection.model
+            || !is_sha256(&grant.output_digest)
+            || !is_sha256(&grant.tool_probe_digest)
+            || !is_sha256(&grant.ownership_sha256)
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        let executable = RecapExecutableIdentity {
+            resolved_path: grant.executable.resolved_path,
+            version: grant.executable.version,
+            fingerprint: grant.executable.fingerprint,
+            platform: grant.executable.platform,
+        };
+        let executable =
+            verify_executable(&executable).map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        let selection = RecapSelection {
+            model: grant.selection.model,
+            profile: grant.selection.profile,
+            profile_digest: grant.selection.profile_digest,
+            profile_identity: grant.selection.profile_identity,
+            auth_available: true,
+        };
+        self.validate_current_profile(&grant.runtime_id, &selection)?;
+        let auth_service = grant.auth_service;
+        let guarantees = RecapGuarantees {
+            one_shot: grant.guarantees.one_shot,
+            tool_isolation: grant.guarantees.tool_isolation,
+            state_isolation: grant.guarantees.state_isolation,
+            process_containment: grant.guarantees.process_containment,
+        };
+        if let Some(store) = store {
+            let Some(certification) = super::retention::get_recap_certification(
+                store,
+                &grant.runtime_id,
+                &executable.fingerprint,
+                &executable.version,
+                &executable.platform,
+            )
+            .map_err(|_| RecapStateFailure::RuntimeNotReady)?
+            else {
+                return Err(RecapStateFailure::RuntimeNotReady);
+            };
+            let parts = RecapCertificationParts {
+                runtime_id: grant.runtime_id.clone(),
+                executable: executable.clone(),
+                selection: selection.clone(),
+                auth: super::recap_capability::RecapAuthBinding {
+                    service: auth_service.clone(),
+                    reference: grant.auth_reference.clone(),
+                },
+                guarantees,
+                effective_model: grant.effective_model.clone(),
+                output_digest: grant.output_digest.clone(),
+                tool_probe_digest: grant.tool_probe_digest.clone(),
+            };
+            if !certification.matches(&parts, &self.ownership_digest) {
+                return Err(RecapStateFailure::RuntimeNotReady);
+            }
+        }
+        RecapRuntimeReadyProof::from_grant(
+            grant.runtime_id,
+            executable,
+            selection,
+            auth_service,
+            grant.auth_reference,
+            guarantees,
+        )
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)
+    }
+
+    /// Persist a positive certification and project the existing strict
+    /// runtime-ready grant. This is a native-only producer: the certificate
+    /// can only be created from a typed bounded probe, and the store must be
+    /// the already-selected managed-agent retention scope.
+    pub(crate) fn issue_runtime_ready_grant(
+        &self,
+        store: &Connection,
+        certification: &RecapRuntimeCertification,
+        certified_at: u64,
+    ) -> Result<(), RecapStateFailure> {
+        self.validate()?;
+        let ownership = read_private_document(&self.app_data.join(OWNERSHIP_FILENAME), 16 * 1024)?;
+        if hex::encode(Sha256::digest(&ownership)) != self.ownership_digest {
+            return Err(RecapStateFailure::Ownership);
+        }
+        let parts = certification.parts();
+        self.validate_certification(&parts)?;
+        super::retention::persist_recap_certification(
+            store,
+            &parts,
+            &self.ownership_digest,
+            certified_at,
+        )
+        .map_err(|_| RecapStateFailure::Io)?;
+
+        let grant = RuntimeReadyDocument {
+            schema: "crew-staging-runtime-ready".to_string(),
+            version: 1,
+            environment_id: self.document.environment_id.clone(),
+            ownership_sha256: self.ownership_digest.clone(),
+            status: "RUNTIME_READY".to_string(),
+            owner_uid: self.native.uid,
+            home: self.native.home.clone(),
+            app_data: self.native.app_data.clone(),
+            bundle_id: self.native.bundle_id.clone(),
+            runtime_id: parts.runtime_id,
+            executable: RuntimeExecutable {
+                resolved_path: parts.executable.resolved_path,
+                version: parts.executable.version,
+                fingerprint: parts.executable.fingerprint,
+                platform: parts.executable.platform,
+            },
+            selection: RuntimeSelection {
+                model: parts.selection.model,
+                profile: parts.selection.profile,
+                profile_digest: parts.selection.profile_digest,
+                profile_identity: parts.selection.profile_identity,
+            },
+            auth_reference: parts.auth.reference,
+            auth_service: parts.auth.service,
+            effective_model: parts.effective_model,
+            output_digest: parts.output_digest,
+            tool_probe_digest: parts.tool_probe_digest,
+            guarantees: RuntimeGuarantees {
+                one_shot: parts.guarantees.one_shot,
+                tool_isolation: parts.guarantees.tool_isolation,
+                state_isolation: parts.guarantees.state_isolation,
+                process_containment: parts.guarantees.process_containment,
+            },
+        };
+        let bytes = serde_json::to_vec(&grant).map_err(|_| RecapStateFailure::Io)?;
+        atomic_write_runtime_grant(&self.app_data, &bytes)
+    }
+
+    fn validate_certification(
+        &self,
+        parts: &RecapCertificationParts,
+    ) -> Result<(), RecapStateFailure> {
+        let Some(runtime) = super::known_acp_runtime_exact(&parts.runtime_id) else {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        };
+        let contract = runtime.recap_contract();
+        if contract.command.is_none() {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        if !parts.guarantees.one_shot
+            || !parts.guarantees.tool_isolation
+            || !parts.guarantees.state_isolation
+            || !parts.guarantees.process_containment
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        if !parts.selection.auth_available
+            || !is_sha256(&parts.output_digest)
+            || !is_sha256(&parts.tool_probe_digest)
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        let executable =
+            verify_executable(&parts.executable).map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        if executable != parts.executable {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        if parts.auth.service != self.native.keyring_service
+            || parts.auth.reference.is_empty()
+            || parts.auth.reference != parts.auth.reference.trim()
+            || parts.auth.reference.len() > 256
+            || parts.auth.reference.chars().any(char::is_control)
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        if parts.effective_model != parts.selection.model
+            || parts.effective_model.is_empty()
+            || parts.effective_model != parts.effective_model.trim()
+            || parts.effective_model.chars().any(char::is_control)
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        self.validate_current_profile(&parts.runtime_id, &parts.selection)?;
+        Ok(())
+    }
+
+    fn validate_current_profile(
+        &self,
+        runtime_id: &str,
+        selection: &RecapSelection,
+    ) -> Result<(), RecapStateFailure> {
+        let Some(runtime) = super::known_acp_runtime_exact(runtime_id) else {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        };
+        match runtime.recap_contract().selection {
+            super::recap_capability::RecapSelectionContract::ExplicitModel => {
+                if selection.profile.is_some()
+                    || selection.profile_digest.is_some()
+                    || selection.profile_identity.is_some()
+                {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                }
+            }
+            super::recap_capability::RecapSelectionContract::StagingProfile => {
+                let Some(profile) = selection.profile.as_deref() else {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                };
+                let Some(name) = super::recap_adapter::hermes_profile_ref(profile) else {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                };
+                if name == super::hermes_profile::HERMES_HOME_PROFILE_NAME
+                    || !profile.is_absolute()
+                    || profile.canonicalize().ok().as_deref() != Some(profile)
+                    || !profile.starts_with(&self.document.mac.roots.profiles)
+                {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                }
+                if super::hermes_profile::validate_hermes_profile_name(&name).is_err() {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                }
+                directory_identity(profile).map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+                let Some(expected_digest) = selection.profile_digest.as_deref() else {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                };
+                let observed_digest = super::recap_adapter::profile_tree_digest(profile)
+                    .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+                if observed_digest != expected_digest {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                }
+                let Some(expected_identity) = selection.profile_identity.as_ref() else {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                };
+                if super::recap_adapter::profile_identity(profile)
+                    .map_err(|_| RecapStateFailure::RuntimeNotReady)?
+                    != *expected_identity
+                {
+                    return Err(RecapStateFailure::RuntimeNotReady);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn roots(&self) -> [&PathBuf; 5] {
@@ -205,6 +657,133 @@ impl VerifiedStagingOwnership {
         }
         Ok(())
     }
+}
+
+/// Load the native grant and its matching row from the active scoped
+/// managed-agent retention database. Production consumers use this helper so
+/// a grant from another relay/owner scope cannot become an admission proof.
+pub(crate) fn runtime_ready_proof_for_app<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+    let ownership = VerifiedStagingOwnership::load(app)?;
+    runtime_ready_proof_for_ownership(app, &ownership)
+}
+
+/// Load a runtime grant against the active owner/relay retention scope for an
+/// already verified ownership receipt. Callers that also need the receipt's
+/// disposable-state base can avoid reloading the private document by using
+/// this helper after [`VerifiedStagingOwnership::load`].
+pub(crate) fn runtime_ready_proof_for_ownership<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    ownership: &VerifiedStagingOwnership,
+) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+    use tauri::Manager;
+
+    let state = app.state::<crate::app_state::AppState>();
+    let scope = super::retention::active_retention_scope(app, &state)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    #[cfg(test)]
+    if let Some(proof) = test_runtime_proof_for_path(&scope.db_path) {
+        return Ok(proof);
+    }
+    let store = super::retention::open_retention_db(&scope.db_path)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    ownership.runtime_ready_proof_with_store(&store)
+}
+
+/// Load a runtime grant from the retention database captured with the
+/// originating owner scope. This deliberately does not resolve
+/// `active_retention_scope`: the caller may be running after a workspace
+/// switch, and re-resolving it would authorize the wrong owner or relay.
+pub(crate) fn runtime_ready_proof_for_captured_scope(
+    ownership: &VerifiedStagingOwnership,
+    retention_db_path: &Path,
+) -> Result<RecapRuntimeReadyProof, RecapStateFailure> {
+    #[cfg(test)]
+    if let Some(proof) = test_runtime_proof_for_path(retention_db_path) {
+        return Ok(proof);
+    }
+    let store = super::retention::open_retention_db(retention_db_path)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    ownership.runtime_ready_proof_with_store(&store)
+}
+
+/// Consume a typed native adapter observation through the active catalog and
+/// retention scope. The adapter creates the observation by parsing its bounded
+/// probe envelope; this native entrypoint then creates the opaque certification
+/// and projects the strict runtime-ready grant. Renderer settings and catalog
+/// discovery cannot provide the individual probe facts.
+pub(crate) fn certify_runtime_probe_for_app<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    target: RecapProbeTarget,
+    adapter: RecapAdapterObservation,
+    state: RecapStateObservation,
+    process: RecapProcessObservation,
+    certified_at: u64,
+) -> Result<(), RecapStateFailure> {
+    // No native observer currently binds provider output to the executed
+    // command, executable, selection, state snapshot and process reaping.
+    // Keep this entrypoint present for the eventual observer wiring, but never
+    // turn self-reported adapter fields into a runtime-ready grant.
+    let _ = (app, target, adapter, state, process, certified_at);
+    Err(RecapStateFailure::RuntimeNotReady)
+}
+
+fn atomic_write_runtime_grant(app_data: &Path, bytes: &[u8]) -> Result<(), RecapStateFailure> {
+    #[cfg(not(unix))]
+    {
+        let _ = (app_data, bytes);
+        return Err(RecapStateFailure::UnsupportedPlatform);
+    }
+    if bytes.len() > 16 * 1024 {
+        return Err(RecapStateFailure::Io);
+    }
+    validate_private_root(app_data, rustix::process::geteuid().as_raw())?;
+    let temporary = app_data.join(format!(".crew-runtime-ready-{}.tmp", uuid::Uuid::new_v4()));
+    #[cfg(unix)]
+    let mut file = {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|_| RecapStateFailure::Io)?
+    };
+    use std::io::Write;
+    if file.write_all(bytes).is_err() || file.sync_all().is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(RecapStateFailure::Io);
+    }
+    drop(file);
+    if validate_private_root(app_data, rustix::process::geteuid().as_raw()).is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(RecapStateFailure::Ownership);
+    }
+    if std::fs::rename(&temporary, app_data.join(RUNTIME_READY_FILENAME)).is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(RecapStateFailure::Io);
+    }
+    std::fs::File::open(app_data)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| RecapStateFailure::Io)
+}
+
+fn read_private_document(path: &Path, limit: usize) -> Result<Vec<u8>, RecapStateFailure> {
+    let mut bytes = Vec::new();
+    private_read_file(path)?
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| RecapStateFailure::Ownership)?;
+    if bytes.len() > limit {
+        return Err(RecapStateFailure::Ownership);
+    }
+    Ok(bytes)
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_private_root(path: &Path, uid: u32) -> Result<(), RecapStateFailure> {

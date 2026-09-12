@@ -55,7 +55,44 @@ mod platform {
         metadata: FileStat,
     }
 
-    fn lock(directory: &Dir) -> Result<std::fs::File, String> {
+    /// Owns the advisory lock for the duration of one retention transaction.
+    ///
+    /// On Linux, `flock` is attached to the open-file description. A child
+    /// forked while this guard is live can therefore keep the lock after the
+    /// guard's file is closed. Explicitly unlocking before the guard is
+    /// dropped releases that description-wide lock even if a duplicate was
+    /// inherited by a child during the fork/exec window.
+    pub(super) struct DirectoryLock {
+        file: std::fs::File,
+        released: bool,
+    }
+
+    impl DirectoryLock {
+        fn release(&mut self) -> Result<(), String> {
+            if self.released {
+                return Ok(());
+            }
+            fs4::fs_std::FileExt::unlock(&self.file)
+                .map_err(|_| "cannot release diagnostics lock".to_string())?;
+            self.released = true;
+            Ok(())
+        }
+
+        #[cfg(test)]
+        pub(super) fn try_clone_file(&self) -> std::io::Result<std::fs::File> {
+            self.file.try_clone()
+        }
+    }
+
+    impl Drop for DirectoryLock {
+        fn drop(&mut self) {
+            // The transaction already reports its own error. Keep this
+            // best-effort fallback for early returns and inherited fds.
+            let _ = self.release();
+        }
+    }
+
+    pub(super) fn lock(directory: &Dir) -> Result<DirectoryLock, String> {
         let name = OsStr::new(".spool.lock");
         let flags = OFlag::O_RDWR | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK;
         let (descriptor, created) = match nix::fcntl::openat(
@@ -89,7 +126,10 @@ mod platform {
         let file = std::fs::File::from(descriptor);
         file.try_lock_exclusive()
             .map_err(|_| "diagnostics lock is busy")?;
-        Ok(file)
+        Ok(DirectoryLock {
+            file,
+            released: false,
+        })
     }
 
     fn inspect(directory: &mut Dir) -> Result<Vec<Entry>, String> {
@@ -173,7 +213,7 @@ mod platform {
             }
         })?;
         let result = (|| -> Result<(), String> {
-            let _lock = lock(&directory)?;
+            let mut lock = lock(&directory)?;
             let entries = inspect(&mut directory)?;
             let mut remove = HashSet::new();
             let mut records = Vec::new();
@@ -252,6 +292,7 @@ mod platform {
                 .map_err(|_| "cannot reclaim diagnostics")?;
             }
             fsync(&directory).map_err(|_| "cannot commit diagnostics cleanup")?;
+            lock.release()?;
             Ok(())
         })();
         result.map_err(|_| super::PreflightError::Refused)

@@ -15,7 +15,11 @@ use tauri::AppHandle;
 use crate::app_state::AppState;
 
 mod legacy_migration;
+mod recap;
 pub use legacy_migration::migrate_legacy_retention_db;
+pub(crate) use recap::{
+    get_recap_certification, persist_recap_certification, RECAP_CERTIFICATION_SCHEMA,
+};
 
 /// Durable event-retention scope for one community relay and owner identity.
 ///
@@ -146,8 +150,32 @@ pub fn open_retention_db(path: &Path) -> Result<Connection, String> {
         );",
     )
     .map_err(|e| format!("failed to create retention table: {e}"))?;
+    conn.execute_batch(RECAP_CERTIFICATION_SCHEMA)
+        .map_err(|e| format!("failed to create recap certification table: {e}"))?;
+    ensure_recap_profile_columns(&conn)?;
 
     Ok(conn)
+}
+
+fn ensure_recap_profile_columns(conn: &Connection) -> Result<(), String> {
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(recap_runtime_certifications)")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| format!("failed to inspect recap certification schema: {error}"))?;
+    for column in ["profile_digest", "profile_identity"] {
+        if !columns.iter().any(|existing| existing == column) {
+            conn.execute(
+                &format!("ALTER TABLE recap_runtime_certifications ADD COLUMN {column} TEXT"),
+                [],
+            )
+            .map_err(|error| format!("failed to migrate recap certification schema: {error}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn set_wal_mode(conn: &Connection) -> Result<(), String> {

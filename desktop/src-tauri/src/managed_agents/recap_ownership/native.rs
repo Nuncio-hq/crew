@@ -10,6 +10,10 @@ impl VerifiedStagingOwnership {
     /// Load the fixed native app-data manifest; accepts no frontend identity,
     /// path, hash, profile, credential reference or generation permission.
     pub(crate) fn load<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<Self, RecapStateFailure> {
+        #[cfg(test)]
+        if let Some(base) = super::recap_ownership::current_test_recap_base() {
+            return Ok(Self::for_test_recap_base(base));
+        }
         #[cfg(unix)]
         {
             let uid = rustix::process::getuid();

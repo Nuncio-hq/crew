@@ -1,5 +1,10 @@
 #![cfg(unix)]
 use super::*;
+use crate::managed_agents::recap_capability::{
+    RecapAuthBinding, RecapCertificationParts, RecapExecutableIdentity, RecapRuntimeCertification,
+    RecapSelection,
+};
+use sha2::{Digest, Sha256};
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 
 fn fixture() -> (tempfile::TempDir, NativeIdentity, serde_json::Value) {
@@ -46,6 +51,103 @@ fn write(native: &NativeIdentity, doc: &serde_json::Value) {
     let path = native.app_data.join(OWNERSHIP_FILENAME);
     std::fs::write(&path, serde_json::to_vec(doc).unwrap()).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn write_runtime_grant(
+    native: &NativeIdentity,
+    doc: &serde_json::Value,
+    executable: &std::path::Path,
+    guarantees: serde_json::Value,
+) {
+    let ownership_bytes = serde_json::to_vec(doc).unwrap();
+    let executable_bytes = std::fs::read(executable).unwrap();
+    let grant = serde_json::json!({
+        "schema": "crew-staging-runtime-ready",
+        "version": 1,
+        "environment_id": "crew-staging-test",
+        "ownership_sha256": hex::encode(Sha256::digest(&ownership_bytes)),
+        "status": "RUNTIME_READY",
+        "owner_uid": native.uid,
+        "home": native.home,
+        "app_data": native.app_data,
+        "bundle_id": native.bundle_id,
+        "runtime_id": "claude",
+        "executable": {
+            "resolved_path": executable,
+            "version": "fixture-1",
+            "fingerprint": hex::encode(Sha256::digest(&executable_bytes)),
+            "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        },
+        "selection": {"model": "fixture-model", "profile": null},
+        "auth_reference": "staging-auth-reference",
+        "auth_service": native.keyring_service,
+        "effective_model": "fixture-model",
+        "output_digest": "a".repeat(64),
+        "tool_probe_digest": "b".repeat(64),
+        "guarantees": guarantees,
+    });
+    let path = native.app_data.join("crew-staging-runtime-ready-v1.json");
+    std::fs::write(&path, serde_json::to_vec(&grant).unwrap()).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn certification(executable: &std::path::Path, auth_service: &str) -> RecapRuntimeCertification {
+    let executable_bytes = std::fs::read(executable).unwrap();
+    let plan = super::super::recap_adapter::claude_recap_plan(
+        std::path::Path::new("/staging/claude"),
+        std::path::Path::new("/staging/recap-runs/probe"),
+        "fixture-model",
+        b"probe",
+    )
+    .unwrap();
+    let envelope = serde_json::json!({
+        "type": "recap_probe",
+        "result": "fixture recap output",
+        "effectiveModel": "fixture-model",
+        "oneShotCompleted": true,
+        "toolProbe": {
+            "probeId": "crew-recap-hostile-tool-v1",
+            "toolName": "context_engine",
+            "requestObserved": true,
+            "deniedBeforeEffect": true,
+            "sentinelBefore": "a".repeat(64),
+            "sentinelAfter": "a".repeat(64)
+        }
+    });
+    let adapter = plan
+        .parse_probe_output(true, &serde_json::to_vec(&envelope).unwrap(), b"")
+        .unwrap();
+    let executable = RecapExecutableIdentity {
+        resolved_path: executable.to_owned(),
+        version: "fixture-1".into(),
+        fingerprint: hex::encode(Sha256::digest(&executable_bytes)),
+        platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+    };
+    let _ = adapter;
+    RecapRuntimeCertification::for_test_from_parts(RecapCertificationParts {
+        runtime_id: "claude".into(),
+        executable,
+        selection: RecapSelection {
+            model: "fixture-model".into(),
+            profile: None,
+            profile_digest: None,
+            profile_identity: None,
+            auth_available: true,
+        },
+        auth: RecapAuthBinding {
+            service: auth_service.into(),
+            reference: "staging-auth-reference".into(),
+        },
+        guarantees: RecapGuarantees {
+            one_shot: true,
+            tool_isolation: true,
+            state_isolation: true,
+            process_containment: true,
+        },
+        effective_model: "fixture-model".into(),
+        output_digest: "a".repeat(64),
+        tool_probe_digest: "b".repeat(64),
+    })
 }
 
 #[test]
@@ -157,4 +259,134 @@ fn receipt_rejects_intermediate_agents_symlink() {
     let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
     assert_eq!(receipt.recap_base(), Err(RecapStateFailure::Ownership));
     assert!(!outside.path().join("recap-runs").exists());
+}
+
+#[test]
+fn runtime_ready_grant_is_bound_to_owned_receipt_and_current_executable() {
+    let (_temp, native, doc) = fixture();
+    write(&native, &doc);
+    let executable = native.home.join("fixture-claude");
+    std::fs::write(&executable, b"fixture executable").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_runtime_grant(
+        &native,
+        &doc,
+        &executable,
+        serde_json::json!({
+            "one_shot": true,
+            "tool_isolation": true,
+            "state_isolation": true,
+            "process_containment": true,
+        }),
+    );
+
+    let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
+    assert!(receipt.runtime_ready_proof().is_ok());
+
+    std::fs::write(&executable, b"replaced executable").unwrap();
+    assert_eq!(
+        receipt.runtime_ready_proof(),
+        Err(RecapStateFailure::RuntimeNotReady)
+    );
+}
+
+#[test]
+fn loader_rejects_grant_with_wrong_auth_service() {
+    let (_temp, native, doc) = fixture();
+    write(&native, &doc);
+    let executable = native.home.join("fixture-claude");
+    std::fs::write(&executable, b"fixture executable").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_runtime_grant(
+        &native,
+        &doc,
+        &executable,
+        serde_json::json!({
+            "one_shot": true,
+            "tool_isolation": true,
+            "state_isolation": true,
+            "process_containment": true,
+        }),
+    );
+    let grant_path = native.app_data.join("crew-staging-runtime-ready-v1.json");
+    let mut grant: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&grant_path).unwrap()).unwrap();
+    grant["auth_service"] = "different-keyring-service".into();
+    std::fs::write(&grant_path, serde_json::to_vec(&grant).unwrap()).unwrap();
+
+    let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
+    assert_eq!(
+        receipt.runtime_ready_proof(),
+        Err(RecapStateFailure::RuntimeNotReady)
+    );
+}
+
+#[test]
+fn native_producer_projects_only_verified_probe_and_scoped_retention_row() {
+    let (_temp, native, doc) = fixture();
+    write(&native, &doc);
+    let executable = native.home.join("fixture-claude");
+    std::fs::write(&executable, b"fixture executable").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
+    let store_path = receipt.app_data.join("retention.db");
+    let store = super::super::retention::open_retention_db(&store_path).unwrap();
+    let cert = certification(&executable, &receipt.native.keyring_service);
+
+    receipt
+        .issue_runtime_ready_grant(&store, &cert, 1234)
+        .expect("verified probe should project the native grant");
+    assert!(receipt.runtime_ready_proof_with_store(&store).is_ok());
+
+    let grant_path = receipt.app_data.join("crew-staging-runtime-ready-v1.json");
+    let grant = std::fs::read_to_string(&grant_path).unwrap();
+    assert!(grant.contains("\"effective_model\":\"fixture-model\""));
+    assert!(grant.contains("\"tool_probe_digest\":"));
+    assert_eq!(
+        std::fs::metadata(&grant_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    store
+        .execute(
+            "UPDATE recap_runtime_certifications SET tool_probe_digest = ?1",
+            ["c".repeat(64)],
+        )
+        .unwrap();
+    assert_eq!(
+        receipt.runtime_ready_proof_with_store(&store),
+        Err(RecapStateFailure::RuntimeNotReady)
+    );
+}
+
+#[test]
+fn producer_rejects_mutated_executable_and_auth_binding_without_replacing_grant() {
+    let (_temp, native, doc) = fixture();
+    write(&native, &doc);
+    let executable = native.home.join("fixture-claude");
+    std::fs::write(&executable, b"fixture executable").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let receipt = VerifiedStagingOwnership::from_native(native).unwrap();
+    let store_path = receipt.app_data.join("retention.db");
+    let store = super::super::retention::open_retention_db(&store_path).unwrap();
+    let cert = certification(&executable, &receipt.native.keyring_service);
+    receipt
+        .issue_runtime_ready_grant(&store, &cert, 1234)
+        .unwrap();
+    let grant_path = receipt.app_data.join("crew-staging-runtime-ready-v1.json");
+    let before = std::fs::read(&grant_path).unwrap();
+
+    let bad_auth = certification(&executable, "other-keyring-service");
+    assert_eq!(
+        receipt.issue_runtime_ready_grant(&store, &bad_auth, 1235),
+        Err(RecapStateFailure::RuntimeNotReady)
+    );
+    assert_eq!(std::fs::read(&grant_path).unwrap(), before);
+
+    std::fs::write(&executable, b"replacement").unwrap();
+    assert_eq!(
+        receipt.issue_runtime_ready_grant(&store, &cert, 1235),
+        Err(RecapStateFailure::RuntimeNotReady)
+    );
+    assert_eq!(std::fs::read(&grant_path).unwrap(), before);
 }

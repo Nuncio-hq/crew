@@ -54,6 +54,21 @@ fn cleanup_refuses_pending_process_and_preserves_its_retry_record() {
 }
 
 #[test]
+fn recovery_removes_expired_pending_run_after_recorded_child_is_gone() {
+    let base = canonical_tempdir();
+    let mut run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    run.mark_process_pending().unwrap();
+    // The largest positive PID is not a live child in the fixture process;
+    // recovery may therefore close the pending phase without signalling one.
+    run.mark_process_started(i32::MAX as u32).unwrap();
+    let path = run.path().to_owned();
+    let report = recover_recap_runs(base.path(), 100 + RECOVERY_AGE_SECONDS).unwrap();
+    assert_eq!(report.removed, 1);
+    assert_eq!(report.pending_process, 0);
+    assert!(!path.exists());
+}
+
+#[test]
 fn cleanup_removes_only_the_finished_owned_generation() {
     let base = canonical_tempdir();
     let untouched = base.path().join("employee-sentinel");

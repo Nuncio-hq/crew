@@ -36,6 +36,23 @@ checks do not starve the daily relay. Record the effective staging endpoint
 and destinations with each result; do not guess one or fall back to the daily
 relay if staging is unavailable.
 
+The stable lifecycle environment is `/home/oscar/crew-staging-348` with
+baseline `initial-a1fe2c6`. Its stop → restore cycle was verified with real
+authentication against the currently pinned relay revision `a1fe2c6` and
+schema `45`; the stop → restore → verify lifecycle passed. Re-run the
+server-side verification from the tooling checkout with:
+
+```sh
+cd /home/oscar/crew-staging-348/tooling-launch-candidate/scripts
+python3 crew-staging.py verify \
+  --config /home/oscar/crew-staging-348/snapshot-config.json \
+  --baseline initial-a1fe2c6
+```
+
+The lifecycle evidence is recorded in [the #348 verification comment](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5644862328).
+It establishes environment readiness and does not certify an installed recap
+runtime or the #351 native observer/grant path.
+
 Choose the environment for the check:
 
 - Unit tests and mock E2E use small deterministic fixtures. Isolated local
@@ -757,15 +774,14 @@ invalidation command. These cases cannot prove native process behavior,
 installed staging, or in-flight turn/receipt acceptance. Those remain #338
 gates; real staging requires #348.
 
-### Queued built ACP producer to native reader proof
+### Built ACP producer to native reader proof
 
 This is an opt-in whole-chain proof for the #338 producer-to-reader seam. It
 must run against the ACP binary built from the same source revision as the
 checkout, with a real loopback socket and the production native reader. Its
 source lives at
-`desktop/src-tauri/src/managed_agents/transport_status/producer_fixture.rs`;
-execution remains queued pending an explicit validation allocation. Do not
-replace it with a unit fixture that writes the status JSON directly. The fixture owns the loopback listener, child
+`desktop/src-tauri/src/managed_agents/transport_status/producer_fixture.rs`.
+Do not replace it with a unit fixture that writes the status JSON directly. The fixture owns the loopback listener, child
 process, status directory and cleanup guard. It must pass `--lazy-pool` to the
 actual ACP binary, bind only `127.0.0.1`, use fixed bounded deadlines, and leave
 no child or temporary state after a timeout.
@@ -827,7 +843,7 @@ for path in root.rglob("*"):
         files.append(path.relative_to(root))
 
 digest = hashlib.sha256()
-for relative in sorted(files, key=lambda path: path.as_posix()):
+for relative in sorted(files, key=lambda path: path.parts):
     digest.update(relative.as_posix().encode())
     digest.update(b"\0")
     with (root / relative).open("rb") as source:
@@ -862,9 +878,10 @@ run_fixture -- --ignored --exact --nocapture
 The marker assertion proves the selected path used the inert provider stub only
 as a poison guard; any accidental provider launch fails the proof. The isolated
 environment intentionally excludes inherited relay, identity, provider and
-desktop configuration. The command proves local producer/reader attribution;
-it does not establish installed staging or live relay health, which remain the
-separate #348 gate.
+desktop configuration. The loopback proof does not establish installed
+managed-runtime or in-flight turn/receipt acceptance for #337/#338, or release
+acceptance for #357. See the [D-077 staging section](#test-environments-and-real-data-staging-d-077)
+for verified environment readiness.
 
 ## CompanyOS grouped evidence (#344)
 
@@ -950,21 +967,65 @@ run one exact staged runtime with a disposable copied profile/config and
 record source revision, runtime/model/profile, output and no employee-session
 mutation.
 
+The Hermes child command sets `HERMES_SAFE_MODE=1` and passes Hermes'
+top-level `--safe-mode` flag, while retaining the copied profile's
+provider/model configuration for the one-shot path. In Hermes Agent v0.21.2
+(source HEAD `eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads
+profile dotenv, external secret sources, and managed dotenv before
+`_prepare_agent_startup` reapplies the safe-mode environment. The installed
+`hermes_cli/oneshot.py` path then loads the selected profile config directly to
+resolve its provider/model. The adapter validates a staged `config.yaml` before
+launch: missing and empty files remain valid first-run states, while malformed
+YAML and non-mapping roots fail with a fixed error before a provider process can
+start. Profile `.env` and `.op.env` routing assignments for `HERMES_HOME` or
+`HERMES_MANAGED_DIR`, invalid or ambiguous dotenv bytes, and every enabled
+external secret source fail with one fixed profile-binding error. Accepted
+dotenv bytes remain byte-identical, a missing `.env` is created empty, and the
+child receives a fresh empty private managed directory. The production-bound
+fake-process regression stages a real profile copy, preserves safe dotenv
+bytes, verifies the private directory, and emulates native reassertion at the
+child boundary; it catches removal of the CLI guard or profile-binding seam
+without claiming that an installed Hermes provider or model has run. These
+tests live in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs` so
+the runtime implementation remains under the repository file-size gate.
+
+This source-level guard does not close the installed-runtime acceptance gap.
+No native Hermes launch, provider/auth check, effective-model receipt, or
+staging generation is implied. The #363 installed-runtime acceptance must run
+in the #348 staging environment; #348 owns that environment and #363 owns the
+runtime acceptance result. Mutable Hermes source or wrappers require
+revalidation.
+
 ## Recap capability source proof (#351)
 
 The default-off native recap slice is tested through its production modules:
-`recap_capability`, `recap_adapter`, `recap_state`, `recap_ownership`, and
-`discovery::bounded_command`. The native `AppHandle` loader belongs to the full
+`recap_capability`, `recap_adapter`, `recap_state`, `recap_ownership`,
+`recap_service`, and `discovery::bounded_command`. The native `AppHandle` loader
+and Tauri command belong to the full
 Tauri build gate; a small exact-module Cargo harness alone does not certify that
 integration. Run `just ci` before the PR and require the immutable head's
 NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-10)
 for the current unsupported inventory.
 
-Test boundaries include explicit model/profile admission, identity invalidation,
-fixed argv with a fake tool sentinel, native final-result/model parsing, private
-unlinked stdin and size limits, durable process-pending state, copied/symlinked
-ownership records, root-generation replacement, UID/build/profile/exclusion
-mismatch, and rejection of generation/auth claims in an ownership-only manifest.
+Test boundaries include explicit model/profile admission, executable and
+profile content identity invalidation, and provider envelopes rejected without
+a native observer. Fixed Claude and Hermes argv with a fake tool sentinel,
+native final-result and
+usage-model parsing, copied-profile and symlink rejection, private unlinked
+stdin and size limits, durable process-pending state, copied/symlinked ownership
+records, root-generation replacement, UID/build/profile/exclusion mismatch,
+rejection of generation/auth claims in an ownership-only manifest, and
+production-seam execution with a fake native executable, private stdin and
+finished-run cleanup. The ownership loader also binds a future runtime-ready
+grant to the exact ownership receipt bytes, executable fingerprint, profile
+directory identity and profile-tree digest; changing or replacing a retained
+Hermes profile fails closed before admission or launch. Corrupt saved settings
+retain safe Off rendering while
+surfacing `settings_error: "invalid_settings"` for recovery.
+The source seam is tested for chronological cursor pagination, newest-window
+selection, auxiliary-event exclusion, and the persisted `source_overflow`
+watermark when the bounded relay scan cannot prove EOF; an overflowed source is
+never reported as a current recap.
 The bounded process tests cover aggregate discovery versus independent recap
 budgets, cancellation before and after spawn, zero deadlines, EPERM retry only
 after observed root reap, and cleanup failures. The existing escaped-descendant
@@ -972,14 +1033,18 @@ test deliberately proves the limit of Unix process groups and cleans its own
 fixture; it must never be reported as whole-tree containment.
 
 Keep RED, mutation and restored-GREEN evidence separate. Removing the fixed
-`--tools` argument, prompt cap, pending-process cleanup guard, or EPERM reap
-condition must fail the corresponding production-seam regression. Synthetic
-argv/output tests and authorized design reviews do not establish provider auth,
-effective generation model, native tool isolation or a working recap. Real
+no-tool Claude/Hermes recipe arguments, prompt cap, pending-process cleanup
+guard, source overflow watermark, or EPERM reap condition must fail the
+corresponding production-seam regression. Synthetic argv/output tests and
+authorized design reviews do not establish provider auth, effective generation
+model, native tool isolation or a working recap. The provider envelope parser
+is deliberately insufficient for certification: until a native observer binds
+it to the actual plan and independently records state/process outcomes, the
+producer returns `UnverifiedCapability` and does not write a grant. Real
 staging generation remains blocked until one exact runtime combination proves
-all those properties and #348 supplies a separate runtime-ready grant. Evidence
-screenshots must label a source/tooling summary as such; they cannot substitute
-for the designated staging runtime acceptance required by #351/#356.
+all those properties and #348 supplies the native auth/profile binding.
+Evidence screenshots must label a source/tooling summary as such; they cannot
+substitute for the designated staging runtime acceptance required by #351/#356.
 
 The historical 2026-09-09 executed inventory used resolved native executables,
 not the user's updating wrapper. The Claude image matches the current
