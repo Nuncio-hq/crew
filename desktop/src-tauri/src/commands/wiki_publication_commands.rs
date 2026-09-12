@@ -190,6 +190,72 @@ pub(super) async fn reserve_publication_at_path<R: Runtime>(
     .await
 }
 
+/// Inputs shared by the shipping prepare command and source-bound acceptance.
+///
+/// The generation is already complete and contains only captured source, the
+/// deterministic plan, and generated drafts. This boundary is where the
+/// production path turns that generation into one signed immutable graph before
+/// it enters the durable operation journal.
+pub(super) struct WikiPublicationBuildInput {
+    pub(super) owner: String,
+    pub(super) repo_d: String,
+    pub(super) generation: WikiGeneration,
+    pub(super) cadence: String,
+    pub(super) expected_revision: Option<String>,
+    pub(super) created_at: u64,
+    pub(super) keys: nostr::Keys,
+}
+
+/// Build the exact signed publication from one completed Wiki generation.
+///
+/// Both renderer prepare and headless acceptance call this seam, so acceptance
+/// starts after the same `WikiGeneration -> build_snapshot` boundary that
+/// shipping uses. The returned graph is still only in memory; callers must
+/// persist it through [`reserve_publication_at_path`] before any relay write.
+pub(super) fn build_publication_from_generation(
+    input: &WikiPublicationBuildInput,
+) -> Result<crew_wiki::snapshot_v1_build::SnapshotPublication, String> {
+    build_snapshot(SnapshotBuild {
+        owner: &input.owner,
+        repo_d: &input.repo_d,
+        snapshot: &input.generation.snapshot,
+        plan: &input.generation.plan,
+        drafts: &input.generation.drafts,
+        cadence: &input.cadence,
+        snapshot_id: None,
+        expected_revision: input.expected_revision.as_deref(),
+        created_at: input.created_at,
+        keys: &input.keys,
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Build and durably reserve one generated publication at a trusted path.
+///
+/// This is the post-generation production seam used by native prepare and by
+/// the headless acceptance driver. It deliberately performs no relay I/O.
+pub(super) async fn reserve_generated_publication_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: OwnerScopeToken,
+    operation_id: String,
+    coordinate: String,
+    input: WikiPublicationBuildInput,
+) -> Result<ScopedOperationResult<CreateResult>, String> {
+    let cadence = input.cadence.clone();
+    let publication = build_publication_from_generation(&input)?;
+    reserve_publication_at_path(
+        app,
+        path,
+        expected,
+        operation_id,
+        coordinate,
+        publication,
+        &cadence,
+    )
+    .await
+}
+
 // The Cancel guard's predicate and its exact refusal text are consumed by the
 // recovery regression suite, not by the shipping library: `cancel_intent` is
 // the only production entry point to that rule. Keep them out of the library's
@@ -306,30 +372,24 @@ pub(crate) async fn wiki_publication_prepare(
         .max(current_time);
     let cadence = after_head.as_ref().map(current_cadence).unwrap_or("manual");
     let expected_revision = after_head.as_ref().map(|event| event.id.to_hex());
-    let publication = build_snapshot(SnapshotBuild {
-        owner,
-        repo_d,
-        snapshot: &generation.snapshot,
-        plan: &generation.plan,
-        drafts: &generation.drafts,
-        cadence,
-        snapshot_id: None,
-        expected_revision: expected_revision.as_deref(),
-        created_at,
-        keys: runtime.keys(),
-    })
-    .map_err(|error| error.to_string())?;
     let journal = super::owner_operations::journal_path(&app)?;
     super::wiki_publication_worker::start(app.clone());
     super::wiki_publication_worker::reserve(&app, &expected, &coordinate);
-    let result = reserve_publication_at_path(
+    let result = reserve_generated_publication_at_path(
         app.clone(),
         journal,
         expected.clone(),
         operation_id,
         coordinate.clone(),
-        publication,
-        cadence,
+        WikiPublicationBuildInput {
+            owner: owner.to_owned(),
+            repo_d: repo_d.to_owned(),
+            generation,
+            cadence: cadence.to_owned(),
+            expected_revision,
+            created_at,
+            keys: runtime.keys().clone(),
+        },
     )
     .await;
     if result.is_err() {
@@ -558,19 +618,16 @@ pub(crate) async fn wiki_publication_regenerate(
         .map(|head| head.created_at.as_secs().saturating_add(1))
         .unwrap_or(0)
         .max(current_time);
-    let publication = build_snapshot(SnapshotBuild {
-        owner: &owner_hex,
-        repo_d: &repo_d,
-        snapshot: &generation.snapshot,
-        plan: &generation.plan,
-        drafts: &generation.drafts,
-        cadence,
-        snapshot_id: None,
-        expected_revision: expected_revision.as_deref(),
+    let publication_input = WikiPublicationBuildInput {
+        owner: owner_hex.clone(),
+        repo_d: repo_d.clone(),
+        generation,
+        cadence: cadence.to_owned(),
+        expected_revision,
         created_at,
-        keys: runtime.keys(),
-    })
-    .map_err(|error| error.to_string())?;
+        keys: runtime.keys().clone(),
+    };
+    let publication = build_publication_from_generation(&publication_input)?;
     if publication.snapshot_id == predecessor_record.snapshot_id
         || publication.manifest.id == predecessor_record.manifest.id
         || publication.pages.iter().any(|event| {

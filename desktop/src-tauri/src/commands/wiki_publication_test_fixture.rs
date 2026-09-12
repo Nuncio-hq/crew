@@ -6,6 +6,7 @@
 
 use crate::commands::wiki_publication_record::{WikiPublicationProgress, WikiPublicationRecord};
 use crate::owner_operations::{Operation, OperationKind, OperationScope, OperationStatus};
+use crate::wiki_worker::WikiGeneration;
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::PageDraft;
 use crew_wiki::snapshot_v1_build::{build_snapshot, SnapshotBuild, SnapshotPublication};
@@ -37,6 +38,28 @@ pub(crate) fn publication_with_expected(
     expected_revision: Option<&str>,
 ) -> SnapshotPublication {
     let owner = keys.public_key().to_hex();
+    let generation = generation();
+    build_snapshot(SnapshotBuild {
+        owner: &owner,
+        repo_d,
+        snapshot: &generation.snapshot,
+        plan: &generation.plan,
+        drafts: &generation.drafts,
+        cadence: "manual",
+        snapshot_id,
+        expected_revision,
+        created_at: 10,
+        keys,
+    })
+    .expect("fixture publication")
+}
+
+/// Build a deterministic completed generation for production-bound acceptance.
+///
+/// The source, plan, and drafts are intentionally independent of signing. The
+/// publication command owns the subsequent `build_snapshot` and journal
+/// reservation boundary, so tests can exercise that same post-generation path.
+pub(crate) fn generation() -> WikiGeneration {
     let commit = "a".repeat(40);
     let snapshot = RepoSnapshot {
         commit: commit.clone(),
@@ -68,19 +91,11 @@ pub(crate) fn publication_with_expected(
         language: "en".into(),
         content: "# Overview\n".into(),
     }];
-    build_snapshot(SnapshotBuild {
-        owner: &owner,
-        repo_d,
-        snapshot: &snapshot,
-        plan: &plan,
-        drafts: &drafts,
-        cadence: "manual",
-        snapshot_id,
-        expected_revision,
-        created_at: 10,
-        keys,
-    })
-    .expect("fixture publication")
+    WikiGeneration {
+        snapshot,
+        plan,
+        drafts,
+    }
 }
 
 pub(crate) fn coordinate(keys: &Keys, repo_d: &str) -> String {
