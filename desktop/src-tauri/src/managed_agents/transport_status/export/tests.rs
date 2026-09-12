@@ -216,7 +216,7 @@ impl Write for FlushErrorSink {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        Err(io::Error::new(ErrorKind::Other, "fixture flush failed"))
+        Err(io::Error::other("fixture flush failed"))
     }
 }
 
@@ -242,7 +242,7 @@ fn production_sink_rejects_wrong_native_binding_without_touching_sentinel() {
         bytes: b"SENTINEL".to_vec(),
         flushes: 0,
     };
-    assert!(emit_to(&ExportCandidate::Auth(candidate), &mut sink).is_err());
+    assert!(emit_to(&ExportCandidate::Auth(Box::new(candidate)), &mut sink).is_err());
     assert_eq!(sink.bytes, b"SENTINEL");
     assert_eq!(sink.flushes, 0);
 }
@@ -281,7 +281,7 @@ fn production_sink_rejects_oversize_marker_before_writing() {
         bytes: b"SENTINEL".to_vec(),
         flushes: 0,
     };
-    assert!(emit_to(&ExportCandidate::Auth(candidate), &mut sink).is_err());
+    assert!(emit_to(&ExportCandidate::Auth(Box::new(candidate)), &mut sink).is_err());
     assert_eq!(sink.bytes, b"SENTINEL");
     assert_eq!(sink.flushes, 0);
 }

@@ -62,7 +62,7 @@ const CHALLENGE: &str = "crew-338-auth-evidence-challenge";
 /// The recipe must discover this test even though it is intentionally ignored.
 #[test]
 fn whole_chain_recipe_declares_a_nonzero_test_count() {
-    assert!(INTENDED_IGNORED_TEST_COUNT > 0);
+    const { assert!(INTENDED_IGNORED_TEST_COUNT > 0) };
 }
 
 /// Spawn the supplied ACP executable and prove that its real v2 terminal

@@ -53,7 +53,7 @@ pub(crate) struct AuthCandidate {
 #[derive(Debug, Clone)]
 pub(crate) enum ExportCandidate {
     Registration(RegistrationCandidate),
-    Auth(AuthCandidate),
+    Auth(Box<AuthCandidate>),
 }
 
 #[derive(Debug, Clone)]
@@ -227,7 +227,7 @@ impl ExportState {
         })?;
         auth.attempts = auth.attempts.saturating_add(1);
         self.pending = Some(PendingMarker::Auth(auth.candidate.key.clone()));
-        Some(ExportCandidate::Auth(auth.candidate.clone()))
+        Some(ExportCandidate::Auth(Box::new(auth.candidate.clone())))
     }
 
     pub(crate) fn finish(&mut self, candidate: &ExportCandidate, success: bool, now: Instant) {

@@ -389,7 +389,7 @@ mod tests {
             // identifier. A per-test identifier keeps this path isolated from
             // another test run and lets the guard below prove ownership before
             // removing it.
-            context.config_mut().identifier = identifier.into();
+            context.config_mut().identifier = identifier;
             let app = tauri::test::mock_builder()
                 .manage(crate::app_state::build_app_state())
                 .build(context)
