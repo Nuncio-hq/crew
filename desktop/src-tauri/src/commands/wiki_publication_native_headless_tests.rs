@@ -15,7 +15,9 @@ use tauri::Manager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-use super::wiki_publication_commands::{dispatch_row_with_context, reserve_publication_at_path};
+use super::wiki_publication_commands::{
+    dispatch_row_with_context, reserve_generated_publication_at_path, WikiPublicationBuildInput,
+};
 use super::wiki_publication_native_reads::{NativeClock, NativeJournal};
 use super::wiki_publication_test_fixture as fixture;
 use super::wiki_publication_worker::run_due_with_context;
@@ -250,8 +252,6 @@ async fn worker_recovers_a_reserved_publication_headlessly_after_restart() {
     let captured = capture(app.handle().clone()).await.expect("native scope");
     let repo_d = "crew.headless.acceptance";
     let coordinate = fixture::coordinate(&captured.keys, repo_d);
-    let publication = fixture::publication(&captured.keys, repo_d, None);
-    let expected_head = publication.head.id;
     let dir = tempfile::tempdir().expect("journal directory");
     let path = dir
         .path()
@@ -259,14 +259,21 @@ async fn worker_recovers_a_reserved_publication_headlessly_after_restart() {
         .expect("canonical journal path")
         .join("owner-operations/recovery.db");
     let operation_id = uuid::Uuid::new_v4().to_string();
-    let created = reserve_publication_at_path(
+    let created = reserve_generated_publication_at_path(
         app.handle().clone(),
         path.clone(),
         captured.token.clone(),
         operation_id,
         coordinate.clone(),
-        publication,
-        "manual",
+        WikiPublicationBuildInput {
+            owner: captured.keys.public_key().to_hex(),
+            repo_d: repo_d.to_owned(),
+            generation: fixture::generation(),
+            cadence: "manual".into(),
+            expected_revision: None,
+            created_at: 10,
+            keys: captured.keys.clone(),
+        },
     )
     .await
     .expect("reserve publication")
@@ -274,6 +281,13 @@ async fn worker_recovers_a_reserved_publication_headlessly_after_restart() {
     let operation = match created {
         CreateResult::Created(operation) | CreateResult::Existing(operation) => operation,
     };
+    let expected_head = operation
+        .payload
+        .get("head")
+        .and_then(|head| head.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| nostr::EventId::from_hex(id).ok())
+        .expect("reserved head id");
     let clock = Arc::new(std::sync::atomic::AtomicI64::new(100));
 
     // Exercise the foreground dispatch seam first. Its first relay write is a
