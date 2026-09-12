@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(target_os = "macos")]
 use crate::managed_agents::recap_capability::{
     RecapAdmission, RecapExecutableIdentity, RecapSelection,
 };
