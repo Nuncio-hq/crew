@@ -34,6 +34,7 @@ struct RelayState {
     events: Vec<Event>,
     head: Option<Event>,
     fail_next_publish: bool,
+    publish_requests: usize,
 }
 
 struct ServerGuard(tokio::task::JoinHandle<()>);
@@ -197,6 +198,7 @@ async fn relay(listener: TcpListener, state: Arc<Mutex<RelayState>>) {
             "/events" => {
                 let event: Event = serde_json::from_slice(&body).expect("event JSON");
                 let mut state = state.lock().expect("relay state");
+                state.publish_requests = state.publish_requests.saturating_add(1);
                 if state.fail_next_publish {
                     state.fail_next_publish = false;
                     response(
@@ -348,6 +350,7 @@ async fn worker_recovers_a_reserved_publication_headlessly_after_restart() {
         );
     }
     // A fresh tick sees the completed projection and performs no second write.
+    let publish_requests = relay_state.lock().expect("relay state").publish_requests;
     run_due_with_context(
         app.handle().clone(),
         captured.token,
@@ -356,4 +359,9 @@ async fn worker_recovers_a_reserved_publication_headlessly_after_restart() {
     )
     .await
     .expect("completed row remains quiescent");
+    assert_eq!(
+        relay_state.lock().expect("relay state").publish_requests,
+        publish_requests,
+        "completed row must not issue a second publish request"
+    );
 }

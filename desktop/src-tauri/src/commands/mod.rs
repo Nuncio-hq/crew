@@ -111,6 +111,8 @@ mod wiki_publication_head_proof_tests;
 mod wiki_publication_native_fence_tests;
 #[cfg(all(test, unix))]
 mod wiki_publication_native_headless_tests;
+#[cfg(all(test, unix))]
+mod wiki_publication_native_owned_relay_tests;
 mod wiki_publication_native_reads;
 mod wiki_publication_record;
 mod wiki_publication_runtime;
