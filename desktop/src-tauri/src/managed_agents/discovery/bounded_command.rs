@@ -20,8 +20,8 @@ pub(crate) use policy::{BoundedFailure, BoundedOutcome, BoundedPolicy, OutputBud
 #[path = "bounded_command/runner.rs"]
 mod runner;
 pub(crate) use runner::output_with_policy;
-pub(crate) use runner::output_with_policy_and_stdin;
 pub(crate) use runner::output_with_policy_and_spawn_hook;
+pub(crate) use runner::output_with_policy_and_stdin;
 
 #[cfg(test)]
 #[path = "bounded_command/policy_tests.rs"]
