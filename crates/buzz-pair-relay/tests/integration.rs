@@ -45,6 +45,23 @@ async fn connect(url: &str) -> WS {
     ws
 }
 
+/// Connect and wait until the relay's WebSocket task has entered its receive
+/// loop. The server starts that task after sending the HTTP upgrade response,
+/// so completing the handshake alone is not a scheduling barrier for tests
+/// that immediately advance Tokio's paused clock.
+async fn connect_ready(url: &str) -> WS {
+    let mut ws = connect(url).await;
+    // Use an application-level reply instead of Ping/Pong: tungstenite may
+    // enqueue an automatic Pong in addition to the relay's explicit Pong.
+    send(&mut ws, &json!(["AUTH", {}])).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(
+        reply[0], "NOTICE",
+        "expected relay readiness reply: {reply}"
+    );
+    ws
+}
+
 /// Send a JSON value as a text frame.
 async fn send(ws: &mut WS, msg: &Value) {
     ws.send(Message::Text(msg.to_string().into()))
@@ -439,16 +456,23 @@ async fn test_second_sub_same_id() {
 }
 
 /// 9. Connection closes after 120 s (virtual time).
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn test_120s_timeout() {
     let url = start_relay().await;
-    let mut ws = connect(&url).await;
+    let mut ws = connect_ready(&url).await;
 
+    // Complete the real-I/O readiness handshake before switching this test's
+    // clock to virtual time. This keeps the lifetime assertion deterministic
+    // while still exercising the production deadline through `advance`.
+    tokio::time::pause();
     // Advance virtual time past the connection timeout.
     tokio::time::advance(Duration::from_secs(121)).await;
     // Yield to let the relay task run its deadline branch.
     tokio::task::yield_now().await;
 
+    // The relay's deadline is virtual, but close delivery crosses real TCP
+    // I/O. Resume the clock so the existing 2 s assertion is a wall bound.
+    tokio::time::resume();
     assert_closed(&mut ws).await;
 }
 
@@ -1178,15 +1202,17 @@ async fn test_reader_backpressure_closes() {
 
 /// 42. Connection closes promptly after 120 s (virtual time).
 ///     Explicit duplicate of test 9 with a slightly different assertion style.
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn test_cancellation_immediate() {
     let url = start_relay().await;
-    let mut ws = connect(&url).await;
+    let mut ws = connect_ready(&url).await;
 
+    tokio::time::pause();
     tokio::time::advance(Duration::from_secs(121)).await;
     tokio::task::yield_now().await;
 
     // The connection must be closed — not just slow.
+    tokio::time::resume();
     assert_closed(&mut ws).await;
 }
 

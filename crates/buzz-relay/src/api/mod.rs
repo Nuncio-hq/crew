@@ -138,6 +138,66 @@ pub mod relay_members {
         Ok(MembershipDecision::Denied)
     }
 
+    /// Re-check the current relay-membership row for an already authenticated
+    /// principal. Unlike the historical admission result carried in
+    /// [`crate::connection::AuthState`], this is a writer-routed read and is
+    /// therefore safe to use as the live-session backstop after a membership
+    /// mutation. Open relays retain their existing semantics and admit every
+    /// authenticated principal.
+    pub async fn current_relay_membership(
+        state: &AppState,
+        community: CommunityId,
+        pubkey_bytes: &[u8],
+    ) -> Result<bool, String> {
+        if !state.config.require_relay_membership {
+            return Ok(true);
+        }
+
+        let pubkey_hex = hex::encode(pubkey_bytes);
+        state
+            .db
+            .get_relay_member(community, &pubkey_hex)
+            .await
+            .map(|member| member.is_some())
+            .map_err(|e| format!("current relay membership check failed: {e}"))
+    }
+
+    /// Re-check relay membership for an authenticated principal, preserving
+    /// NIP-OA delegated sessions when their verified owner remains a member.
+    pub async fn current_relay_membership_for_auth(
+        state: &AppState,
+        community: CommunityId,
+        pubkey_bytes: &[u8],
+        agent_owner_pubkey: Option<&[u8]>,
+    ) -> Result<bool, String> {
+        if current_relay_membership(state, community, pubkey_bytes).await? {
+            return Ok(true);
+        }
+
+        // The owner relationship is an admission credential, not a general
+        // users-table lookup.  Keep the live fallback behind the same policy
+        // switch as initial NIP-OA admission so a disabled policy cannot
+        // silently preserve a delegated session.
+        if !state.config.allow_nip_oa_auth {
+            return Ok(false);
+        }
+
+        let Some(owner_bytes) = agent_owner_pubkey else {
+            return Ok(false);
+        };
+        if owner_bytes == pubkey_bytes {
+            return Ok(false);
+        }
+
+        let owner_hex = hex::encode(owner_bytes);
+        state
+            .db
+            .get_relay_member(community, &owner_hex)
+            .await
+            .map(|member| member.is_some())
+            .map_err(|e| format!("current relay membership check (NIP-OA owner) failed: {e}"))
+    }
+
     /// Enforce relay membership for a pubkey, with NIP-OA agent delegation fallback.
     ///
     /// Returns `Ok(Some(owner_pubkey))` when the agent is not a direct member but
@@ -436,6 +496,174 @@ pub mod relay_members {
             let result =
                 owner_for_nip_oa_backfill(None, &agent_keys.public_key().to_bytes(), None, None);
             assert_eq!(result, None);
+        }
+    }
+
+    #[cfg(test)]
+    mod postgres_tests {
+        use std::sync::Arc;
+
+        use buzz_core::tenant::CommunityId;
+        use nostr::Keys;
+        use uuid::Uuid;
+
+        use super::*;
+        use crate::{config::Config, state::AppState};
+
+        /// Build the real relay state used by the writer-backed membership
+        /// gate. The test wrapper supplies an isolated DATABASE_URL; Redis is
+        /// only needed to construct the normal AppState services.
+        async fn membership_test_state() -> (
+            Arc<AppState>,
+            crate::state::AuditShutdownHandle,
+            sqlx::PgPool,
+        ) {
+            let mut config = Config::from_env().expect("default config loads");
+            config.database_url = crate::test_support::database_url();
+            config.redis_url = std::env::var("BUZZ_TEST_REDIS_URL")
+                .or_else(|_| std::env::var("REDIS_URL"))
+                .unwrap_or_else(|_| "redis://127.0.0.1:56471/13".to_owned());
+            config.require_relay_membership = true;
+            config.allow_nip_oa_auth = true;
+
+            let pool = crate::test_support::bounded(
+                "connect relay-membership PostgreSQL",
+                sqlx::PgPool::connect(&config.database_url),
+            )
+            .await
+            .expect("connect relay-membership PostgreSQL");
+            let db = buzz_db::Db::from_pool(pool.clone());
+            let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+                .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+                .expect("create Redis pool");
+            let pubsub = Arc::new(
+                crate::test_support::bounded(
+                    "create relay-membership pubsub manager",
+                    buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone()),
+                )
+                .await
+                .expect("create relay-membership pubsub manager"),
+            );
+            let auth = buzz_auth::AuthService::new(config.auth.clone());
+            let search = buzz_search::SearchService::new(pool.clone());
+            let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+                db.clone(),
+                buzz_workflow::WorkflowConfig::default(),
+            ));
+            let media_config = config.media.clone();
+            let media_storage = crate::test_support::bounded(
+                "create relay-membership media storage",
+                tokio::task::spawn_blocking(move || buzz_media::MediaStorage::new(&media_config)),
+            )
+            .await
+            .expect("create relay-membership media storage task")
+            .expect("create relay-membership media storage");
+            let (state, audit_shutdown) = AppState::new(
+                config,
+                db,
+                redis_pool,
+                None::<buzz_audit::AuditService>,
+                pubsub,
+                auth,
+                search,
+                workflow_engine,
+                Keys::generate(),
+                media_storage,
+            );
+            (Arc::new(state), audit_shutdown, pool)
+        }
+
+        #[tokio::test]
+        #[ignore = "requires isolated PostgreSQL"]
+        async fn current_relay_membership_for_auth_tracks_writer_roster_changes() {
+            let (state, audit_shutdown, pool) = membership_test_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = CommunityId::from_uuid(community_uuid);
+            let owner = Keys::generate();
+            let agent = Keys::generate();
+            let owner_bytes = owner.public_key().to_bytes();
+            let owner_hex = owner.public_key().to_hex();
+            let agent_bytes = agent.public_key().to_bytes();
+            let host = format!("membership-gate-{community_uuid}.example");
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert relay-membership community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert relay-membership community");
+                crate::test_support::bounded(
+                    "insert relay-membership owner",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'owner')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&owner_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert relay-membership owner");
+
+                assert!(crate::test_support::bounded(
+                    "read direct relay membership",
+                    current_relay_membership_for_auth(&state, community, &owner_bytes, None,),
+                )
+                .await
+                .expect("read direct relay membership"));
+                assert!(crate::test_support::bounded(
+                    "read delegated relay membership",
+                    current_relay_membership_for_auth(
+                        &state,
+                        community,
+                        &agent_bytes,
+                        Some(&owner_bytes),
+                    ),
+                )
+                .await
+                .expect("read delegated relay membership"));
+
+                crate::test_support::bounded(
+                    "remove relay-membership owner",
+                    sqlx::query(
+                        "DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(&owner_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("remove relay-membership owner");
+
+                assert!(!crate::test_support::bounded(
+                    "read removed direct relay membership",
+                    current_relay_membership_for_auth(&state, community, &owner_bytes, None,),
+                )
+                .await
+                .expect("read removed direct relay membership"));
+                assert!(!crate::test_support::bounded(
+                    "read removed delegated relay membership",
+                    current_relay_membership_for_auth(
+                        &state,
+                        community,
+                        &agent_bytes,
+                        Some(&owner_bytes),
+                    ),
+                )
+                .await
+                .expect("read removed delegated relay membership"));
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
         }
     }
 }

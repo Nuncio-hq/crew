@@ -4,6 +4,12 @@
   "recordedAt": "2026-09-07",
   "areas": [
     {
+      "area": "crates/buzz-admin/**",
+      "why": "Live membership revocation command delivery and explicit failure reporting (#362).",
+      "resolve": "Preserve the admin command's durable membership write and propagate control-plane delivery failures with a non-success exit; keep upstream authorization and readback behavior.",
+      "filesAtRecord": 1
+    },
+    {
       "area": "crates/buzz-acp/**",
       "why": "Crew's agent kernel: session ledger + resume-first (#169/#180), thread worktree leases + Cowork (#187/#188), elicitation, receipts + recovery (#91/#339/#340), governor/desktop-control env (#196/#197), lazy slot fill (#302), roles (#116/#148), Crew prompt sections. Crew has NOT adopted upstream #6732 thread-per-session (`session_owners`/`SessionPolicy`); scope.rs + session_model_*.md are present but unwired.",
       "resolve": "Crew is ahead here: cherry-pick upstream commits onto Crew (do not rebase Crew onto upstream). Keep one idle reaper, additive Crew modules, `Option<&'static str>` base prompt. A change that touches session ownership needs a decision first.",
@@ -78,6 +84,18 @@
       ]
     },
     {
+      "area": "crates/buzz-pubsub/**",
+      "why": "Live membership revocation control metadata and cross-pod delivery (#362).",
+      "resolve": "Retain backward-compatible control-event decoding, correlated disconnect acknowledgements, and self-leave exclusion; upstream pub/sub transport behavior remains authoritative.",
+      "filesAtRecord": 2
+    },
+    {
+      "area": "crates/buzz-pair-relay/tests/integration.rs",
+      "why": "Stabilize pair-relay virtual-time timeout coverage by synchronizing server readiness before pausing the test clock.",
+      "resolve": "Keep the readiness handshake and wall-clock close assertion around the production 120-second deadline; preserve upstream pair-relay protocol behavior and integration coverage.",
+      "filesAtRecord": 1
+    },
+    {
       "area": "crates/buzz-db/**",
       "why": "Crew migration numbering (0031_wiki_fts_allowlist inserted → upstream 0031+ shift by one); migrator tests count Crew files. D-080 composes channel/owner/exact-event persistence and canonical discovery using existing tables (#361). D-079 conditional replacement, immutable Wiki admission and owner/community live-storage bounds (#362).",
       "resolve": "on sync, rename incoming upstream migrations to Crew numbering (N+1) and never keep both copies; update migrator counts. Retain transaction-bound event insertion with thread metadata and the community/TTL/replacement/membership/channel lock order. Wiki reserved writes take the owner quota lock before the coordinate lock; compare the locked live head, and only exact current replay succeeds. Keep legacy Project replacement semantics outside the opt-in contract.",
@@ -145,6 +163,12 @@
       "area": "crates/buzz-test-client/tests/e2e_nostr_interop.rs",
       "why": "Wiki body-search WebSocket/HTTP interop and ID-allowlist regression coverage (#364).",
       "resolve": "Keep the production search-boundary regression beside the Nostr interop suite; preserve explicit repository/snapshot scope and the falsifiable ID allowlist coverage.",
+      "filesAtRecord": 1
+    },
+    {
+      "area": "crates/buzz-test-client/Cargo.toml",
+      "why": "Redis control-plane dependency for live membership revocation E2E coverage (#362).",
+      "resolve": "Retain the workspace Redis dependency used by the membership revocation client; keep the test client's existing dependency versions and feature choices.",
       "filesAtRecord": 1
     },
     {
@@ -617,9 +641,9 @@
     },
     {
       "area": "*",
-      "why": "root: AGENTS.md (Crew banner + Cursor Cloud notes), README/CONTRIBUTING/RELEASING/SECURITY/ARCHITECTURE/CHANGELOG Crew sections, Justfile Crew recipes, Cargo workspace members (crew-wiki, buzz-worktree, buzz-cowork…), .env.example, lefthook, renovate, deploy chart README.",
-      "resolve": "Crew sections are self-contained blocks; on conflict keep upstream body and re-place the Crew block.",
-      "filesAtRecord": 15
+      "why": "root: AGENTS.md (Crew banner + Cursor Cloud notes), README/CONTRIBUTING/RELEASING/SECURITY/ARCHITECTURE/CHANGELOG Crew sections, Justfile Crew recipes, Cargo workspace members (crew-wiki, buzz-worktree, buzz-cowork…), .env.example, lefthook, renovate, deploy chart README, and verified multi-arch MinIO CI image pins.",
+      "resolve": "Crew sections are self-contained blocks; on conflict keep upstream body and re-place the Crew block. Keep the MinIO and mc compose pins on the verified official Quay manifest digests.",
+      "filesAtRecord": 18
     },
     {
       "area": "admin-web/**",

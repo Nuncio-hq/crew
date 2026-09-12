@@ -1,6 +1,13 @@
 //! EVENT handler — WS dispatcher → ingest pipeline → fan-out.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
+
+#[cfg(test)]
+use std::sync::OnceLock;
 
 use axum::body::Bytes;
 use tracing::{debug, error, info, warn};
@@ -8,7 +15,7 @@ use tracing::{debug, error, info, warn};
 use buzz_core::event::StoredEvent;
 use buzz_core::kind::{
     event_kind_u32, is_ephemeral, is_unshared_gated_event, AUTHOR_ONLY_KINDS,
-    KIND_AGENT_OBSERVER_FRAME, KIND_GIFT_WRAP, KIND_PRESENCE_UPDATE,
+    KIND_AGENT_OBSERVER_FRAME, KIND_GIFT_WRAP, KIND_NIP43_LEAVE_REQUEST, KIND_PRESENCE_UPDATE,
 };
 use buzz_core::observer::{
     content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -22,7 +29,12 @@ use nostr::{Event, PublicKey};
 
 use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::RelayMessage;
-use crate::state::AppState;
+use crate::rejection::{reject_revoked_connection, RejectionTarget};
+use crate::state::{
+    AppState, SelfLeaveRevocation, RELAY_MEMBERSHIP_EVENT_ADMISSION_TIMEOUT,
+    RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT,
+    RELAY_MEMBERSHIP_REVOKED_REASON,
+};
 
 use super::ingest::{reject_with_transport, IngestAuth, IngestError};
 
@@ -60,6 +72,13 @@ fn event_frame_bytes_for_sub(sub_id: &str, event_json: &str) -> Arc<Bytes> {
     Arc::new(Bytes::from(event_frame_for_sub(sub_id, event_json)))
 }
 
+/// Keep each SQL request small while allowing every configured live connection
+/// to participate in one fan-out authorization pass.
+const RELAY_MEMBERSHIP_FANOUT_BATCH_SIZE: usize = 512;
+/// A stalled writer must not hold the Redis consumer or a post-commit task
+/// indefinitely. The whole batch, including all chunks, shares this deadline.
+const RELAY_MEMBERSHIP_FANOUT_DEADLINE: Duration = Duration::from_secs(2);
+
 fn fanout_frame_cache<'a, I>(sub_ids: I, event_json: &str) -> HashMap<&'a str, Arc<Bytes>>
 where
     I: IntoIterator<Item = &'a str>,
@@ -96,15 +115,165 @@ where
     drop_count
 }
 
+/// Resolve closed-relay authorization for all fan-out recipients in bounded
+/// writer-backed batches.
+///
+/// The connection semaphore bounds the number of authenticated identities by
+/// `Config::max_connections`; the explicit check below keeps this helper
+/// fail-closed if a test or future caller supplies a registry snapshot that
+/// violates that invariant. Direct principals and verified NIP-OA owners are
+/// queried together, so one absolute deadline covers the complete operation.
+async fn filter_fanout_by_relay_membership(
+    state: &AppState,
+    community_id: CommunityId,
+    matches: Vec<(crate::subscription::ConnId, crate::subscription::SubId)>,
+) -> Vec<(crate::subscription::ConnId, crate::subscription::SubId)> {
+    let identity_limit = state.config.max_connections.max(1);
+    let allow_nip_oa_auth = state.config.allow_nip_oa_auth;
+    let mut identities: HashMap<(Vec<u8>, Option<Vec<u8>>), bool> = HashMap::new();
+    let mut lookup_pubkeys = HashSet::new();
+
+    for (conn_id, _) in &matches {
+        let Some(pubkey) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+            continue;
+        };
+        let owner = state.conn_manager.admission_owner_for_conn(*conn_id);
+        let key = (pubkey.clone(), owner.clone());
+        if identities.contains_key(&key) {
+            continue;
+        }
+
+        lookup_pubkeys.insert(hex::encode(&pubkey));
+        if allow_nip_oa_auth {
+            if let Some(owner) = owner.as_ref() {
+                lookup_pubkeys.insert(hex::encode(owner));
+            }
+        }
+        identities.insert(key, false);
+
+        // Stop before allocating an unbounded identity snapshot when a
+        // future caller violates the connection-manager bound. The entire
+        // recipient batch is terminally dropped because its authorization
+        // result is no longer complete.
+        if identities.len() > identity_limit {
+            metrics::counter!(
+                "buzz_fanout_membership_terminal_drops_total",
+                "reason" => "identity_limit"
+            )
+            .increment(matches.len() as u64);
+            warn!(
+                %community_id,
+                identities = identities.len(),
+                identity_limit,
+                recipients = matches.len(),
+                "fan-out relay membership identity limit exceeded"
+            );
+            return Vec::new();
+        }
+    }
+
+    if identities.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(_membership_permit) = state
+        .relay_membership_fanout_semaphore
+        .clone()
+        .try_acquire_owned()
+        .ok()
+    else {
+        metrics::counter!(
+            "buzz_fanout_membership_terminal_drops_total",
+            "reason" => "overloaded"
+        )
+        .increment(matches.len() as u64);
+        warn!(
+            %community_id,
+            identities = identities.len(),
+            recipients = matches.len(),
+            "fan-out relay membership batch concurrency limit reached"
+        );
+        return Vec::new();
+    };
+
+    let mut lookup_pubkeys: Vec<String> = lookup_pubkeys.into_iter().collect();
+    lookup_pubkeys.sort_unstable();
+    let lookup_result = tokio::time::timeout(RELAY_MEMBERSHIP_FANOUT_DEADLINE, async {
+        let mut current_members = HashSet::new();
+        for batch in lookup_pubkeys.chunks(RELAY_MEMBERSHIP_FANOUT_BATCH_SIZE) {
+            let members = state
+                .db
+                .list_relay_member_pubkeys(community_id, batch)
+                .await?;
+            current_members.extend(members);
+        }
+        Ok::<HashSet<String>, buzz_db::DbError>(current_members)
+    })
+    .await;
+
+    let current_members = match lookup_result {
+        Ok(Ok(members)) => members,
+        Ok(Err(error)) => {
+            metrics::counter!(
+                "buzz_fanout_membership_terminal_drops_total",
+                "reason" => "lookup_error"
+            )
+            .increment(matches.len() as u64);
+            warn!(
+                %community_id,
+                identities = identities.len(),
+                recipients = matches.len(),
+                "fan-out relay membership batch failed: {error}"
+            );
+            return Vec::new();
+        }
+        Err(_) => {
+            metrics::counter!(
+                "buzz_fanout_membership_terminal_drops_total",
+                "reason" => "timeout"
+            )
+            .increment(matches.len() as u64);
+            warn!(
+                %community_id,
+                identities = identities.len(),
+                recipients = matches.len(),
+                "fan-out relay membership batch timed out"
+            );
+            return Vec::new();
+        }
+    };
+
+    for ((pubkey, owner), allowed) in &mut identities {
+        let direct = current_members.contains(&hex::encode(pubkey));
+        let via_owner = allow_nip_oa_auth
+            && owner
+                .as_ref()
+                .is_some_and(|owner| current_members.contains(&hex::encode(owner)));
+        *allowed = direct || via_owner;
+    }
+
+    matches
+        .into_iter()
+        .filter(|(conn_id, _)| {
+            let Some(pubkey) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                return false;
+            };
+            let owner = state.conn_manager.admission_owner_for_conn(*conn_id);
+            identities.get(&(pubkey, owner)).copied().unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Drop recipients without access before fan-out on a private channel.
 ///
-/// Open and channel-less events skip membership filtering (open channel-scoped
-/// events pay one visibility lookup; see `channel_visibility_cached`). For a
-/// private channel, each recipient is kept only if its connection's
-/// authenticated pubkey is a current member; unknown/unauthenticated recipients
-/// fail closed. This is the cluster-wide backstop: even if a stale subscription
-/// survives on another node after an open->private flip, its events are not
-/// delivered here.
+/// Closed-relay events first require each recipient's authenticated principal
+/// (or verified NIP-OA owner) to remain in the current writer-backed roster.
+/// Open relays retain their existing admission semantics. For a private
+/// channel, each recipient is also kept only if its connection's authenticated
+/// pubkey is a current channel member; unknown/unauthenticated recipients fail
+/// closed. These checks are the cluster-wide backstop: even if a stale
+/// subscription survives on another node after a revocation or open->private
+/// flip, its events are not delivered here.
 ///
 /// `threaded` is an optional visibility read resolved earlier in the same
 /// request (E1 phase-2, §4.8 phase-2 addendum). It is consulted only when its
@@ -129,6 +298,17 @@ pub async fn filter_fanout_by_access(
             state.conn_manager.community_for_conn(*conn_id) == Some(community_id)
         })
         .collect();
+
+    // Relay membership is a global admission boundary, including for
+    // channel-less events. A stale subscription on a pod that missed the
+    // connection-control command must not keep receiving global fan-out. Use
+    // the writer-backed check and deduplicate identical auth identities so a
+    // user with several subscriptions costs one authorization read.
+    let matches = if state.config.require_relay_membership {
+        filter_fanout_by_relay_membership(state, community_id, matches).await
+    } else {
+        matches
+    };
 
     // Author-only kinds (NIP-ER reminders) may only ever be delivered to the
     // event's own author. This gate lives here — the chokepoint shared by the
@@ -175,6 +355,8 @@ pub async fn filter_fanout_by_access(
     };
 
     let Some(channel_id) = stored_event.channel_id else {
+        // Relay membership and author/shared gates above already apply to
+        // channel-less events; there is no channel-membership lookup here.
         return matches;
     };
     // Fence 3 (§4.8 phase-2): the threaded value is used only when it was
@@ -600,10 +782,86 @@ async fn enqueue_event_created_audit(
     }
 }
 
+/// Result of the leave-specific pre-ingest membership check. Keeping this
+/// separate from [`IngestError`] lets `handle_event` release the fence before
+/// routing a raced revocation through the generic rejection path while still
+/// retaining the real ingest error for the ordinary EVENT response.
+enum RelayLeavePreparation {
+    /// The membership check passed and the real ingest pipeline completed (or
+    /// rejected) under the leave operation deadline.
+    Ingest(Result<super::ingest::IngestResult, IngestError>),
+    /// A competing revocation removed the row before this leave reached the
+    /// delete seam.
+    Revoked,
+    /// The writer-backed membership check failed before ingest.
+    CheckFailed(String),
+}
+
+/// Test-only gate placed inside the production EVENT admission seam. A
+/// stalled writer-backed read must time out before any event-specific work
+/// begins, rather than keeping the receive task occupied indefinitely.
+#[cfg(test)]
+pub(crate) struct EventMembershipTestHook {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static EVENT_MEMBERSHIP_TEST_HOOK: OnceLock<
+    tokio::sync::Mutex<Option<Arc<EventMembershipTestHook>>>,
+> = OnceLock::new();
+
+#[cfg(test)]
+/// Install or clear the test gate for the production EVENT admission lookup.
+pub(crate) async fn install_event_membership_test_hook(hook: Option<Arc<EventMembershipTestHook>>) {
+    let slot = EVENT_MEMBERSHIP_TEST_HOOK.get_or_init(|| tokio::sync::Mutex::new(None));
+    *slot.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn maybe_stall_event_membership_for_test() {
+    let Some(slot) = EVENT_MEMBERSHIP_TEST_HOOK.get() else {
+        return;
+    };
+    let hook = slot.lock().await.clone();
+    if let Some(hook) = hook {
+        hook.entered.notify_one();
+        hook.release.notified().await;
+    }
+}
+
+/// Revalidate the authenticated principal before accepting an EVENT. The
+/// writer-backed lookup covers both the direct member and NIP-OA owner paths;
+/// one application deadline therefore bounds the entire admission decision.
+async fn current_event_relay_membership(
+    state: &AppState,
+    community: CommunityId,
+    pubkey_bytes: &[u8],
+    agent_owner_pubkey: Option<&[u8]>,
+) -> Result<bool, String> {
+    let lookup = async {
+        #[cfg(test)]
+        maybe_stall_event_membership_for_test().await;
+
+        crate::api::relay_members::current_relay_membership_for_auth(
+            state,
+            community,
+            pubkey_bytes,
+            agent_owner_pubkey,
+        )
+        .await
+    };
+    match tokio::time::timeout(RELAY_MEMBERSHIP_EVENT_ADMISSION_TIMEOUT, lookup).await {
+        Ok(result) => result,
+        Err(_) => Err("current relay membership check timed out".to_owned()),
+    }
+}
+
 /// Handle an EVENT message from a WebSocket connection.
 ///
-/// Extracts auth from the WS connection, dispatches ephemeral events locally,
-/// and delegates persistent events to [`super::ingest::ingest_event`].
+/// Extracts auth from the WS connection, dispatches ordinary ephemeral
+/// events locally, and delegates persistent events plus the NIP-43 leave
+/// command to [`super::ingest::ingest_event`].
 #[tracing::instrument(skip_all, fields(event_id, kind))]
 pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<AppState>) {
     let start = std::time::Instant::now();
@@ -631,7 +889,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     )
     .increment(1);
 
-    let (conn_id, pubkey_bytes, auth_pubkey, scopes, channel_ids) = {
+    let (conn_id, pubkey_bytes, auth_pubkey, scopes, channel_ids, agent_owner_pubkey) = {
         let auth = conn.auth_state.read().await;
         match &*auth {
             AuthState::Authenticated(ctx) => (
@@ -640,6 +898,8 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 ctx.pubkey,
                 ctx.scopes.clone(),
                 ctx.channel_ids.clone(),
+                ctx.agent_owner_pubkey
+                    .map(|owner| owner.to_bytes().to_vec()),
             ),
             _ => {
                 reject("auth");
@@ -655,8 +915,13 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
 
     // Must run before both ephemeral and persistent branches. Persistent
     // events get a second check inside ingest_event() (step 3), but
-    // ephemeral events bypass the pipeline entirely.
+    // ordinary ephemeral events bypass the pipeline entirely.
     let is_gift_wrap = kind_u32 == KIND_GIFT_WRAP;
+    // NIP-43 leave requests use an ephemeral-range kind, but they are a
+    // durable membership command handled by ingest_event rather than a live
+    // fan-out event. Keep this classification available before the generic
+    // ephemeral dispatch below.
+    let is_relay_leave = kind_u32 == KIND_NIP43_LEAVE_REQUEST;
     if event.pubkey != auth_pubkey && !is_gift_wrap {
         reject("invalid");
         conn.send(RelayMessage::ok(
@@ -665,6 +930,41 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             "invalid: event pubkey does not match authenticated identity",
         ));
         return;
+    }
+
+    // NIP-42 admission is a point-in-time check. Revalidate the authenticated
+    // principal before accepting any EVENT (including ephemeral events) so a
+    // delayed or lost revocation command cannot leave this socket authorized.
+    match current_event_relay_membership(
+        &state,
+        conn.tenant.community(),
+        &pubkey_bytes,
+        agent_owner_pubkey.as_deref(),
+    )
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Event(event.id),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            warn!(conn_id = %conn_id, "Current relay membership check failed for EVENT: {error}");
+            reject_revoked_connection(
+                &state,
+                &conn,
+                RejectionTarget::Event(event.id),
+                "error: internal server error",
+            )
+            .await;
+            return;
+        }
     }
 
     if kind_u32 == buzz_core::kind::KIND_AUTH {
@@ -691,11 +991,12 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
         return;
     }
 
-    // Scope enforcement for ephemeral kinds: require MessagesWrite.
+    // Scope enforcement for ordinary ephemeral kinds: require MessagesWrite.
     // Persistent events skip this gate and rely on
     // ingest_event()'s per-kind scope allowlist instead, so a token with
-    // only ChannelsWrite can still submit kind:9002 via WS.
-    if is_ephemeral(kind_u32) {
+    // only ChannelsWrite can still submit kind:9002 via WS. NIP-43 leave is
+    // in the ephemeral numeric range but is routed to ingest_event below.
+    if is_ephemeral(kind_u32) && !is_relay_leave {
         if !scopes.is_empty() && !scopes.contains(&buzz_auth::Scope::MessagesWrite) {
             reject("scope");
             conn.send(RelayMessage::ok(
@@ -758,7 +1059,105 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
         conn_id,
     };
 
-    match super::ingest::ingest_event(&state, &conn.tenant, event, ingest_auth).await {
+    // Claim the same per-connection fence used by live revocation and the
+    // durable sweep before ingest can delete the sender's membership row. A
+    // second membership read after the bounded wait closes the race where a
+    // competing admin removal completed while this handler was waiting. The
+    // complete writer-backed check/delete/side-effect phase is one bounded
+    // operation while that guard is held. If the deadline expires, consume
+    // the guard through the same finalizer used by a raced `NotFound` result so
+    // the event receives its one terminal response before policy cancellation.
+    let (mut leave_revocation_guard, ingest_result) = if is_relay_leave {
+        let Some(guard) = state
+            .conn_manager
+            .acquire_revocation_lock(conn_id, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT)
+            .await
+        else {
+            reject("error");
+            conn.send(RelayMessage::ok(
+                &event_id_hex,
+                false,
+                "error: relay membership revocation is already in progress",
+            ));
+            return;
+        };
+        let leave_state = Arc::clone(&state);
+        let leave_tenant = conn.tenant.clone();
+        let leave_pubkey = pubkey_bytes.clone();
+        let leave_owner = agent_owner_pubkey.clone();
+        let leave_event_id = event.id;
+        let prepared = tokio::time::timeout(RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT, async move {
+            match crate::api::relay_members::current_relay_membership_for_auth(
+                &leave_state,
+                leave_tenant.community(),
+                &leave_pubkey,
+                leave_owner.as_deref(),
+            )
+            .await
+            {
+                Ok(true) => RelayLeavePreparation::Ingest(
+                    super::ingest::ingest_event(&leave_state, &leave_tenant, event, ingest_auth)
+                        .await,
+                ),
+                Ok(false) => RelayLeavePreparation::Revoked,
+                Err(error) => RelayLeavePreparation::CheckFailed(error),
+            }
+        })
+        .await;
+        match prepared {
+            Ok(RelayLeavePreparation::Ingest(result)) => (Some(guard), result),
+            Ok(RelayLeavePreparation::Revoked) => {
+                // The second membership check can observe a competing
+                // revocation. Release the leave fence before the generic
+                // rejection path tries to acquire it for cleanup.
+                drop(guard);
+                reject_revoked_connection(
+                    &state,
+                    &conn,
+                    RejectionTarget::Event(leave_event_id),
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                )
+                .await;
+                return;
+            }
+            Ok(RelayLeavePreparation::CheckFailed(error)) => {
+                warn!(conn_id = %conn_id, "Current relay membership check failed before leave ingest: {error}");
+                drop(guard);
+                reject_revoked_connection(
+                    &state,
+                    &conn,
+                    RejectionTarget::Event(leave_event_id),
+                    "error: internal server error",
+                )
+                .await;
+                return;
+            }
+            Err(_) => {
+                let timeout_message = "error: relay membership leave operation timed out";
+                let ack = RelayMessage::ok(&event_id_hex, false, timeout_message).into();
+                let finalized = state
+                    .finalize_fenced_connection_revocation(
+                        &conn.tenant,
+                        conn_id,
+                        &event_id_hex,
+                        RELAY_MEMBERSHIP_REVOKED_REASON,
+                        ack,
+                        guard,
+                    )
+                    .await;
+                if finalized.is_none() {
+                    conn.send(RelayMessage::ok(&event_id_hex, false, timeout_message));
+                }
+                return;
+            }
+        }
+    } else {
+        (
+            None,
+            super::ingest::ingest_event(&state, &conn.tenant, event, ingest_auth).await,
+        )
+    };
+    match ingest_result {
         Ok(result) => {
             if result.accepted {
                 // buzz_events_stored_total is emitted inside ingest_event()
@@ -772,11 +1171,42 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             }
             metrics::histogram!("buzz_event_processing_seconds")
                 .record(start.elapsed().as_secs_f64());
-            conn.send(RelayMessage::ok(
-                &result.event_id,
-                result.accepted,
-                &result.message,
-            ));
+            let response = RelayMessage::ok(&result.event_id, result.accepted, &result.message);
+            if is_relay_leave && result.accepted {
+                let Some(leave_revocation_guard) = leave_revocation_guard.take() else {
+                    reject("error");
+                    conn.send(RelayMessage::ok(
+                        &event_id_hex,
+                        false,
+                        "error: relay membership revocation fence was lost",
+                    ));
+                    return;
+                };
+                // The revocation helper publishes before it cancels local
+                // sockets, then queues exactly one event-level ACK for this
+                // initiating connection. Other sessions receive correlated
+                // CLOSED frames and a policy close; the origin loopback command
+                // carries the same conn-id exclusion.
+                if let Err(error) = state
+                    .disconnect_pubkey_clusterwide_for_leave(
+                        &conn.tenant,
+                        &pubkey_bytes,
+                        &event_id_hex,
+                        "restricted: not a relay member",
+                        SelfLeaveRevocation {
+                            conn_id,
+                            success_message: result.message.clone(),
+                            revocation_guard: leave_revocation_guard,
+                        },
+                    )
+                    .await
+                {
+                    reject("error");
+                    warn!(conn_id = %conn_id, event_id = %event_id_hex, "self-leave revocation publish failed: {error}");
+                }
+            } else {
+                conn.send(response);
+            }
         }
         Err(e) => {
             // Sanitize internal errors — don't leak DB/system details over WS.
@@ -786,7 +1216,42 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 IngestError::Internal(_) => ("error: internal server error".to_string(), "error"),
             };
             reject(reason);
-            conn.send(RelayMessage::ok(&event_id_hex, false, &msg));
+            let mut finalized = false;
+            if is_relay_leave
+                && matches!(
+                    &e,
+                    IngestError::Rejected(message)
+                        if message
+                            == crate::handlers::ingest::RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE
+                )
+            {
+                if let Some(revocation_guard) = leave_revocation_guard.take() {
+                    let ack = RelayMessage::ok(&event_id_hex, false, &msg).into();
+                    if let Some(ack_delivered) = state
+                        .finalize_fenced_connection_revocation(
+                            &conn.tenant,
+                            conn_id,
+                            &event_id_hex,
+                            RELAY_MEMBERSHIP_REVOKED_REASON,
+                            ack,
+                            revocation_guard,
+                        )
+                        .await
+                    {
+                        finalized = true;
+                        if !ack_delivered {
+                            warn!(
+                                conn_id = %conn_id,
+                                event_id = %event_id_hex,
+                                "self-leave race rejection ACK could not be queued before the bounded deadline"
+                            );
+                        }
+                    }
+                }
+            }
+            if !finalized {
+                conn.send(RelayMessage::ok(&event_id_hex, false, &msg));
+            }
         }
     }
 }
@@ -1995,12 +2460,17 @@ mod tests {
         use std::sync::atomic::AtomicU8;
         use std::sync::Arc;
 
+        use buzz_auth::{AuthContext, AuthMethod, Scope};
+        use buzz_core::kind::KIND_NIP43_LEAVE_REQUEST;
         use buzz_core::StoredEvent;
-        use nostr::{EventBuilder, Keys, Kind};
+        use nostr::{EventBuilder, Filter, Keys, Kind, Tag};
         use tokio::sync::{mpsc, Mutex};
         use tokio_util::sync::CancellationToken;
         use uuid::Uuid;
 
+        use buzz_core::tenant::TenantContext;
+
+        use crate::connection::AuthState;
         use crate::handlers::event::filter_fanout_by_access;
         use crate::state::AppState;
 
@@ -2052,6 +2522,118 @@ mod tests {
             test_state_with_redis_url("redis://127.0.0.1:1").await
         }
 
+        /// Build the production-bound state used by the closed-relay
+        /// revocation regression. The test wrapper supplies an isolated
+        /// database; all three live handlers and fan-out then call their real
+        /// writer-backed membership seams.
+        async fn closed_membership_state() -> (
+            Arc<AppState>,
+            crate::state::AuditShutdownHandle,
+            sqlx::PgPool,
+        ) {
+            let mut config = test_config();
+            config.database_url = crate::test_support::database_url();
+            config.redis_url = std::env::var("BUZZ_TEST_REDIS_URL")
+                .or_else(|_| std::env::var("REDIS_URL"))
+                .unwrap_or_else(|_| "redis://127.0.0.1:56471/13".to_owned());
+            config.require_relay_membership = true;
+
+            let pool = crate::test_support::bounded(
+                "connect closed-relay PostgreSQL",
+                sqlx::PgPool::connect(&config.database_url),
+            )
+            .await
+            .expect("connect closed-relay PostgreSQL");
+            let db = buzz_db::Db::from_pool(pool.clone());
+            let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+                .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+                .expect("create closed-relay Redis pool");
+            let pubsub = Arc::new(
+                crate::test_support::bounded(
+                    "create closed-relay pubsub manager",
+                    buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone()),
+                )
+                .await
+                .expect("create closed-relay pubsub manager"),
+            );
+            let auth = buzz_auth::AuthService::new(config.auth.clone());
+            let search = buzz_search::SearchService::new(pool.clone());
+            let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+                db.clone(),
+                buzz_workflow::WorkflowConfig::default(),
+            ));
+            let media_config = config.media.clone();
+            let media_storage = crate::test_support::bounded(
+                "create closed-relay media storage",
+                tokio::task::spawn_blocking(move || buzz_media::MediaStorage::new(&media_config)),
+            )
+            .await
+            .expect("create closed-relay media storage task")
+            .expect("create closed-relay media storage");
+            let (state, audit_shutdown) = AppState::new(
+                config,
+                db,
+                redis_pool,
+                None::<buzz_audit::AuditService>,
+                pubsub,
+                auth,
+                search,
+                workflow_engine,
+                Keys::generate(),
+                media_storage,
+            );
+            (Arc::new(state), audit_shutdown, pool)
+        }
+
+        async fn authenticated_conn(
+            state: &Arc<AppState>,
+            tenant: &TenantContext,
+            keys: &Keys,
+        ) -> (
+            Arc<crate::connection::ConnectionState>,
+            mpsc::Receiver<axum::extract::ws::Message>,
+            mpsc::Receiver<axum::extract::ws::Message>,
+        ) {
+            let (tx, data_rx) = mpsc::channel(16);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
+            let cancel = CancellationToken::new();
+            let subscriptions = Arc::new(Mutex::new(HashMap::new()));
+            let conn_id = Uuid::new_v4();
+            let conn = Arc::new(crate::connection::ConnectionState {
+                conn_id,
+                tenant: tenant.clone(),
+                remote_addr: "127.0.0.1:1234".parse().expect("test socket address"),
+                auth_state: tokio::sync::RwLock::new(AuthState::Authenticated(AuthContext {
+                    pubkey: keys.public_key(),
+                    scopes: Scope::all_known(),
+                    channel_ids: None,
+                    auth_method: AuthMethod::Nip42,
+                    agent_owner_pubkey: None,
+                })),
+                subscriptions: Arc::clone(&subscriptions),
+                send_tx: tx,
+                ctrl_tx: ctrl_tx.clone(),
+                cancel,
+                backpressure_count: Arc::new(AtomicU8::new(0)),
+                grace_limit: 3,
+            });
+            state.conn_manager.register(
+                conn_id,
+                conn.send_tx.clone(),
+                ctrl_tx,
+                None,
+                conn.cancel.clone(),
+                tenant.community(),
+                Arc::clone(&conn.backpressure_count),
+                subscriptions,
+                3,
+            );
+            state
+                .conn_manager
+                .set_authenticated_pubkey(conn_id, keys.public_key().to_bytes().to_vec());
+            (conn, data_rx, ctrl_rx)
+        }
+
         /// Real-PG, real-Redis state that hands back the audit shutdown handle so
         /// a test can drain queued audit entries before asserting on `audit_log`.
         /// `None` when Postgres or Redis is unavailable (test skips).
@@ -2101,6 +2683,20 @@ mod tests {
         }
 
         fn register_conn(state: &AppState, pubkey: Option<Vec<u8>>) -> Uuid {
+            register_conn_for_community(
+                state,
+                buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
+                pubkey,
+                None,
+            )
+        }
+
+        fn register_conn_for_community(
+            state: &AppState,
+            community: buzz_core::tenant::CommunityId,
+            pubkey: Option<Vec<u8>>,
+            admission_owner: Option<Vec<u8>>,
+        ) -> Uuid {
             let conn_id = Uuid::new_v4();
             let (tx, _rx) = mpsc::channel(1);
             let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
@@ -2110,15 +2706,41 @@ mod tests {
                 ctrl_tx,
                 None,
                 CancellationToken::new(),
-                buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
+                community,
                 Arc::new(AtomicU8::new(0)),
                 Arc::new(Mutex::new(HashMap::new())),
                 3,
             );
             if let Some(pk) = pubkey {
-                state.conn_manager.set_authenticated_pubkey(conn_id, pk);
+                state
+                    .conn_manager
+                    .set_authenticated_identity(conn_id, pk, admission_owner);
             }
             conn_id
+        }
+
+        async fn insert_relay_member_rows(
+            pool: &sqlx::PgPool,
+            community_uuid: Uuid,
+            rows: &[(String, String)],
+        ) {
+            assert!(!rows.is_empty(), "test fixture needs at least one member");
+            let community_ids = vec![community_uuid; rows.len()];
+            let pubkeys: Vec<_> = rows.iter().map(|(pubkey, _)| pubkey.clone()).collect();
+            let roles: Vec<_> = rows.iter().map(|(_, role)| role.clone()).collect();
+            crate::test_support::bounded(
+                "insert relay membership batch",
+                sqlx::query(
+                    "INSERT INTO relay_members (community_id, pubkey, role) \
+                     SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::text[])",
+                )
+                .bind(&community_ids)
+                .bind(&pubkeys)
+                .bind(&roles)
+                .execute(pool),
+            )
+            .await
+            .expect("insert relay membership batch");
         }
 
         fn channel_event(channel_id: Option<Uuid>) -> StoredEvent {
@@ -2126,6 +2748,352 @@ mod tests {
                 .sign_with_keys(&Keys::generate())
                 .expect("sign event");
             StoredEvent::new(event, channel_id)
+        }
+
+        fn synthetic_pubkey(index: u64) -> Vec<u8> {
+            let mut pubkey = [0u8; 32];
+            pubkey[24..].copy_from_slice(&index.to_be_bytes());
+            pubkey.to_vec()
+        }
+
+        /// Production-bound closed-relay regression: after the real writer
+        /// row is deleted, every live read/write seam and the fan-out
+        /// chokepoint must deny the already-authenticated principal.
+        async fn closed_relay_membership_removal_denies_req_count_event_and_fanout_impl() {
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("closed-revocation-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert closed-relay community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert closed-relay community");
+                crate::test_support::bounded(
+                    "insert closed-relay membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert closed-relay membership");
+
+                let tenant = TenantContext::resolved(community, &host);
+                let (sweep_conn, _sweep_rx, mut sweep_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                assert_eq!(
+                    state.revalidate_live_relay_memberships().await,
+                    0,
+                    "a current writer membership must keep the idle socket open"
+                );
+                crate::test_support::bounded(
+                    "remove closed-relay membership",
+                    sqlx::query(
+                        "DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("remove closed-relay membership");
+                assert_eq!(
+                    state.revalidate_live_relay_memberships().await,
+                    1,
+                    "the writer-backed sweep must close an idle revoked socket"
+                );
+                assert!(sweep_conn.cancel.is_cancelled());
+                assert!(
+                    matches!(sweep_ctrl.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+                    "a background sweep closes the socket without an unsolicited event ACK"
+                );
+                state.conn_manager.deregister(sweep_conn.conn_id);
+
+                let (req_conn, _req_rx, mut req_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                crate::test_support::bounded(
+                    "handle revoked REQ",
+                    crate::handlers::req::handle_req(
+                        "revoked-req".to_owned(),
+                        vec![Filter::new().kinds([Kind::TextNote])],
+                        vec![None],
+                        req_conn,
+                        Arc::clone(&state),
+                    ),
+                )
+                .await;
+                assert!(
+                    matches!(req_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+                );
+
+                let (count_conn, _count_rx, mut count_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                crate::test_support::bounded(
+                    "handle revoked COUNT",
+                    crate::handlers::count::handle_count(
+                        "revoked-count".to_owned(),
+                        vec![Filter::new().kinds([Kind::TextNote])],
+                        count_conn,
+                        Arc::clone(&state),
+                    ),
+                )
+                .await;
+                assert!(
+                    matches!(count_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("CLOSED"))
+                );
+
+                let (event_conn, _event_rx, mut event_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                let event = EventBuilder::new(Kind::TextNote, "revoked")
+                    .sign_with_keys(&keys)
+                    .expect("sign event");
+                crate::test_support::bounded(
+                    "handle revoked EVENT",
+                    crate::handlers::event::handle_event(event, event_conn, Arc::clone(&state)),
+                )
+                .await;
+                assert!(
+                    matches!(event_ctrl.try_recv(), Ok(axum::extract::ws::Message::Text(text)) if text.contains("OK") && text.contains("false"))
+                );
+
+                let (fanout_conn, _fanout_rx, _fanout_ctrl) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                let sub_id = "revoked-fanout".to_owned();
+                state.sub_registry.register_scoped(
+                    community,
+                    fanout_conn.conn_id,
+                    sub_id.clone(),
+                    vec![Filter::new()],
+                    None,
+                );
+                let stored = channel_event(None);
+                let matches = state.sub_registry.fan_out_scoped(community, &stored);
+                assert_eq!(matches, vec![(fanout_conn.conn_id, sub_id.clone())]);
+                let filtered = crate::test_support::bounded(
+                    "filter revoked fanout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
+                assert!(
+                    filtered.is_empty(),
+                    "revoked identity must be removed at fan-out"
+                );
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        async fn self_leave_not_found_ack_wins_over_a_concurrent_revoked_event_impl() {
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("closed-leave-race-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert leave-race community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert leave-race community");
+                crate::test_support::bounded(
+                    "insert leave-race membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert leave-race membership");
+
+                let tenant = TenantContext::resolved(community, &host);
+                let (conn, _data_rx, mut ctrl_rx) =
+                    authenticated_conn(&state, &tenant, &keys).await;
+                let leave_hook = Arc::new(crate::handlers::ingest::RelayLeaveTestHook {
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                });
+                crate::handlers::ingest::install_relay_leave_test_hook(Some(Arc::clone(
+                    &leave_hook,
+                )))
+                .await;
+
+                let leave_event =
+                    EventBuilder::new(Kind::Custom(KIND_NIP43_LEAVE_REQUEST as u16), "")
+                        .tags([Tag::parse(["-"]).expect("protected leave tag")])
+                        .sign_with_keys(&keys)
+                        .expect("sign leave event");
+                let leave_event_id = leave_event.id.to_hex();
+                let leave_task = tokio::spawn(crate::handlers::event::handle_event(
+                    leave_event,
+                    Arc::clone(&conn),
+                    Arc::clone(&state),
+                ));
+
+                crate::test_support::bounded(
+                    "wait for leave delete seam",
+                    leave_hook.entered.notified(),
+                )
+                .await;
+                crate::test_support::bounded(
+                    "delete leave-race membership",
+                    sqlx::query(
+                        "DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("delete leave-race membership");
+
+                // This request observes the same real writer deletion while
+                // the leave handler still owns the per-connection fence. It
+                // must wait for the leave finalizer instead of cancelling the
+                // socket ahead of its correlated event response.
+                let revoked_event = EventBuilder::new(Kind::TextNote, "raced")
+                    .sign_with_keys(&keys)
+                    .expect("sign raced event");
+                let revoked_task = tokio::spawn(crate::handlers::event::handle_event(
+                    revoked_event,
+                    Arc::clone(&conn),
+                    Arc::clone(&state),
+                ));
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                assert!(
+                    !conn.cancel.is_cancelled(),
+                    "the concurrent revoked request must remain behind the leave fence"
+                );
+                assert!(
+                    matches!(
+                        ctrl_rx.try_recv(),
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    ),
+                    "no request response may precede the leave finalizer"
+                );
+
+                leave_hook.release.notify_one();
+                crate::test_support::bounded("join self-leave handler", leave_task)
+                    .await
+                    .expect("self-leave handler task");
+                crate::handlers::ingest::install_relay_leave_test_hook(None).await;
+                crate::test_support::bounded("join raced event handler", revoked_task)
+                    .await
+                    .expect("raced event handler task");
+
+                let frame = ctrl_rx.try_recv().expect("leave race ACK is queued");
+                let axum::extract::ws::Message::Text(text) = frame else {
+                    panic!("expected leave race OK frame");
+                };
+                let frame: serde_json::Value =
+                    serde_json::from_str(text.as_str()).expect("leave race frame JSON");
+                assert_eq!(frame[0], "OK");
+                assert_eq!(frame[1], leave_event_id);
+                assert_eq!(frame[2], false);
+                assert_eq!(
+                    frame[3],
+                    crate::handlers::ingest::RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE
+                );
+                assert!(
+                    matches!(
+                        ctrl_rx.try_recv(),
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    ),
+                    "the raced request must not append a second event ACK"
+                );
+                assert!(
+                    conn.cancel.is_cancelled(),
+                    "leave finalizer policy-closes origin"
+                );
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn event_membership_admission_times_out_before_event_work() {
+            let mut state = test_state().await;
+            let state_mut = Arc::get_mut(&mut state).expect("test state has one owner");
+            Arc::make_mut(&mut state_mut.config).require_relay_membership = true;
+
+            let community = buzz_core::tenant::CommunityId::from_uuid(Uuid::nil());
+            let tenant = TenantContext::resolved(community, "event-admission-timeout.test");
+            let keys = Keys::generate();
+            let (conn, _data_rx, mut ctrl_rx) = authenticated_conn(&state, &tenant, &keys).await;
+            let hook = Arc::new(crate::handlers::event::EventMembershipTestHook {
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            crate::handlers::event::install_event_membership_test_hook(Some(Arc::clone(&hook)))
+                .await;
+
+            let event = EventBuilder::new(Kind::TextNote, "stalled admission")
+                .sign_with_keys(&keys)
+                .expect("sign event");
+            let event_id = event.id.to_hex();
+            let started = std::time::Instant::now();
+            let task = tokio::spawn(crate::handlers::event::handle_event(
+                event,
+                Arc::clone(&conn),
+                Arc::clone(&state),
+            ));
+
+            crate::test_support::bounded(
+                "enter event membership test hook",
+                hook.entered.notified(),
+            )
+            .await;
+            crate::test_support::bounded("join timed-out EVENT handler", task)
+                .await
+                .expect("timed-out EVENT handler task");
+            crate::handlers::event::install_event_membership_test_hook(None).await;
+
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(1),
+                "EVENT admission must not wait for the stalled writer read"
+            );
+            let frame = ctrl_rx.try_recv().expect("timed-out EVENT rejection");
+            assert!(matches!(
+                frame,
+                axum::extract::ws::Message::Text(ref text)
+                    if text.contains(&event_id)
+                        && text.contains("OK")
+                        && text.contains("false")
+            ));
+            assert!(
+                conn.cancel.is_cancelled(),
+                "failed admission policy-closes the socket"
+            );
         }
 
         #[tokio::test]
@@ -2351,6 +3319,333 @@ mod tests {
             )
             .await;
             assert_eq!(out, matches);
+        }
+
+        /// A writer lock held by an independent PostgreSQL session must make
+        /// the real fan-out chokepoint fail closed at its two-second absolute
+        /// deadline. Keeping the lock until the filter returns also proves
+        /// that the test exercises the writer-backed query rather than a
+        /// test-only stub or an eventually consistent cache.
+        async fn fanout_membership_writer_timeout_fails_closed_impl() {
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("fanout-timeout-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert fanout-timeout community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-timeout community");
+                crate::test_support::bounded(
+                    "insert fanout-timeout membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-timeout membership");
+
+                let tenant = TenantContext::resolved(community, &host);
+                let (conn, _data_rx, _ctrl_rx) = authenticated_conn(&state, &tenant, &keys).await;
+                let sub_id = "fanout-timeout".to_owned();
+                state.sub_registry.register_scoped(
+                    community,
+                    conn.conn_id,
+                    sub_id.clone(),
+                    vec![Filter::new()],
+                    None,
+                );
+                let stored = channel_event(None);
+                let matches = state.sub_registry.fan_out_scoped(community, &stored);
+                assert_eq!(matches, vec![(conn.conn_id, sub_id.clone())]);
+
+                let mut lock_tx = crate::test_support::bounded(
+                    "begin fanout-timeout lock transaction",
+                    body_pool.begin(),
+                )
+                .await
+                .expect("begin fanout-timeout lock transaction");
+                crate::test_support::bounded(
+                    "lock relay_members for fanout-timeout",
+                    sqlx::query("LOCK TABLE relay_members IN ACCESS EXCLUSIVE MODE")
+                        .execute(&mut *lock_tx),
+                )
+                .await
+                .expect("lock relay_members for fanout-timeout");
+
+                let started = std::time::Instant::now();
+                let filtered = crate::test_support::bounded(
+                    "filter fanout after writer timeout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
+                let elapsed = started.elapsed();
+                assert!(
+                    filtered.is_empty(),
+                    "a stalled writer must drop the complete fan-out batch"
+                );
+                assert!(
+                    elapsed >= std::time::Duration::from_millis(1_500),
+                    "writer lock did not hold the production query: {elapsed:?}"
+                );
+                assert!(
+                    elapsed < std::time::Duration::from_millis(2_700),
+                    "writer timeout exceeded the two-second fan-out budget: {elapsed:?}"
+                );
+                drop(lock_tx);
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        /// Saturating the fan-out semaphore must reject a batch immediately.
+        /// The held PostgreSQL table lock makes a missing semaphore guard
+        /// observable: a regression that reaches the writer would wait for
+        /// the two-second query deadline instead of returning promptly.
+        async fn fanout_membership_overload_fails_closed_impl() {
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("fanout-overload-{community_uuid}.example");
+            let keys = Keys::generate();
+            let pubkey_hex = keys.public_key().to_hex();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert fanout-overload community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-overload community");
+                crate::test_support::bounded(
+                    "insert fanout-overload membership",
+                    sqlx::query(
+                        "INSERT INTO relay_members (community_id, pubkey, role) \
+                         VALUES ($1, $2, 'member')",
+                    )
+                    .bind(community_uuid)
+                    .bind(&pubkey_hex)
+                    .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-overload membership");
+
+                let tenant = TenantContext::resolved(community, &host);
+                let (conn, _data_rx, _ctrl_rx) = authenticated_conn(&state, &tenant, &keys).await;
+                let sub_id = "fanout-overload".to_owned();
+                state.sub_registry.register_scoped(
+                    community,
+                    conn.conn_id,
+                    sub_id.clone(),
+                    vec![Filter::new()],
+                    None,
+                );
+                let stored = channel_event(None);
+                let matches = state.sub_registry.fan_out_scoped(community, &stored);
+                assert_eq!(matches, vec![(conn.conn_id, sub_id.clone())]);
+
+                let permits = state.relay_membership_fanout_semaphore.available_permits();
+                assert!(permits > 0, "fan-out semaphore must have capacity");
+                let all_permits = state
+                    .relay_membership_fanout_semaphore
+                    .clone()
+                    .acquire_many_owned(permits as u32)
+                    .await
+                    .expect("acquire all fan-out permits");
+
+                let mut lock_tx = crate::test_support::bounded(
+                    "begin fanout-overload lock transaction",
+                    body_pool.begin(),
+                )
+                .await
+                .expect("begin fanout-overload lock transaction");
+                crate::test_support::bounded(
+                    "lock relay_members for fanout-overload",
+                    sqlx::query("LOCK TABLE relay_members IN ACCESS EXCLUSIVE MODE")
+                        .execute(&mut *lock_tx),
+                )
+                .await
+                .expect("lock relay_members for fanout-overload");
+
+                let started = std::time::Instant::now();
+                let filtered = crate::test_support::bounded(
+                    "filter overloaded fanout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
+                let elapsed = started.elapsed();
+                assert!(
+                    filtered.is_empty(),
+                    "an overloaded fan-out batch must fail closed"
+                );
+                assert!(
+                    elapsed < std::time::Duration::from_millis(500),
+                    "semaphore exhaustion reached the locked writer: {elapsed:?}"
+                );
+                drop(lock_tx);
+                drop(all_permits);
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        /// A healthy writer-backed lookup must preserve all recipients across
+        /// the 512-key SQL chunk boundary, allow a verified NIP-OA owner, and
+        /// still enforce the receiver-side community label.
+        async fn fanout_membership_healthy_large_batch_impl() {
+            let (mut state, audit_shutdown, pool) = closed_membership_state().await;
+            let state_mut = Arc::get_mut(&mut state).expect("test state has one owner");
+            let config = Arc::make_mut(&mut state_mut.config);
+            config.allow_nip_oa_auth = true;
+            config.max_connections = 1_024;
+
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let foreign_community = buzz_core::tenant::CommunityId::from_uuid(Uuid::new_v4());
+            let host = format!("fanout-large-{community_uuid}.example");
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert fanout-large community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert fanout-large community");
+
+                let mut direct_pubkeys = Vec::with_capacity(513);
+                let mut member_rows = Vec::with_capacity(514);
+                for index in 0..513u64 {
+                    let pubkey = synthetic_pubkey(index);
+                    member_rows.push((hex::encode(&pubkey), "member".to_owned()));
+                    direct_pubkeys.push(pubkey);
+                }
+                let owner = synthetic_pubkey(10_000);
+                member_rows.push((hex::encode(&owner), "owner".to_owned()));
+                insert_relay_member_rows(&body_pool, community_uuid, &member_rows).await;
+
+                let mut matches = Vec::with_capacity(515);
+                let mut direct_connections = Vec::with_capacity(direct_pubkeys.len());
+                for (index, pubkey) in direct_pubkeys.iter().enumerate() {
+                    let conn =
+                        register_conn_for_community(&state, community, Some(pubkey.clone()), None);
+                    direct_connections.push(conn);
+                    matches.push((conn, format!("member-{index}")));
+                }
+
+                let agent = synthetic_pubkey(10_001);
+                let agent_conn =
+                    register_conn_for_community(&state, community, Some(agent), Some(owner));
+                matches.push((agent_conn, "owner-admitted-agent".to_owned()));
+
+                // This connection uses a pubkey that is a current member of
+                // community A, but its receiver-side tenant is B. It must be
+                // removed before the roster lookup can authorize it.
+                let foreign_conn = register_conn_for_community(
+                    &state,
+                    foreign_community,
+                    Some(direct_pubkeys[0].clone()),
+                    None,
+                );
+                matches.push((foreign_conn, "foreign-tenant".to_owned()));
+
+                let stored = channel_event(None);
+                let filtered = crate::test_support::bounded(
+                    "filter healthy large fanout",
+                    filter_fanout_by_access(&state, community, &stored, matches, None),
+                )
+                .await;
+
+                assert_eq!(
+                    filtered.len(),
+                    direct_connections.len() + 1,
+                    "all direct members and the owner-admitted agent must survive"
+                );
+                assert!(
+                    direct_connections
+                        .iter()
+                        .all(|conn| filtered.iter().any(|(id, _)| id == conn)),
+                    "a direct member was lost across the 512-key batch boundary"
+                );
+                assert!(
+                    filtered.iter().any(|(id, _)| *id == agent_conn),
+                    "a verified NIP-OA owner admission must survive the batch lookup"
+                );
+                assert!(
+                    filtered.iter().all(|(id, _)| *id != foreign_conn),
+                    "a connection bound to another tenant must be dropped"
+                );
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
+        // Keep these production-bound regressions in the PostgreSQL lane's
+        // discoverable namespace while leaving their implementation helpers
+        // alongside the fan-out seams they exercise.
+        mod postgres_tests {
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn closed_relay_membership_removal_denies_req_count_event_and_fanout() {
+                super::closed_relay_membership_removal_denies_req_count_event_and_fanout_impl()
+                    .await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn self_leave_not_found_ack_wins_over_a_concurrent_revoked_event() {
+                super::self_leave_not_found_ack_wins_over_a_concurrent_revoked_event_impl().await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn fanout_membership_writer_timeout_fails_closed() {
+                super::fanout_membership_writer_timeout_fails_closed_impl().await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn fanout_membership_overload_fails_closed() {
+                super::fanout_membership_overload_fails_closed_impl().await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn fanout_membership_healthy_large_batch() {
+                super::fanout_membership_healthy_large_batch_impl().await;
+            }
         }
     }
 

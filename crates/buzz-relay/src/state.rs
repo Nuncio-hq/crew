@@ -1,6 +1,6 @@
 //! Shared application state — Arc-wrapped, shared across all connections.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -9,7 +9,11 @@ use std::time::Instant;
 use axum::body::Bytes;
 use axum::extract::ws::{Message as WsMessage, Utf8Bytes as WsUtf8Bytes};
 use dashmap::DashMap;
-use futures_util::future::join_all;
+use futures_util::{
+    future::join_all,
+    stream::{FuturesUnordered, StreamExt},
+};
+use thiserror::Error;
 use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -36,22 +40,37 @@ use crate::subscription::SubscriptionRegistry;
 
 pub(crate) type ScopedPubkeyKey = (CommunityId, [u8; 32]);
 
+/// Stable wire reason used when the relay-membership admission boundary is
+/// revoked for an already-authenticated connection.
+pub(crate) const RELAY_MEMBERSHIP_REVOKED_REASON: &str = "restricted: not a relay member";
+
+/// Upper bound for simultaneous fan-out relay-membership batches. The actual
+/// state semaphore uses the lower of this cap and the configured handler
+/// concurrency so Redis bursts cannot queue an unbounded number of writer
+/// lookups, while the batch's identity bound remains `max_connections`.
+pub(crate) const RELAY_MEMBERSHIP_FANOUT_MAX_CONCURRENT_BATCHES: usize = 32;
+
 /// Why a community-bound socket is being asked to stop.
 ///
-/// Only deletion is externally attributed today. Ordinary lifecycle exits keep
-/// using cancellation alone and therefore retain the existing bare-close
-/// behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Ordinary lifecycle exits keep using cancellation alone and therefore retain
+/// the existing bare-close behavior. Policy actions carry their stable reason
+/// in the WebSocket close frame as a fallback when the control queue is full.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CommunityDisconnectReason {
     CommunityDeleted,
+    Policy { reason: String },
 }
 
 impl CommunityDisconnectReason {
-    pub(crate) fn close_message(self) -> WsMessage {
+    pub(crate) fn close_message(&self) -> WsMessage {
         match self {
             Self::CommunityDeleted => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
                 code: axum::extract::ws::close_code::POLICY,
                 reason: WsUtf8Bytes::from_static("community deleted"),
+            })),
+            Self::Policy { reason } => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                code: axum::extract::ws::close_code::POLICY,
+                reason: WsUtf8Bytes::from(reason.clone()),
             })),
         }
     }
@@ -76,6 +95,12 @@ impl CommunityConnectionControl {
 
     pub(crate) fn disconnect_reason(&self) -> watch::Receiver<Option<CommunityDisconnectReason>> {
         self.reason_tx.subscribe()
+    }
+
+    pub(crate) fn disconnect_reason_sender(
+        &self,
+    ) -> watch::Sender<Option<CommunityDisconnectReason>> {
+        self.reason_tx.clone()
     }
 
     fn disconnect_community(&self) {
@@ -107,6 +132,18 @@ struct ConnEntry {
     backpressure_count: Arc<AtomicU8>,
     subscriptions: ConnectionSubscriptions,
     authenticated_pubkey: Arc<std::sync::RwLock<Option<Vec<u8>>>>,
+    /// Owner pubkey recorded as admission provenance for NIP-OA delegated
+    /// sessions, if any. This is populated from the verified admission result,
+    /// never from the durable `users.agent_owner_pubkey` metadata backfill.
+    authenticated_agent_owner: Arc<std::sync::RwLock<Option<Vec<u8>>>>,
+    /// Serializes durable membership revocation with live-session cleanup for
+    /// this socket. A self-leave acquires the fence before deleting its roster
+    /// row; sweeps and control consumers skip sockets already in flight.
+    revocation_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Sender paired with the writer's close-reason receiver. Set immediately
+    /// after registration, before any receive task starts, so a policy action
+    /// can still produce a typed close when `ctrl_tx` is full.
+    disconnect_reason_tx: Option<watch::Sender<Option<CommunityDisconnectReason>>>,
     grace_limit: u8,
 }
 
@@ -282,6 +319,9 @@ impl ConnectionManager {
                 backpressure_count,
                 subscriptions,
                 authenticated_pubkey: Arc::new(std::sync::RwLock::new(None)),
+                authenticated_agent_owner: Arc::new(std::sync::RwLock::new(None)),
+                revocation_lock: Arc::new(tokio::sync::Mutex::new(())),
+                disconnect_reason_tx: None,
                 grace_limit,
             },
         );
@@ -304,12 +344,46 @@ impl ConnectionManager {
         self.connections.remove(&conn_id);
     }
 
+    /// Return whether a connection is still registered. Revocation request
+    /// handling uses this to distinguish a live socket, whose fence must be
+    /// respected, from a test or teardown sender that is no longer managed.
+    pub(crate) fn has_connection(&self, conn_id: Uuid) -> bool {
+        self.connections.contains_key(&conn_id)
+    }
+
     /// Record the authenticated pubkey for a connection after NIP-42 succeeds.
     pub fn set_authenticated_pubkey(&self, conn_id: Uuid, pubkey_bytes: Vec<u8>) {
+        self.set_authenticated_identity(conn_id, pubkey_bytes, None);
+    }
+
+    /// Record the authenticated principal and its optional NIP-OA owner for a
+    /// connection after NIP-42 succeeds.
+    pub fn set_authenticated_identity(
+        &self,
+        conn_id: Uuid,
+        pubkey_bytes: Vec<u8>,
+        agent_owner_pubkey: Option<Vec<u8>>,
+    ) {
         if let Some(entry) = self.connections.get(&conn_id) {
             if let Ok(mut slot) = entry.authenticated_pubkey.write() {
                 *slot = Some(pubkey_bytes);
             }
+            if let Ok(mut slot) = entry.authenticated_agent_owner.write() {
+                *slot = agent_owner_pubkey;
+            }
+        }
+    }
+
+    /// Attach the writer's close-reason channel to a registered connection.
+    /// Registration is completed before receive tasks start, so policy close
+    /// actions cannot race an uninitialized sender in production.
+    pub(crate) fn set_disconnect_reason_sender(
+        &self,
+        conn_id: Uuid,
+        reason_tx: watch::Sender<Option<CommunityDisconnectReason>>,
+    ) {
+        if let Some(mut entry) = self.connections.get_mut(&conn_id) {
+            entry.disconnect_reason_tx = Some(reason_tx);
         }
     }
 
@@ -343,6 +417,67 @@ impl ConnectionManager {
             .collect()
     }
 
+    /// Return live connection IDs whose authenticated principal is `pubkey` or
+    /// whose verified NIP-OA owner is `pubkey` in one community. Removing a
+    /// human relay member must also close delegated agent sessions that were
+    /// admitted through that owner's membership row.
+    pub fn connection_ids_for_pubkey_or_owner_in_community(
+        &self,
+        community_id: CommunityId,
+        pubkey_bytes: &[u8],
+    ) -> Vec<Uuid> {
+        self.connections
+            .iter()
+            .filter_map(|entry| {
+                if entry.community_id != community_id {
+                    return None;
+                }
+                let direct_match = entry
+                    .authenticated_pubkey
+                    .read()
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .as_ref()
+                            .map(|stored| stored.as_slice() == pubkey_bytes)
+                    })
+                    .unwrap_or(false);
+                let owner_match = entry
+                    .authenticated_agent_owner
+                    .read()
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .as_ref()
+                            .map(|stored| stored.as_slice() == pubkey_bytes)
+                    })
+                    .unwrap_or(false);
+                (direct_match || owner_match).then_some(*entry.key())
+            })
+            .collect()
+    }
+
+    /// Snapshot authenticated identities and their owner-admission provenance
+    /// for one community. The snapshot is intentionally local: the caller
+    /// rechecks each identity against the writer before deciding whether to
+    /// revoke it, so a Redis miss cannot leave an idle socket indefinitely.
+    pub(crate) fn authenticated_identities_in_community(
+        &self,
+        community_id: CommunityId,
+    ) -> Vec<(Uuid, Vec<u8>, Option<Vec<u8>>)> {
+        self.connections
+            .iter()
+            .filter_map(|entry| {
+                if entry.community_id != community_id {
+                    return None;
+                }
+                let pubkey = entry.authenticated_pubkey.read().ok()?.clone()?;
+                let owner = entry.authenticated_agent_owner.read().ok()?.clone();
+                Some((*entry.key(), pubkey, owner))
+            })
+            .collect()
+    }
+
     /// Return the authenticated pubkey recorded for a connection, if any.
     pub fn pubkey_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
         self.connections
@@ -350,16 +485,135 @@ impl ConnectionManager {
             .and_then(|entry| entry.authenticated_pubkey.read().ok()?.clone())
     }
 
+    /// Return the NIP-OA admission owner recorded for a connection, if any.
+    pub fn admission_owner_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
+        self.connections
+            .get(&conn_id)
+            .and_then(|entry| entry.authenticated_agent_owner.read().ok()?.clone())
+    }
+
+    /// Backward-compatible alias for callers that used the old field name.
+    /// The value is admission provenance, not the receipt/observer metadata
+    /// stored in `users.agent_owner_pubkey`.
+    pub fn agent_owner_for_conn(&self, conn_id: Uuid) -> Option<Vec<u8>> {
+        self.admission_owner_for_conn(conn_id)
+    }
+
+    /// Try to claim the per-connection revocation fence without waiting.
+    ///
+    /// Membership sweeps and Redis control consumers use this form so one
+    /// slow self-leave cannot make another bounded sweep wait indefinitely.
+    /// The returned owned guard keeps the fence held across async cleanup.
+    pub(crate) fn try_acquire_revocation_lock(
+        &self,
+        conn_id: Uuid,
+    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock = self
+            .connections
+            .get(&conn_id)
+            .map(|entry| Arc::clone(&entry.revocation_lock))?;
+        lock.try_lock_owned().ok()
+    }
+
+    /// Acquire the per-connection revocation fence with a bounded wait.
+    ///
+    /// The self-leave path claims this before its durable row deletion. A
+    /// competing revocation therefore either finishes first (and the leave
+    /// rechecks membership) or waits no longer than the caller's deadline.
+    pub(crate) async fn acquire_revocation_lock(
+        &self,
+        conn_id: Uuid,
+        timeout: std::time::Duration,
+    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock = self
+            .connections
+            .get(&conn_id)
+            .map(|entry| Arc::clone(&entry.revocation_lock))?;
+        tokio::time::timeout(timeout, lock.lock_owned()).await.ok()
+    }
+
+    /// Queue a control frame without applying data-buffer backpressure.
+    pub(crate) fn send_control(&self, conn_id: Uuid, msg: WsMessage) -> bool {
+        self.connections
+            .get(&conn_id)
+            .is_some_and(|entry| entry.ctrl_tx.try_send(msg).is_ok())
+    }
+
+    /// Queue one control frame, waiting briefly for a stalled writer to make
+    /// room. Revocation ACKs use this path because a best-effort `try_send`
+    /// can otherwise make a successful self-leave look like a lost request.
+    /// The bounded deadline keeps a dead writer from holding the revocation
+    /// task forever; callers receive `false` and still cancel the socket.
+    pub(crate) async fn send_control_bounded(
+        &self,
+        conn_id: Uuid,
+        msg: WsMessage,
+        timeout: std::time::Duration,
+    ) -> bool {
+        let Some(tx) = self
+            .connections
+            .get(&conn_id)
+            .map(|entry| entry.ctrl_tx.clone())
+        else {
+            return false;
+        };
+
+        match tx.try_send(msg) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Full(msg)) => {
+                match tokio::time::timeout(timeout, tx.reserve()).await {
+                    Ok(Ok(permit)) => {
+                        permit.send(msg);
+                        true
+                    }
+                    Ok(Err(_)) | Err(_) => false,
+                }
+            }
+        }
+    }
+
+    /// Set a policy close reason without cancelling the connection yet.
+    /// Callers that need to remove subscriptions first use this as the first
+    /// step, then call [`Self::cancel_connection`] after all final frames are
+    /// queued.
+    pub(crate) fn mark_policy_close(&self, conn_id: Uuid, reason: &str) -> bool {
+        let Some(entry) = self.connections.get(&conn_id) else {
+            return false;
+        };
+        if let Some(reason_tx) = &entry.disconnect_reason_tx {
+            reason_tx.send_replace(Some(CommunityDisconnectReason::Policy {
+                reason: reason.to_owned(),
+            }));
+        }
+        true
+    }
+
+    /// Mark an already-authenticated connection as revoked from the relay
+    /// roster. The caller owns cancellation ordering so it can first evict all
+    /// subscriptions and queue their correlated `CLOSED` frames.
+    pub(crate) fn mark_relay_membership_revoked(&self, conn_id: Uuid) -> bool {
+        self.mark_policy_close(conn_id, RELAY_MEMBERSHIP_REVOKED_REASON)
+    }
+
+    /// Cancel one live connection after its final control frames are queued.
+    pub(crate) fn cancel_connection(&self, conn_id: Uuid) -> bool {
+        self.connections.get(&conn_id).is_some_and(|entry| {
+            entry.cancel.cancel();
+            true
+        })
+    }
+
     /// Disconnect every live connection authenticated as `pubkey` **in
     /// `community`**, delivering a final `OK false` frame carrying `reason`
     /// before closing.
     ///
-    /// Used for live ban enforcement (COMMUNITY_MODERATION_PLAN.md §0 decision
-    /// 4): a ban must take effect immediately on existing sessions, not just at
-    /// the next auth. The frame is sent on the control channel, which the send
-    /// loop drains ahead of both queued data and the biased cancel branch, so
-    /// the client learns *why* it was dropped. `event_id` labels the `OK` (the
-    /// ban has no triggering client event, so a synthetic all-zero id is used).
+    /// Used for live ban and relay-membership enforcement: the decision must
+    /// take effect immediately on existing sessions, not just at the next auth.
+    /// The frame is sent on the control channel, which the send loop drains
+    /// ahead of both queued data and the biased cancel branch, so the client
+    /// learns *why* it was dropped. `event_id` labels the `OK` (a decision with
+    /// no triggering client event uses a synthetic all-zero id).
     ///
     /// The `community` filter is the tenant fence: one pod holds sockets for
     /// many communities, and the same pubkey may be live in several. A ban in
@@ -382,8 +636,14 @@ impl ConnectionManager {
                 if entry.community_id != community {
                     continue;
                 }
-                // Best-effort delivery: a full control buffer still gets the
-                // close via cancel below, just without the reason frame.
+                // Set the policy close reason before cancellation. A full
+                // control buffer still gets a typed policy close from the
+                // writer instead of degrading to Close(None).
+                if let Some(reason_tx) = &entry.disconnect_reason_tx {
+                    reason_tx.send_replace(Some(CommunityDisconnectReason::Policy {
+                        reason: reason.to_owned(),
+                    }));
+                }
                 let _ = entry
                     .ctrl_tx
                     .try_send(WsMessage::Text(frame.clone().into()));
@@ -625,6 +885,390 @@ impl Default for ConnectionManager {
     }
 }
 
+/// Work captured while a relay-membership revocation is between its durable
+/// delete and its cross-pod publish. Subscriptions are removed before the
+/// publish so no new fan-out match can be created while propagation is in
+/// flight; final control frames and cancellation are applied afterwards.
+struct PendingPubkeyRevocation {
+    conn_id: Uuid,
+    excluded: bool,
+    removed: Vec<crate::subscription::RemovedSubscription>,
+    /// Held from before the durable mutation (self-leave) or from the first
+    /// live-session cleanup step (sweep/control command) through final frames
+    /// and cancellation.
+    _revocation_guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+/// Inputs owned by the NIP-43 self-leave operation while it is finalized.
+/// The guard is acquired before the durable membership delete and is consumed
+/// only after the origin ACK and policy close have been queued.
+pub(crate) struct SelfLeaveRevocation {
+    /// Originating connection excluded from the remote-style rejection path.
+    pub(crate) conn_id: Uuid,
+    /// Event-level success text returned when propagation succeeds.
+    pub(crate) success_message: String,
+    /// Per-connection fence held across durable delete and finalization.
+    pub(crate) revocation_guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+#[derive(Default)]
+struct RevocationOptions {
+    excluded_conn_id: Option<Uuid>,
+    leave_success_message: Option<String>,
+    held_conn_id: Option<(Uuid, tokio::sync::OwnedMutexGuard<()>)>,
+}
+
+type RelayMembershipIdentity = (CommunityId, Vec<u8>, Option<Vec<u8>>);
+type RelayMembershipGroup = (RelayMembershipIdentity, Vec<Uuid>);
+
+/// Keep one membership sweep finite even when a relay has many idle sockets.
+const RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES: usize = 512;
+/// Bound concurrent writer lookups so a sweep cannot consume the whole pool.
+const RELAY_MEMBERSHIP_SWEEP_CONCURRENCY: usize = 16;
+/// A single writer lookup must not hold a sweep slot indefinitely.
+const RELAY_MEMBERSHIP_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+/// Overall deadline for one bounded reconciliation pass.
+const RELAY_MEMBERSHIP_SWEEP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+/// A self-leave must never wait indefinitely for local cleanup of other
+/// sessions. Work that does not fit this window is left live for the durable
+/// membership sweep, which owns eventual cleanup from the writer-backed row.
+const RELAY_MEMBERSHIP_LEAVE_LOCAL_FINALIZATION_TIMEOUT: std::time::Duration =
+    RELAY_MEMBERSHIP_SWEEP_DEADLINE;
+
+/// Test-only gate placed at the production self-leave bulk-cleanup seam. It
+/// makes the origin ACK ordering falsifiable without requiring a large live
+/// connection registry or a slow external service.
+#[cfg(test)]
+pub(crate) struct SelfLeaveBulkTestHook {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static SELF_LEAVE_BULK_TEST_HOOK: std::sync::OnceLock<
+    tokio::sync::Mutex<Option<Arc<SelfLeaveBulkTestHook>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+/// Install or clear the test gate for the production self-leave bulk pass.
+pub(crate) async fn install_self_leave_bulk_test_hook(hook: Option<Arc<SelfLeaveBulkTestHook>>) {
+    let slot = SELF_LEAVE_BULK_TEST_HOOK.get_or_init(|| tokio::sync::Mutex::new(None));
+    *slot.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn maybe_stall_self_leave_bulk_for_test() {
+    let Some(slot) = SELF_LEAVE_BULK_TEST_HOOK.get() else {
+        return;
+    };
+    let hook = slot.lock().await.clone();
+    if let Some(hook) = hook {
+        hook.entered.notify_one();
+        hook.release.notified().await;
+    }
+}
+
+/// Test-only gate placed at the production detached-topic-release seam. It
+/// makes cancellation after registry detachment falsifiable without relying on
+/// a live Redis connection or an arbitrarily large subscription set.
+#[cfg(test)]
+pub(crate) struct DetachedTopicReleaseTestHook {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static DETACHED_TOPIC_RELEASE_TEST_HOOK: std::sync::OnceLock<
+    tokio::sync::Mutex<Option<Arc<DetachedTopicReleaseTestHook>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+/// Install or clear the test gate for detached subscription-topic release.
+pub(crate) async fn install_detached_topic_release_test_hook(
+    hook: Option<Arc<DetachedTopicReleaseTestHook>>,
+) {
+    let slot = DETACHED_TOPIC_RELEASE_TEST_HOOK.get_or_init(|| tokio::sync::Mutex::new(None));
+    *slot.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn maybe_stall_detached_topic_release_for_test() {
+    let Some(slot) = DETACHED_TOPIC_RELEASE_TEST_HOOK.get() else {
+        return;
+    };
+    let hook = slot.lock().await.clone();
+    if let Some(hook) = hook {
+        hook.entered.notify_one();
+        hook.release.notified().await;
+    }
+}
+
+/// Reserve half of every bounded pass for fresh identities whenever retry
+/// work and live identities coexist. A permanently failing writer lookup must
+/// therefore make progress through the fresh cursor ring instead of occupying
+/// the whole window forever.
+const RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET: usize = RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES / 2;
+/// A concurrent trigger gets one coalesced follow-up pass, then waits for the
+/// next periodic/reconnect trigger. This keeps work finite during a storm.
+const RELAY_MEMBERSHIP_SWEEP_MAX_PASSES: usize = 2;
+/// A self-leave must claim its fence before deleting the durable row, but a
+/// stalled competing revocation must not hold the event handler forever. The
+/// leave handler's database phase is bounded separately; keep this wait longer
+/// than that phase plus the terminal control-frame budget so a request racing
+/// an owned leave never reaches its cancellation fallback first.
+pub(crate) const RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(12);
+/// The complete writer-backed self-leave operation, from its final membership
+/// read through durable deletion, must reach a terminal event response within
+/// this deadline while the per-connection revocation fence remains held.
+pub(crate) const RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
+/// A common EVENT admission read must not hold a receive task indefinitely
+/// while waiting for the writer-backed relay-membership roster.
+pub(crate) const RELAY_MEMBERSHIP_EVENT_ADMISSION_TIMEOUT: std::time::Duration =
+    RELAY_MEMBERSHIP_LOOKUP_TIMEOUT;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MembershipLookupOutcome {
+    Allowed,
+    Denied,
+    Failed,
+    TimedOut,
+}
+
+/// Results from one bounded lookup batch. Work that was never started because
+/// the overall deadline expired is retained alongside in-flight work so the
+/// next reconciliation pass can retry it.
+struct MembershipLookupBatch {
+    outcomes: Vec<(RelayMembershipIdentity, Vec<Uuid>, MembershipLookupOutcome)>,
+    unresolved: Vec<RelayMembershipGroup>,
+}
+
+/// Run a selected set of membership checks with both per-lookup and overall
+/// deadlines. Groups that time out or fail are returned as unresolved and are
+/// therefore retained in the next snapshot rather than being revoked.
+async fn run_bounded_membership_lookups<Lookup, CheckFuture, LookupError>(
+    groups: Vec<RelayMembershipGroup>,
+    lookup: Lookup,
+    per_lookup_timeout: std::time::Duration,
+    deadline: std::time::Duration,
+    concurrency: usize,
+) -> MembershipLookupBatch
+where
+    Lookup: Fn(CommunityId, Vec<u8>, Option<Vec<u8>>) -> CheckFuture,
+    CheckFuture: Future<Output = Result<bool, LookupError>>,
+{
+    if groups.is_empty() || concurrency == 0 || deadline.is_zero() {
+        return MembershipLookupBatch {
+            unresolved: groups,
+            outcomes: Vec::new(),
+        };
+    }
+
+    let all_groups = groups.clone();
+    let mut remaining = groups.into_iter();
+    let mut checks = FuturesUnordered::new();
+    let make_check = |(identity, conn_ids): (RelayMembershipIdentity, Vec<Uuid>)| {
+        let lookup = &lookup;
+        async move {
+            let (community_id, pubkey, owner) = identity.clone();
+            let outcome =
+                match tokio::time::timeout(per_lookup_timeout, lookup(community_id, pubkey, owner))
+                    .await
+                {
+                    Ok(Ok(true)) => MembershipLookupOutcome::Allowed,
+                    Ok(Ok(false)) => MembershipLookupOutcome::Denied,
+                    Ok(Err(_)) => MembershipLookupOutcome::Failed,
+                    Err(_) => MembershipLookupOutcome::TimedOut,
+                };
+            ((identity, conn_ids), outcome)
+        }
+    };
+
+    for _ in 0..concurrency {
+        let Some(group) = remaining.next() else {
+            break;
+        };
+        checks.push(make_check(group));
+    }
+
+    let deadline_at = Instant::now() + deadline;
+    let mut outcomes = Vec::new();
+    while !checks.is_empty() {
+        let remaining_deadline = deadline_at.saturating_duration_since(Instant::now());
+        if remaining_deadline.is_zero() {
+            break;
+        }
+        let next = tokio::time::timeout(remaining_deadline, checks.next()).await;
+        let Some(Some(((identity, conn_ids), outcome))) = next.ok() else {
+            break;
+        };
+        outcomes.push((identity, conn_ids, outcome));
+        if let Some(group) = remaining.next() {
+            checks.push(make_check(group));
+        }
+    }
+
+    let completed: HashSet<_> = outcomes
+        .iter()
+        .map(|(identity, _, _)| identity.clone())
+        .collect();
+    let unresolved = all_groups
+        .into_iter()
+        .filter(|(identity, _)| !completed.contains(identity))
+        .collect();
+    MembershipLookupBatch {
+        outcomes,
+        unresolved,
+    }
+}
+
+/// Coalesce overlapping revalidation triggers and run at most one bounded
+/// follow-up pass for a trigger that arrived while the first pass was active.
+async fn run_coalesced_membership_revalidation<Work, WorkFuture>(
+    lock: &tokio::sync::Mutex<()>,
+    pending: &AtomicBool,
+    mut work: Work,
+) -> usize
+where
+    Work: FnMut() -> WorkFuture,
+    WorkFuture: Future<Output = usize>,
+{
+    let Ok(_guard) = lock.try_lock() else {
+        pending.store(true, Ordering::SeqCst);
+        metrics::counter!("buzz_relay_membership_revalidation_coalesced_total").increment(1);
+        return 0;
+    };
+
+    let mut closed = 0;
+    for _ in 0..RELAY_MEMBERSHIP_SWEEP_MAX_PASSES {
+        pending.store(false, Ordering::SeqCst);
+        closed += work().await;
+        if !pending.swap(false, Ordering::SeqCst) {
+            break;
+        }
+    }
+    closed
+}
+
+/// Sort identity groups and select one fair, bounded window for a sweep.
+/// Advancing the cursor by the selected count makes a large roster rotate
+/// across passes instead of repeatedly checking the first registry entries.
+#[cfg(test)]
+fn select_bounded_membership_groups(
+    groups: Vec<RelayMembershipGroup>,
+    cursor: &AtomicU64,
+) -> Vec<(RelayMembershipIdentity, Vec<Uuid>)> {
+    select_bounded_membership_groups_with_limit(
+        groups,
+        cursor,
+        RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES,
+    )
+}
+
+/// Select up to `limit` groups from the sorted identity ring and advance the
+/// cursor by the selected window. Deferred groups are tracked separately by
+/// the caller, so cursor progress cannot strand work that a deadline skipped.
+fn select_bounded_membership_groups_with_limit(
+    mut groups: Vec<RelayMembershipGroup>,
+    cursor: &AtomicU64,
+    limit: usize,
+) -> Vec<(RelayMembershipIdentity, Vec<Uuid>)> {
+    if groups.is_empty() {
+        return Vec::new();
+    }
+    groups.sort_by(|left, right| left.0.cmp(&right.0));
+    let selected_count = groups.len().min(limit);
+    if selected_count == 0 {
+        return Vec::new();
+    }
+    let start = (cursor.fetch_add(selected_count as u64, Ordering::SeqCst) as usize) % groups.len();
+    (0..selected_count)
+        .map(|offset| groups[(start + offset) % groups.len()].clone())
+        .collect()
+}
+
+/// Choose retry work and fresh cursor work for one bounded sweep. Retry groups
+/// retain FIFO order, but they receive only a bounded share when fresh
+/// identities are available. This helper is shared by the production pass and
+/// its fairness regression so the guard cannot be removed without changing a
+/// falsifiable selection result.
+fn select_membership_revalidation_work(
+    grouped: &mut HashMap<RelayMembershipIdentity, Vec<Uuid>>,
+    queued: Vec<RelayMembershipGroup>,
+    cursor: &AtomicU64,
+) -> (Vec<RelayMembershipGroup>, Vec<RelayMembershipGroup>) {
+    let mut retry_candidates = Vec::new();
+    for (identity, _) in queued {
+        let Some(conn_ids) = grouped.remove(&identity) else {
+            continue;
+        };
+        retry_candidates.push((identity, conn_ids));
+    }
+
+    let retry_budget = if grouped.is_empty() {
+        RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES
+    } else {
+        RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET.max(1)
+    };
+    let retry_count = retry_candidates.len().min(retry_budget);
+    let mut selected = retry_candidates.drain(..retry_count).collect::<Vec<_>>();
+    let mut deferred = retry_candidates;
+    let fresh_limit = RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES.saturating_sub(selected.len());
+    let fresh_candidates = grouped.drain().collect::<Vec<_>>();
+    if fresh_limit > 0 && !fresh_candidates.is_empty() {
+        let fresh_selected = select_bounded_membership_groups_with_limit(
+            fresh_candidates.clone(),
+            cursor,
+            fresh_limit,
+        );
+        let selected_fresh_ids: HashSet<_> = fresh_selected
+            .iter()
+            .map(|(identity, _)| identity.clone())
+            .collect();
+        selected.extend(fresh_selected);
+        deferred.extend(
+            fresh_candidates
+                .into_iter()
+                .filter(|(identity, _)| !selected_fresh_ids.contains(identity)),
+        );
+    } else {
+        // The fresh ring is still live work even when retries consume the
+        // whole bounded window. Retain it behind the retry queue instead of
+        // dropping the identities that did not fit this pass.
+        deferred.extend(fresh_candidates);
+    }
+    (selected, deferred)
+}
+
+/// Bounded failure returned by a cluster-wide live revocation.
+#[derive(Debug, Error)]
+pub(crate) enum RevocationError {
+    /// Redis publication failed after the durable authorization mutation.
+    #[error("connection-control publication failed: {0}")]
+    Publish(#[from] buzz_pubsub::PubSubError),
+    /// Redis did not complete the publication before the bounded deadline.
+    #[error("connection-control publication timed out")]
+    PublishTimeout,
+    /// The initiating self-leave connection could not accept its event ACK
+    /// before the control-frame deadline. The socket is still policy-closed.
+    #[error("self-leave acknowledgement could not be queued before the deadline")]
+    AckDeliveryTimeout,
+}
+
+/// Result of the local finalization phase. The ACK bit is meaningful only for
+/// the self-leave variant; ordinary revocations use the policy-close fallback.
+struct PubkeyRevocationFinish {
+    closed: usize,
+    ack_delivered: bool,
+}
+
+/// A stalled Redis command must not hold local revocation finalization forever.
+const REVOCATION_REDIS_PUBLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A stalled control writer must not block membership revocation forever.
+const REVOCATION_CONTROL_SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Shared application state, cloned cheaply via inner `Arc` fields.
 #[derive(Clone)]
 pub struct AppState {
@@ -652,10 +1296,28 @@ pub struct AppState {
     pub community_revalidator_cancel: CancellationToken,
     /// Test/telemetry counter for archive disconnect publication attempts.
     pub community_disconnect_publish_attempts: Arc<AtomicU64>,
+    /// Single-flight fence for bounded relay-membership reconciliation.
+    pub relay_membership_revalidation_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Set by a reconnect/lag trigger that arrives while reconciliation is in
+    /// progress; the active pass consumes at most one coalesced follow-up.
+    pub relay_membership_revalidation_pending: Arc<AtomicBool>,
+    /// Cursor over the sorted identity groups, so a capped sweep eventually
+    /// examines every live principal instead of repeatedly favoring the first
+    /// connections returned by the registry.
+    pub relay_membership_revalidation_cursor: Arc<AtomicU64>,
+    /// Groups that a bounded membership sweep could not finish. The queue is
+    /// drained before a fresh cursor window and capped by the configured live
+    /// connection limit, so a slow writer cannot create unbounded retry work.
+    relay_membership_revalidation_pending_groups:
+        Arc<tokio::sync::Mutex<VecDeque<RelayMembershipGroup>>>,
     /// Semaphore limiting total concurrent connections.
     pub conn_semaphore: Arc<Semaphore>,
     /// Semaphore limiting concurrent message handler tasks.
     pub handler_semaphore: Arc<Semaphore>,
+    /// Semaphore limiting concurrent relay-membership authorization batches
+    /// used by fan-out. This is separate from the handler semaphore because
+    /// post-commit and Redis fan-out tasks do not hold a handler permit.
+    pub relay_membership_fanout_semaphore: Arc<Semaphore>,
     /// Semaphore limiting concurrent git subprocess operations across
     /// the whole relay. Bounds resource use; **not** writer
     /// serialization — that's the CAS at the manifest pointer (spec
@@ -801,6 +1463,8 @@ impl AppState {
     ) -> (Self, AuditShutdownHandle) {
         let max_connections = config.max_connections;
         let max_concurrent_handlers = config.max_concurrent_handlers;
+        let relay_membership_fanout_batches =
+            max_concurrent_handlers.clamp(1, RELAY_MEMBERSHIP_FANOUT_MAX_CONCURRENT_BATCHES);
         let search_arc = Arc::new(search);
 
         let audit_arc = audit.into().map(Arc::new);
@@ -879,8 +1543,17 @@ impl AppState {
             community_connections: Arc::new(CommunityConnectionRegistry::new()),
             community_revalidator_cancel: CancellationToken::new(),
             community_disconnect_publish_attempts: Arc::new(AtomicU64::new(0)),
+            relay_membership_revalidation_lock: Arc::new(tokio::sync::Mutex::new(())),
+            relay_membership_revalidation_pending: Arc::new(AtomicBool::new(false)),
+            relay_membership_revalidation_cursor: Arc::new(AtomicU64::new(0)),
+            relay_membership_revalidation_pending_groups: Arc::new(tokio::sync::Mutex::new(
+                VecDeque::new(),
+            )),
             conn_semaphore: Arc::new(Semaphore::new(max_connections)),
             handler_semaphore: Arc::new(Semaphore::new(max_concurrent_handlers)),
+            relay_membership_fanout_semaphore: Arc::new(Semaphore::new(
+                relay_membership_fanout_batches,
+            )),
             git_semaphore: Arc::new(Semaphore::new(git_max_concurrent_ops)),
             media_upload_semaphore: Arc::new(Semaphore::new(media_max_concurrent_uploads)),
             workflow_engine,
@@ -1173,55 +1846,524 @@ impl AppState {
         }
     }
 
-    /// Enforce a live ban cluster-wide: close this pod's sockets for `pubkey`
-    /// now (fenced to `tenant`'s community) and fan the same disconnect out to
-    /// every other pod over the conn-control Redis channel.
-    ///
-    /// This is the single entry point for live ban enforcement (decision 4:
-    /// "a ban takes effect immediately, everywhere, including live sessions").
-    /// Callers must not invoke the pod-local `conn_manager.disconnect_pubkey`
-    /// directly — doing so closes sockets only on the pod that processed the
-    /// ban and silently drops the cluster-wide half. Pairing both halves here
-    /// makes that mistake unrepresentable.
-    ///
-    /// Returns the number of sockets closed on *this* pod only — remote pods
-    /// close asynchronously and do not report back, so callers must not treat
-    /// the count as cluster-wide truth. The cross-pod publish is fire-and-forget
-    /// (mirrors [`Self::spawn_cache_invalidation`]): the DB ban row is the
-    /// durable backstop, so a dropped publish still refuses the banned member's
-    /// next auth and next write.
-    pub fn disconnect_pubkey_clusterwide(
+    /// Remove every subscription held by one connection and clear the
+    /// connection-local subscription map. The registry removal happens before
+    /// any revocation publication so both local fan-out and a raced REQ see an
+    /// empty live subscription set.
+    async fn detach_connection_subscriptions(
+        &self,
+        conn_id: Uuid,
+    ) -> Vec<crate::subscription::RemovedSubscription> {
+        // Acquire the connection-local map before removing the registry
+        // entry. If this future is cancelled while another handler owns the
+        // map lock, the registry remains intact and a later retry still owns
+        // the complete `RemovedSubscription` snapshot. Hold the guard across
+        // the synchronous registry removal so no REQ can repopulate the map
+        // between the two operations.
+        if let Some(subscriptions) = self.conn_manager.subscriptions_for(conn_id) {
+            let mut subscriptions = subscriptions.lock().await;
+            let removed = self.sub_registry.remove_connection(conn_id);
+            subscriptions.clear();
+            removed
+        } else {
+            self.sub_registry.remove_connection(conn_id)
+        }
+    }
+
+    /// Release the Redis topic retains belonging to a detached subscription
+    /// snapshot. This is kept separate from detachment so a self-leave can
+    /// queue its terminal event ACK and policy close before a large topic
+    /// cleanup runs.
+    async fn release_detached_subscription_topics(
+        &self,
+        tenant: &TenantContext,
+        removed: &[crate::subscription::RemovedSubscription],
+    ) {
+        if removed.is_empty() {
+            return;
+        }
+
+        #[cfg(test)]
+        maybe_stall_detached_topic_release_for_test().await;
+
+        for subscription in removed {
+            if subscription.scope.is_global() {
+                self.pubsub
+                    .release_topic(tenant, buzz_pubsub::EventTopic::Global)
+                    .await;
+            }
+            for &channel_id in subscription.scope.channel_ids() {
+                self.pubsub
+                    .release_topic(tenant, buzz_pubsub::EventTopic::Channel(channel_id))
+                    .await;
+            }
+        }
+    }
+
+    /// Keep the detached topic snapshot alive in a task that is independent of
+    /// the revocation caller. A bounded caller may be cancelled while Redis
+    /// desired-topic mutation is waiting on its mutex; the detached registry
+    /// state must still release every retain after that cancellation.
+    fn spawn_detached_subscription_topic_release(
+        &self,
+        tenant: &TenantContext,
+        removed: &[crate::subscription::RemovedSubscription],
+    ) {
+        if removed.is_empty() {
+            return;
+        }
+        let state = self.clone();
+        let tenant = tenant.clone();
+        let removed = removed.to_vec();
+        std::mem::drop(tokio::spawn(async move {
+            state
+                .release_detached_subscription_topics(&tenant, &removed)
+                .await;
+        }));
+    }
+
+    /// Remove every subscription held by one connection, clear the
+    /// connection-local subscription map, and schedule release of its retained
+    /// Redis topics. The registry removal happens before any revocation
+    /// publication so both local fan-out and a raced REQ see an empty live
+    /// subscription set.
+    pub(crate) async fn evict_connection_subscriptions(
+        &self,
+        tenant: &TenantContext,
+        conn_id: Uuid,
+    ) -> Vec<crate::subscription::RemovedSubscription> {
+        let removed = self.detach_connection_subscriptions(conn_id).await;
+        self.spawn_detached_subscription_topic_release(tenant, &removed);
+        removed
+    }
+
+    /// Snapshot and evict all local connections for a tenant-scoped pubkey.
+    /// Policy close reasons are marked before the snapshot is released, while
+    /// cancellation is deliberately deferred until final `CLOSED` frames have
+    /// been queued.
+    async fn prepare_pubkey_revocation(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        reason: &str,
+        excluded_conn_id: Option<Uuid>,
+        skip_excluded: bool,
+        held_conn_id: Option<(Uuid, tokio::sync::OwnedMutexGuard<()>)>,
+    ) -> Vec<PendingPubkeyRevocation> {
+        let mut pending = Vec::new();
+        let mut held_guard = held_conn_id;
+        for conn_id in self
+            .conn_manager
+            .connection_ids_for_pubkey_or_owner_in_community(tenant.community(), pubkey)
+        {
+            if skip_excluded && excluded_conn_id == Some(conn_id) {
+                continue;
+            }
+            let preheld_guard = (excluded_conn_id == Some(conn_id))
+                .then(|| held_guard.take().map(|(_, guard)| guard))
+                .flatten();
+            if let Some(entry) = self
+                .prepare_connection_revocation(
+                    tenant,
+                    conn_id,
+                    reason,
+                    excluded_conn_id == Some(conn_id),
+                    preheld_guard,
+                )
+                .await
+            {
+                pending.push(entry);
+            }
+        }
+        pending
+    }
+
+    /// Prepare one connection for a local policy revocation. Keeping this
+    /// operation connection-id based lets the durable membership sweep close
+    /// only the denied identity; selecting by pubkey would also close valid
+    /// owner-attested agent sessions that happen to share that pubkey as an
+    /// owner relationship.
+    async fn prepare_connection_revocation_without_topic_release(
+        &self,
+        conn_id: Uuid,
+        reason: &str,
+        excluded: bool,
+        preheld_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    ) -> Option<PendingPubkeyRevocation> {
+        let revocation_guard = match preheld_guard {
+            Some(guard) => guard,
+            None => self.conn_manager.try_acquire_revocation_lock(conn_id)?,
+        };
+        let marked = if reason == RELAY_MEMBERSHIP_REVOKED_REASON {
+            self.conn_manager.mark_relay_membership_revoked(conn_id)
+        } else {
+            self.conn_manager.mark_policy_close(conn_id, reason)
+        };
+        if !marked {
+            return None;
+        }
+        let removed = self.detach_connection_subscriptions(conn_id).await;
+        Some(PendingPubkeyRevocation {
+            conn_id,
+            excluded,
+            removed,
+            _revocation_guard: revocation_guard,
+        })
+    }
+
+    /// Prepare one connection for a local policy revocation and schedule
+    /// release of its retained Redis topics. Self-leave uses the paired
+    /// `without_topic_release` variant for its origin so the terminal ACK and
+    /// policy close do not wait behind topic cleanup.
+    async fn prepare_connection_revocation(
+        &self,
+        tenant: &TenantContext,
+        conn_id: Uuid,
+        reason: &str,
+        excluded: bool,
+        preheld_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    ) -> Option<PendingPubkeyRevocation> {
+        let pending = self
+            .prepare_connection_revocation_without_topic_release(
+                conn_id,
+                reason,
+                excluded,
+                preheld_guard,
+            )
+            .await?;
+        self.spawn_detached_subscription_topic_release(tenant, &pending.removed);
+        Some(pending)
+    }
+
+    /// Queue final subscription closures and cancel the pending connections.
+    /// A full control queue is safe because `mark_policy_close` has already
+    /// installed the policy close fallback consumed by the writer.
+    async fn finish_pubkey_revocation(
+        &self,
+        pending: Vec<PendingPubkeyRevocation>,
+        event_id: &str,
+        reason: &str,
+        ack: Option<(Uuid, WsMessage)>,
+        send_unsolicited_ack: bool,
+    ) -> PubkeyRevocationFinish {
+        let mut closed = 0;
+        let mut ack_delivered = ack.is_none();
+        for entry in pending {
+            let ack_frame = ack.as_ref().and_then(|(ack_conn_id, frame)| {
+                (entry.excluded && *ack_conn_id == entry.conn_id).then_some(frame)
+            });
+            if let Some(frame) = ack_frame {
+                // The self-leave ACK is the one control frame that cannot be
+                // replaced by a policy-close fallback. Wait briefly for the
+                // writer to make room and report a terminal failure if it
+                // remains unavailable.
+                ack_delivered = self
+                    .conn_manager
+                    .send_control_bounded(
+                        entry.conn_id,
+                        frame.clone(),
+                        REVOCATION_CONTROL_SEND_TIMEOUT,
+                    )
+                    .await;
+            } else if send_unsolicited_ack {
+                let frame = crate::protocol::RelayMessage::ok(event_id, false, reason);
+                let _ = self
+                    .conn_manager
+                    .send_control(entry.conn_id, WsMessage::Text(frame.into()));
+            }
+            for subscription in entry.removed {
+                // A self-leave response is an event-level ACK. Existing query
+                // subscriptions still receive their own correlated CLOSED.
+                let frame = crate::protocol::RelayMessage::closed(&subscription.sub_id, reason);
+                let _ = self
+                    .conn_manager
+                    .send_control(entry.conn_id, WsMessage::Text(frame.into()));
+            }
+            self.conn_manager.cancel_connection(entry.conn_id);
+            closed += 1;
+        }
+        if ack.is_some() && !ack_delivered {
+            metrics::counter!("buzz_relay_revocation_ack_delivery_failures_total").increment(1);
+            tracing::error!(
+                event_id,
+                "self-leave ACK could not be queued before the bounded control deadline"
+            );
+        }
+        PubkeyRevocationFinish {
+            closed,
+            ack_delivered,
+        }
+    }
+
+    /// Disconnect a tenant-scoped pubkey on this pod only. Used by the Redis
+    /// consumer after a command has already been published by another pod.
+    /// The local eviction is idempotent, so a command may safely be delivered
+    /// more than once or after the origin pod already closed its sockets.
+    pub async fn disconnect_pubkey_local(
         &self,
         tenant: &TenantContext,
         pubkey: &[u8],
         event_id: &str,
         reason: &str,
+        excluded_conn_id: Option<Uuid>,
     ) -> usize {
-        let closed =
-            self.conn_manager
-                .disconnect_pubkey(tenant.community(), pubkey, event_id, reason);
+        let pending = self
+            .prepare_pubkey_revocation(tenant, pubkey, reason, excluded_conn_id, true, None)
+            .await;
+        self.finish_pubkey_revocation(pending, event_id, reason, None, true)
+            .await
+            .closed
+    }
 
-        // The banning pod re-receives its own publish through the subscriber and
-        // no-ops (its local sockets are already closed above) — intentional; do
-        // not add origin-suppression, it buys nothing.
-        let pubsub = Arc::clone(&self.pubsub);
-        let tenant = tenant.clone();
+    /// Finalize a self-leave whose durable delete lost a race to another
+    /// revocation. The caller holds the connection fence from before the
+    /// membership delete; consuming it here closes the origin and queues the
+    /// one correlated `OK false` without publishing a second cluster command.
+    /// `None` means the connection deregistered while the race was resolved;
+    /// `Some(false)` means finalization ran but the bounded ACK send failed.
+    pub(crate) async fn finalize_fenced_connection_revocation(
+        &self,
+        tenant: &TenantContext,
+        conn_id: Uuid,
+        event_id: &str,
+        reason: &str,
+        ack: WsMessage,
+        revocation_guard: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Option<bool> {
+        let pending = self
+            .prepare_connection_revocation(tenant, conn_id, reason, true, Some(revocation_guard))
+            .await?;
+        Some(
+            self.finish_pubkey_revocation(
+                vec![pending],
+                event_id,
+                reason,
+                Some((conn_id, ack)),
+                false,
+            )
+            .await
+            .ack_delivered,
+        )
+    }
+
+    /// Enforce a live ban or relay-membership revocation cluster-wide. The
+    /// durable delete occurs before this call; local subscriptions are evicted
+    /// first, then the tenant-scoped connection-control publication is awaited,
+    /// and only then are affected sockets cancelled. Current writer-backed
+    /// membership gates remain the backstop for offline or lagged subscribers.
+    ///
+    /// A zero Redis subscriber count is accepted: a single-pod deployment may
+    /// have no remote subscriber, and the durable current-membership gate still
+    /// denies any later request. Actual Redis errors are returned to the caller
+    /// so the mutation surface cannot report propagation success.
+    pub(crate) async fn disconnect_pubkey_clusterwide(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        event_id: &str,
+        reason: &str,
+    ) -> Result<usize, RevocationError> {
+        self.disconnect_pubkey_clusterwide_inner(
+            tenant,
+            pubkey,
+            event_id,
+            reason,
+            RevocationOptions::default(),
+        )
+        .await
+    }
+
+    /// Variant used by a WebSocket NIP-43 self-leave. The initiating socket is
+    /// excluded from the remote-style `OK false` path and receives exactly one
+    /// event-level response before its policy close: `OK true` when Redis
+    /// publication succeeded, `OK false` when it failed.
+    pub(crate) async fn disconnect_pubkey_clusterwide_for_leave(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        event_id: &str,
+        reason: &str,
+        leave: SelfLeaveRevocation,
+    ) -> Result<usize, RevocationError> {
+        self.disconnect_pubkey_clusterwide_inner(
+            tenant,
+            pubkey,
+            event_id,
+            reason,
+            RevocationOptions {
+                excluded_conn_id: Some(leave.conn_id),
+                leave_success_message: Some(leave.success_message),
+                held_conn_id: Some((leave.conn_id, leave.revocation_guard)),
+            },
+        )
+        .await
+    }
+
+    async fn disconnect_pubkey_clusterwide_inner(
+        &self,
+        tenant: &TenantContext,
+        pubkey: &[u8],
+        event_id: &str,
+        reason: &str,
+        options: RevocationOptions,
+    ) -> Result<usize, RevocationError> {
+        // Self-leave has one request-scoped connection whose event ACK must be
+        // queued promptly. Detach that origin first without awaiting Redis
+        // topic cleanup, then let the other local sessions use the ordinary
+        // revocation path in a bounded background pass. The durable writer
+        // row remains the retry authority when that pass cannot finish.
+        let is_self_leave =
+            options.leave_success_message.is_some() && options.excluded_conn_id.is_some();
+        let (origin_pending, origin_removed) = match (is_self_leave, options.excluded_conn_id) {
+            (true, Some(origin_conn_id)) => {
+                let origin_pending = self
+                    .prepare_connection_revocation_without_topic_release(
+                        origin_conn_id,
+                        reason,
+                        true,
+                        options.held_conn_id.map(|(_, guard)| guard),
+                    )
+                    .await;
+                let origin_removed = origin_pending
+                    .as_ref()
+                    .map(|pending| pending.removed.clone())
+                    .unwrap_or_default();
+                (origin_pending, origin_removed)
+            }
+            _ => (None, Vec::new()),
+        };
+
+        let pending = if is_self_leave {
+            let bulk_state = self.clone();
+            let bulk_tenant = tenant.clone();
+            let bulk_pubkey = pubkey.to_vec();
+            let bulk_event_id = event_id.to_owned();
+            let bulk_reason = reason.to_owned();
+            let excluded_conn_id = options.excluded_conn_id;
+            std::mem::drop(tokio::spawn(async move {
+                let cleanup_event_id = bulk_event_id.clone();
+                let cleanup_reason = bulk_reason.clone();
+                let cleanup = async move {
+                    #[cfg(test)]
+                    maybe_stall_self_leave_bulk_for_test().await;
+
+                    let pending = bulk_state
+                        .prepare_pubkey_revocation(
+                            &bulk_tenant,
+                            &bulk_pubkey,
+                            &cleanup_reason,
+                            excluded_conn_id,
+                            true,
+                            None,
+                        )
+                        .await;
+                    bulk_state
+                        .finish_pubkey_revocation(
+                            pending,
+                            &cleanup_event_id,
+                            &cleanup_reason,
+                            None,
+                            true,
+                        )
+                        .await
+                        .closed
+                };
+
+                match tokio::time::timeout(
+                    RELAY_MEMBERSHIP_LEAVE_LOCAL_FINALIZATION_TIMEOUT,
+                    cleanup,
+                )
+                .await
+                {
+                    Ok(closed) => {
+                        tracing::debug!(
+                            event_id = %bulk_event_id,
+                            closed,
+                            "completed bounded local self-leave cleanup"
+                        );
+                    }
+                    Err(_) => {
+                        metrics::counter!("buzz_relay_self_leave_local_cleanup_timeouts_total")
+                            .increment(1);
+                        tracing::warn!(
+                            event_id = %bulk_event_id,
+                            "local self-leave cleanup exceeded its bounded window; durable membership sweep will retry"
+                        );
+                    }
+                }
+            }));
+            Vec::new()
+        } else {
+            // Ordinary revocations retain their existing synchronous ordering:
+            // local subscriptions are detached before the control publish.
+            self.prepare_pubkey_revocation(
+                tenant,
+                pubkey,
+                reason,
+                options.excluded_conn_id,
+                false,
+                None,
+            )
+            .await
+        };
+
+        // Topic release for the origin is intentionally fire-and-forget after
+        // detachment and terminal frame queuing. The registry is already
+        // empty, so no stale subscription can receive fan-out while this
+        // in-memory Redis interest is being released.
+        self.spawn_detached_subscription_topic_release(tenant, &origin_removed);
+
         let command = ConnControl::DisconnectPubkey {
             pubkey: pubkey.to_vec(),
-            event_id: event_id.to_string(),
-            reason: reason.to_string(),
+            event_id: event_id.to_owned(),
+            reason: reason.to_owned(),
+            exclude_conn_id: options.excluded_conn_id,
         };
-        // This pre-existing ban path may remain fire-and-forget because the
-        // durable ban row rejects the member again at auth. Community archival
-        // is different: its API awaits publication and live sockets also have a
-        // periodic durable-state revalidation backstop below.
-        tokio::spawn(async move {
-            if let Err(e) = pubsub.publish_conn_control(&tenant, &command).await {
-                tracing::warn!("Failed to publish conn-control disconnect: {e}");
+        let publish_result = match tokio::time::timeout(
+            REVOCATION_REDIS_PUBLISH_TIMEOUT,
+            self.pubsub.publish_conn_control(tenant, &command),
+        )
+        .await
+        {
+            Ok(Ok(subscriber_count)) => Ok(subscriber_count),
+            Ok(Err(error)) => Err(RevocationError::Publish(error)),
+            Err(_) => {
+                metrics::counter!("buzz_relay_revocation_publish_timeouts_total").increment(1);
+                tracing::error!(
+                    event_id,
+                    "connection-control publication exceeded the bounded deadline"
+                );
+                Err(RevocationError::PublishTimeout)
             }
-        });
+        };
 
-        closed
+        let ack = match (options.leave_success_message, options.excluded_conn_id) {
+            (Some(success), Some(conn_id)) => {
+                let frame = match &publish_result {
+                    Ok(_) => crate::protocol::RelayMessage::ok(event_id, true, &success),
+                    Err(_) => crate::protocol::RelayMessage::ok(
+                        event_id,
+                        false,
+                        "error: live membership revocation propagation failed",
+                    ),
+                };
+                Some((conn_id, frame.into()))
+            }
+            _ => None,
+        };
+        let finish = if let Some(origin_pending) = origin_pending {
+            self.finish_pubkey_revocation(vec![origin_pending], event_id, reason, ack, false)
+                .await
+        } else {
+            self.finish_pubkey_revocation(pending, event_id, reason, ack, true)
+                .await
+        };
+
+        let _subscriber_count = publish_result?;
+        if !finish.ack_delivered {
+            return Err(RevocationError::AckDeliveryTimeout);
+        }
+        Ok(finish.closed)
     }
 
     /// Disconnect a community locally and publish the command to every relay pod.
@@ -1258,6 +2400,213 @@ impl AppState {
             tracing::warn!(%community_id, %error, "community lifecycle revalidation failed; retaining its sockets until next tick");
         }
         closed
+    }
+
+    /// Reconcile every authenticated local WebSocket against the writer-backed
+    /// relay-membership roster. This is the durable backstop for a Redis
+    /// disconnect, a broadcast receiver with no listeners, or a lagged
+    /// connection-control consumer: a removed row eventually closes the idle
+    /// socket even when no imperative command reached this process.
+    ///
+    /// Identity checks are deduplicated per `(community, pubkey, owner)` so a
+    /// client with many subscriptions does not amplify database work. A DB
+    /// error leaves the socket in place for the next bounded retry; it never
+    /// turns an unavailable roster read into an authoritative revoke.
+    pub async fn revalidate_live_relay_memberships(&self) -> usize {
+        if !self.config.require_relay_membership {
+            return 0;
+        }
+
+        run_coalesced_membership_revalidation(
+            &self.relay_membership_revalidation_lock,
+            &self.relay_membership_revalidation_pending,
+            || self.revalidate_live_relay_memberships_once(),
+        )
+        .await
+    }
+
+    /// Run one bounded membership reconciliation pass. The caller supplies the
+    /// single-flight fence; keeping the pass separate makes the finite work
+    /// and its timeout behavior independently testable.
+    async fn revalidate_live_relay_memberships_once(&self) -> usize {
+        self.revalidate_live_relay_memberships_once_with_lookup(
+            |community_id, pubkey, owner| async move {
+                crate::api::relay_members::current_relay_membership_for_auth(
+                    self,
+                    community_id,
+                    &pubkey,
+                    owner.as_deref(),
+                )
+                .await
+            },
+        )
+        .await
+    }
+
+    /// Execute one bounded reconciliation pass with an injected writer lookup.
+    ///
+    /// Production calls this with
+    /// [`crate::api::relay_members::current_relay_membership_for_auth`]. The
+    /// injected seam is kept at the executor boundary so tests exercise the
+    /// same identity snapshot, fair planner, retry queue, revocation fence,
+    /// subscription eviction, and terminal cancellation used in production;
+    /// only the external writer result is controlled by the test.
+    async fn revalidate_live_relay_memberships_once_with_lookup<Lookup, CheckFuture, LookupError>(
+        &self,
+        lookup: Lookup,
+    ) -> usize
+    where
+        Lookup: Fn(CommunityId, Vec<u8>, Option<Vec<u8>>) -> CheckFuture,
+        CheckFuture: Future<Output = Result<bool, LookupError>>,
+    {
+        let mut grouped: HashMap<RelayMembershipIdentity, Vec<Uuid>> = HashMap::new();
+        for community_id in self.conn_manager.per_community_ws_connections().into_keys() {
+            for (conn_id, pubkey, owner) in self
+                .conn_manager
+                .authenticated_identities_in_community(community_id)
+            {
+                grouped
+                    .entry((community_id, pubkey, owner))
+                    .or_default()
+                    .push(conn_id);
+            }
+        }
+
+        // Retry deferred work before advancing the fresh cursor window. Use
+        // current connection IDs for a still-live identity so a reconnect can
+        // replace stale IDs while a disconnected socket is simply discarded.
+        // The shared planner reserves a fresh slice whenever both classes are
+        // present, so a persistent writer failure cannot starve new sockets.
+        let (selected, deferred) = {
+            let mut retry_queue = self
+                .relay_membership_revalidation_pending_groups
+                .lock()
+                .await;
+            let queued = retry_queue.drain(..).collect::<Vec<_>>();
+            select_membership_revalidation_work(
+                &mut grouped,
+                queued,
+                &self.relay_membership_revalidation_cursor,
+            )
+        };
+        if selected.is_empty() {
+            self.retain_relay_membership_revalidation_groups(deferred)
+                .await;
+            return 0;
+        }
+
+        let batch = run_bounded_membership_lookups(
+            selected,
+            lookup,
+            RELAY_MEMBERSHIP_LOOKUP_TIMEOUT,
+            RELAY_MEMBERSHIP_SWEEP_DEADLINE,
+            RELAY_MEMBERSHIP_SWEEP_CONCURRENCY,
+        )
+        .await;
+
+        let event_id = "0".repeat(64);
+        let mut pending = Vec::new();
+        let mut retry = deferred;
+        retry.extend(batch.unresolved);
+        for ((community_id, pubkey, owner), conn_ids, outcome) in batch.outcomes {
+            match outcome {
+                MembershipLookupOutcome::Allowed => {}
+                MembershipLookupOutcome::Denied => {
+                    let tenant = TenantContext::resolved(community_id, "membership-reconciler");
+                    let mut retry_conn_ids = Vec::new();
+                    for conn_id in conn_ids {
+                        if let Some(entry) = self
+                            .prepare_connection_revocation(
+                                &tenant,
+                                conn_id,
+                                RELAY_MEMBERSHIP_REVOKED_REASON,
+                                false,
+                                None,
+                            )
+                            .await
+                        {
+                            pending.push(entry);
+                        } else if self.conn_manager.has_connection(conn_id) {
+                            // A competing self-leave or control revocation owns
+                            // the fence. Keep this identity for a later pass so
+                            // the bounded sweep cannot silently skip it.
+                            retry_conn_ids.push(conn_id);
+                        }
+                    }
+                    if !retry_conn_ids.is_empty() {
+                        retry.push(((community_id, pubkey, owner), retry_conn_ids));
+                    }
+                }
+                MembershipLookupOutcome::Failed => {
+                    metrics::counter!("buzz_relay_membership_revalidation_lookup_failures_total")
+                        .increment(1);
+                    tracing::warn!(
+                        %community_id,
+                        "live relay-membership reconciliation failed; retaining identity for the next bounded sweep"
+                    );
+                    retry.push(((community_id, pubkey, owner), conn_ids));
+                }
+                MembershipLookupOutcome::TimedOut => {
+                    metrics::counter!("buzz_relay_membership_revalidation_lookup_timeouts_total")
+                        .increment(1);
+                    tracing::warn!(
+                        %community_id,
+                        "live relay-membership reconciliation timed out; retaining identity for the next bounded sweep"
+                    );
+                    retry.push(((community_id, pubkey, owner), conn_ids));
+                }
+            }
+        }
+
+        self.retain_relay_membership_revalidation_groups(retry)
+            .await;
+
+        self.finish_pubkey_revocation(
+            pending,
+            &event_id,
+            RELAY_MEMBERSHIP_REVOKED_REASON,
+            None,
+            false,
+        )
+        .await
+        .closed
+    }
+
+    /// Retain unresolved membership groups in a bounded FIFO. At most one
+    /// group exists per authenticated identity, so the configured connection
+    /// limit bounds this queue without discarding a live retry.
+    async fn retain_relay_membership_revalidation_groups(&self, groups: Vec<RelayMembershipGroup>) {
+        if groups.is_empty() {
+            return;
+        }
+        let capacity = self.config.max_connections.max(1);
+        let mut queue = self
+            .relay_membership_revalidation_pending_groups
+            .lock()
+            .await;
+        for (identity, conn_ids) in groups {
+            if let Some((_, queued_conn_ids)) = queue
+                .iter_mut()
+                .find(|(queued_identity, _)| queued_identity == &identity)
+            {
+                *queued_conn_ids = conn_ids;
+                continue;
+            }
+            debug_assert!(
+                queue.len() < capacity,
+                "membership retry queue exceeded the live connection bound"
+            );
+            if queue.len() >= capacity {
+                metrics::counter!("buzz_relay_membership_revalidation_retry_queue_overflow_total")
+                    .increment(1);
+                tracing::error!(
+                    capacity,
+                    "membership retry queue reached its configured live-connection bound"
+                );
+                continue;
+            }
+            queue.push_back((identity, conn_ids));
+        }
     }
 
     /// Get accessible channel IDs with a 10-second cache. Falls back to DB on miss.
@@ -1416,8 +2765,17 @@ impl std::fmt::Debug for AppState {
 pub(crate) mod tests {
     use super::*;
     use crate::connection::{AuthState, ConnectionState};
+    use crate::protocol::RelayMessage;
     use std::collections::HashMap;
     use tokio::sync::{Mutex, RwLock};
+
+    struct ActiveLookupProbe(Arc<AtomicU8>);
+
+    impl Drop for ActiveLookupProbe {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
 
     /// Helper: create a ConnectionManager with one registered connection.
     /// Returns (manager, conn_id, receiver, ctrl_receiver, cancel,
@@ -1929,14 +3287,14 @@ pub(crate) mod tests {
         assert!(audio_a.is_cancelled());
         assert!(!ordinary_b.is_cancelled());
         assert_eq!(
-            *ordinary_a_reason.borrow(),
+            (*ordinary_a_reason.borrow()).clone(),
             Some(CommunityDisconnectReason::CommunityDeleted)
         );
         assert_eq!(
-            *audio_a_reason.borrow(),
+            (*audio_a_reason.borrow()).clone(),
             Some(CommunityDisconnectReason::CommunityDeleted)
         );
-        assert_eq!(*ordinary_b_reason.borrow(), None);
+        assert_eq!((*ordinary_b_reason.borrow()).clone(), None);
     }
 
     #[tokio::test]
@@ -2045,6 +3403,475 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn membership_revalidation_window_is_capped_and_rotates_fairly() {
+        let community = CommunityId::from_uuid(Uuid::from_u128(0xbeef));
+        let groups: Vec<(RelayMembershipIdentity, Vec<Uuid>)> = (0..600u16)
+            .map(|index| {
+                (
+                    (
+                        community,
+                        [index.to_be_bytes().as_slice(), &[0; 30]].concat(),
+                        None,
+                    ),
+                    vec![Uuid::from_u128(index as u128 + 1)],
+                )
+            })
+            .collect();
+        let cursor = AtomicU64::new(0);
+
+        let first = select_bounded_membership_groups(groups.clone(), &cursor);
+        let second = select_bounded_membership_groups(groups, &cursor);
+
+        assert_eq!(first.len(), RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES);
+        assert_eq!(second.len(), RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES);
+        let first_ids: HashSet<_> = first
+            .iter()
+            .map(|(identity, _)| identity.1[..2].to_vec())
+            .collect();
+        let second_ids: HashSet<_> = second
+            .iter()
+            .map(|(identity, _)| identity.1[..2].to_vec())
+            .collect();
+        assert_eq!(
+            first_ids.intersection(&second_ids).count(),
+            424,
+            "the second window advances by one full cap and wraps only for the remaining identities"
+        );
+        assert!(
+            second_ids.contains(512u16.to_be_bytes().as_slice()),
+            "the next sweep reaches identities beyond the first cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_membership_lookups_limit_concurrency_and_preserve_timeouts() {
+        let community = CommunityId::from_uuid(Uuid::from_u128(0xfeed));
+        let groups = (0..8u8)
+            .map(|index| {
+                (
+                    (community, vec![index; 32], None),
+                    vec![Uuid::from_u128(index as u128 + 1)],
+                )
+            })
+            .collect();
+        let active = Arc::new(AtomicU8::new(0));
+        let maximum = Arc::new(AtomicU8::new(0));
+        let outcomes = run_bounded_membership_lookups(
+            groups,
+            {
+                let active = Arc::clone(&active);
+                let maximum = Arc::clone(&maximum);
+                move |_community, pubkey, _owner| {
+                    let active = Arc::clone(&active);
+                    let maximum = Arc::clone(&maximum);
+                    async move {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        maximum.fetch_max(current, Ordering::SeqCst);
+                        let _probe = ActiveLookupProbe(Arc::clone(&active));
+                        if pubkey[0] < 4 {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                        Ok::<bool, ()>(pubkey[0] >= 4)
+                    }
+                }
+            },
+            std::time::Duration::from_millis(20),
+            std::time::Duration::from_millis(150),
+            2,
+        )
+        .await;
+
+        assert_eq!(
+            outcomes.outcomes.len(),
+            8,
+            "each selected identity gets one bounded result"
+        );
+        assert_eq!(
+            outcomes
+                .outcomes
+                .iter()
+                .filter(|(_, _, outcome)| *outcome == MembershipLookupOutcome::Denied)
+                .count(),
+            4
+        );
+        assert_eq!(
+            outcomes
+                .outcomes
+                .iter()
+                .filter(|(_, _, outcome)| *outcome == MembershipLookupOutcome::TimedOut)
+                .count(),
+            4,
+            "stalled lookups are classified as retryable instead of being revoked"
+        );
+        assert!(
+            maximum.load(Ordering::SeqCst) <= 2,
+            "lookup fan-out is capped"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_membership_lookups_retain_unstarted_groups_after_deadline() {
+        let community = CommunityId::from_uuid(Uuid::from_u128(0xcafe));
+        let groups = (0..8u8)
+            .map(|index| {
+                (
+                    (community, vec![index; 32], None),
+                    vec![Uuid::from_u128(index as u128 + 1)],
+                )
+            })
+            .collect();
+        let batch = run_bounded_membership_lookups(
+            groups,
+            |_community, _pubkey, _owner| async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                Ok::<bool, ()>(true)
+            },
+            std::time::Duration::from_millis(200),
+            std::time::Duration::from_millis(25),
+            2,
+        )
+        .await;
+
+        assert!(
+            batch.outcomes.is_empty(),
+            "the overall deadline expires before either in-flight lookup completes"
+        );
+        assert_eq!(
+            batch.unresolved.len(),
+            8,
+            "both in-flight and never-started groups must remain retryable"
+        );
+    }
+
+    #[tokio::test]
+    async fn persistent_membership_failures_cannot_starve_fresh_revocation() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::from_u128(0xd00d));
+        let register = |pubkey: Vec<u8>| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            state.conn_manager.set_authenticated_pubkey(conn_id, pubkey);
+            cancel
+        };
+
+        // Fill one complete bounded pass with identities whose writer lookup
+        // will fail forever. The first pass must retain every one for retry.
+        let mut failed_cancels = Vec::with_capacity(RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES);
+        for index in 0..RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES {
+            let [high, low] = (index as u16).to_be_bytes();
+            let mut pubkey = vec![0u8; 32];
+            pubkey[0] = high;
+            pubkey[1] = low;
+            failed_cancels.push(register(pubkey));
+        }
+        assert_eq!(
+            state
+                .revalidate_live_relay_memberships_once_with_lookup(
+                    |_community, _pubkey, _owner| async {
+                        Err::<bool, _>("persistent writer failure")
+                    },
+                )
+                .await,
+            0,
+            "failed writer probes must remain retryable"
+        );
+        assert_eq!(
+            state
+                .relay_membership_revalidation_pending_groups
+                .lock()
+                .await
+                .len(),
+            RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES,
+            "the complete failed window is retained for the next pass"
+        );
+
+        // A fresh revoked window arrives while the retry queue is full. The
+        // second pass uses the same production planner and revocation executor;
+        // its injected writer result denies every fresh identity that fits the
+        // reserved slice. One tail identity must remain queued for a later
+        // pass, which makes dropping unselected fresh work falsifiable too.
+        let fresh_count = RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET + 1;
+        let mut fresh_cancels = Vec::with_capacity(fresh_count);
+        for index in 0..fresh_count {
+            let [high, low] = (index as u16).to_be_bytes();
+            let mut pubkey = vec![0u8; 32];
+            pubkey[0] = 0xfe;
+            pubkey[1] = high;
+            pubkey[2] = low;
+            fresh_cancels.push(register(pubkey));
+        }
+        let fresh_lookups = Arc::new(AtomicU64::new(0));
+        let make_lookup = || {
+            let fresh_lookups = Arc::clone(&fresh_lookups);
+            move |_community: CommunityId, pubkey: Vec<u8>, _owner: Option<Vec<u8>>| {
+                let is_fresh = pubkey.first() == Some(&0xfe);
+                if is_fresh {
+                    fresh_lookups.fetch_add(1, Ordering::SeqCst);
+                }
+                async move {
+                    if is_fresh {
+                        Ok::<bool, &'static str>(false)
+                    } else {
+                        Err::<bool, &'static str>("persistent writer failure")
+                    }
+                }
+            }
+        };
+        let closed = state
+            .revalidate_live_relay_memberships_once_with_lookup(make_lookup())
+            .await;
+
+        assert_eq!(
+            closed, RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET,
+            "fresh denied work must be revoked in this pass"
+        );
+        assert_eq!(
+            fresh_lookups.load(Ordering::SeqCst),
+            RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET as u64
+        );
+        assert_eq!(
+            fresh_cancels
+                .iter()
+                .filter(|cancel| cancel.is_cancelled())
+                .count(),
+            RELAY_MEMBERSHIP_SWEEP_RETRY_BUDGET,
+            "the reserved fresh slice must reach the production revocation executor"
+        );
+        assert!(
+            fresh_cancels
+                .iter()
+                .filter(|cancel| !cancel.is_cancelled())
+                .count()
+                == 1,
+            "one fresh tail remains retryable after the bounded pass"
+        );
+        assert!(
+            failed_cancels.iter().all(|cancel| !cancel.is_cancelled()),
+            "failed identities remain live until a writer result is available"
+        );
+        let pending = state
+            .relay_membership_revalidation_pending_groups
+            .lock()
+            .await;
+        assert_eq!(
+            pending.len(),
+            RELAY_MEMBERSHIP_SWEEP_MAX_IDENTITIES + 1,
+            "unselected fresh work must be retained with the failed retry queue"
+        );
+        assert_eq!(
+            pending
+                .iter()
+                .filter(|(identity, _)| identity.1.first() == Some(&0xfe))
+                .count(),
+            1,
+            "the fresh tail must remain represented for a later pass"
+        );
+    }
+
+    #[tokio::test]
+    async fn membership_revalidation_single_flight_coalesces_one_follow_up() {
+        let lock = tokio::sync::Mutex::new(());
+        let pending = AtomicBool::new(false);
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicU8::new(0));
+        let first = run_coalesced_membership_revalidation(&lock, &pending, {
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            let calls = Arc::clone(&calls);
+            move || {
+                let started = Arc::clone(&started);
+                let release = Arc::clone(&release);
+                let calls = Arc::clone(&calls);
+                async move {
+                    let call = calls.fetch_add(1, Ordering::SeqCst);
+                    if call == 0 {
+                        started.notify_one();
+                        release.notified().await;
+                    }
+                    1
+                }
+            }
+        });
+        tokio::pin!(first);
+        tokio::select! {
+            _ = started.notified() => {}
+            _ = &mut first => panic!("first reconciliation should be paused in its work pass"),
+        }
+
+        assert_eq!(
+            run_coalesced_membership_revalidation(&lock, &pending, || async { 99 }).await,
+            0,
+            "an overlapping trigger must return without running an unbounded second sweep"
+        );
+        assert!(pending.load(Ordering::SeqCst));
+
+        release.notify_one();
+        assert_eq!(
+            first.await,
+            2,
+            "the active sweep consumes one coalesced retry"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn fenced_connection_is_deferred_without_an_unsolicited_ack() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(4);
+        let cancel = CancellationToken::new();
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel.clone(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let pubkey = vec![0xabu8; 32];
+        state
+            .conn_manager
+            .set_authenticated_pubkey(conn_id, pubkey.clone());
+        let origin_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(conn_id)
+            .expect("origin revocation fence");
+
+        assert!(state
+            .prepare_connection_revocation(
+                &tenant,
+                conn_id,
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                true,
+                None,
+            )
+            .await
+            .is_none());
+        assert!(!cancel.is_cancelled());
+        assert!(matches!(
+            ctrl_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        drop(origin_guard);
+        let pending = state
+            .prepare_connection_revocation(
+                &tenant,
+                conn_id,
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                true,
+                None,
+            )
+            .await
+            .expect("unfenced connection can be prepared");
+        assert_eq!(
+            state
+                .finish_pubkey_revocation(
+                    vec![pending],
+                    &"0".repeat(64),
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    None,
+                    false,
+                )
+                .await
+                .closed,
+            1
+        );
+        assert!(cancel.is_cancelled());
+        assert!(matches!(
+            ctrl_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn fenced_self_leave_race_finalizes_origin_with_one_failure_ack() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(4);
+        let cancel = CancellationToken::new();
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel.clone(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(conn_id)
+            .expect("origin self-leave fence");
+        let event_id = "3".repeat(64);
+        let ack = RelayMessage::ok(
+            &event_id,
+            false,
+            crate::handlers::ingest::RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE,
+        )
+        .into();
+
+        assert_eq!(
+            state
+                .finalize_fenced_connection_revocation(
+                    &tenant,
+                    conn_id,
+                    &event_id,
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    ack,
+                    guard,
+                )
+                .await,
+            Some(true),
+            "a registered origin must be finalized and receive its bounded ACK"
+        );
+        let frame = ctrl_rx.try_recv().expect("origin failure ACK is queued");
+        assert!(matches!(
+            frame,
+            WsMessage::Text(ref text)
+                if text.contains("OK")
+                    && text.contains(&event_id)
+                    && text.contains("false")
+        ));
+        assert!(matches!(
+            ctrl_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(
+            cancel.is_cancelled(),
+            "the raced origin must be policy-closed"
+        );
+        state.conn_manager.deregister(conn_id);
+    }
+
+    #[test]
     fn community_lifecycle_guard_deregisters_on_early_return() {
         let registry = CommunityConnectionRegistry::new();
         let community = CommunityId::from_uuid(Uuid::from_u128(0xa));
@@ -2092,6 +3919,601 @@ pub(crate) mod tests {
             }
             other => panic!("expected text frame, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn disconnect_pubkey_marks_a_policy_close_for_the_writer_fallback() {
+        let mgr = ConnectionManager::new();
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        let control = CommunityConnectionControl::new(cancel.clone());
+        let mut reason_rx = control.disconnect_reason();
+        mgr.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel.clone(),
+            CommunityId::from_uuid(Uuid::nil()),
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        mgr.set_disconnect_reason_sender(conn_id, control.disconnect_reason_sender());
+        let pubkey = vec![9u8; 32];
+        mgr.set_authenticated_pubkey(conn_id, pubkey.clone());
+
+        assert_eq!(
+            mgr.disconnect_pubkey(
+                CommunityId::from_uuid(Uuid::nil()),
+                &pubkey,
+                &"0".repeat(64),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+            ),
+            1
+        );
+        assert!(cancel.is_cancelled());
+        assert_eq!(
+            (*reason_rx.borrow_and_update()).clone(),
+            Some(CommunityDisconnectReason::Policy {
+                reason: RELAY_MEMBERSHIP_REVOKED_REASON.to_owned(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_pubkey_local_queues_rejection_before_cancellation() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(4);
+        let cancel = CancellationToken::new();
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel.clone(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let pubkey = vec![8u8; 32];
+        state
+            .conn_manager
+            .set_authenticated_pubkey(conn_id, pubkey.clone());
+
+        assert_eq!(
+            state
+                .disconnect_pubkey_local(
+                    &tenant,
+                    &pubkey,
+                    &"0".repeat(64),
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    None,
+                )
+                .await,
+            1
+        );
+        let frame = ctrl_rx.try_recv().expect("local rejection is queued");
+        assert!(matches!(frame, WsMessage::Text(ref text) if text.as_str().contains("false")));
+        assert!(cancel.is_cancelled(), "local revocation cancels the socket");
+    }
+
+    #[tokio::test]
+    async fn disconnect_pubkey_local_skips_the_excluded_origin_connection() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let pubkey = vec![6u8; 32];
+
+        let register = |state: &AppState| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(4);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            state
+                .conn_manager
+                .set_authenticated_pubkey(conn_id, pubkey.clone());
+            (conn_id, ctrl_rx, cancel)
+        };
+
+        let (origin_conn, mut origin_ctrl, origin_cancel) = register(&state);
+        let (_other_conn, mut other_ctrl, other_cancel) = register(&state);
+
+        assert_eq!(
+            state
+                .disconnect_pubkey_local(
+                    &tenant,
+                    &pubkey,
+                    &"0".repeat(64),
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    Some(origin_conn),
+                )
+                .await,
+            1
+        );
+        assert!(!origin_cancel.is_cancelled(), "origin socket stays live");
+        assert!(matches!(
+            origin_ctrl.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(other_cancel.is_cancelled(), "other session is revoked");
+        let frame = other_ctrl.try_recv().expect("other rejection is queued");
+        assert!(matches!(frame, WsMessage::Text(ref text) if text.as_str().contains("false")));
+    }
+
+    #[tokio::test]
+    async fn self_leave_origin_finishes_while_bulk_cleanup_is_stalled() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let pubkey = vec![5u8; 32];
+
+        let register = |state: &AppState| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(4);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            state
+                .conn_manager
+                .set_authenticated_pubkey(conn_id, pubkey.clone());
+            (conn_id, ctrl_rx, cancel)
+        };
+
+        let (origin_conn, mut origin_ctrl, origin_cancel) = register(&state);
+        let (other_conn, mut other_ctrl, other_cancel) = register(&state);
+        let hook = Arc::new(SelfLeaveBulkTestHook {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        install_self_leave_bulk_test_hook(Some(Arc::clone(&hook))).await;
+
+        let event_id = "4".repeat(64);
+        let revocation_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(origin_conn)
+            .expect("origin revocation fence");
+        let finalize_state = Arc::clone(&state);
+        let finalize_tenant = tenant.clone();
+        let finalize_pubkey = pubkey.clone();
+        let finalize_event_id = event_id.clone();
+        let finalize = tokio::spawn(async move {
+            finalize_state
+                .disconnect_pubkey_clusterwide_for_leave(
+                    &finalize_tenant,
+                    &finalize_pubkey,
+                    &finalize_event_id,
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    SelfLeaveRevocation {
+                        conn_id: origin_conn,
+                        success_message: "you left".to_owned(),
+                        revocation_guard,
+                    },
+                )
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), hook.entered.notified())
+            .await
+            .expect("bulk cleanup reaches its bounded background seam");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), finalize)
+            .await
+            .expect("self-leave finalizer must not wait for bulk cleanup")
+            .expect("self-leave finalizer task");
+        install_self_leave_bulk_test_hook(None).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(RevocationError::Publish(_)) | Err(RevocationError::PublishTimeout)
+            ),
+            "the unreachable test Redis should make publication fail after origin finalization"
+        );
+        let frame = origin_ctrl
+            .try_recv()
+            .expect("origin failure ACK is queued");
+        assert!(matches!(
+            frame,
+            WsMessage::Text(ref text)
+                if text.contains(&event_id) && text.contains("OK") && text.contains("false")
+        ));
+        assert!(
+            origin_cancel.is_cancelled(),
+            "origin policy close is terminal"
+        );
+        assert!(
+            !other_cancel.is_cancelled(),
+            "the stalled bulk pass must not delay or preempt origin finalization"
+        );
+
+        hook.release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if other_cancel.is_cancelled() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("deferred bulk cleanup eventually revokes the other session");
+        let frame = other_ctrl.try_recv().expect("other rejection is queued");
+        assert!(matches!(frame, WsMessage::Text(ref text) if text.contains("false")));
+        state.conn_manager.deregister(origin_conn);
+        state.conn_manager.deregister(other_conn);
+    }
+
+    #[tokio::test]
+    async fn revocation_preparation_does_not_wait_for_detached_topic_release() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(4);
+        let cancel = CancellationToken::new();
+        let subscriptions = Arc::new(Mutex::new(HashMap::new()));
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel,
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::clone(&subscriptions),
+            3,
+        );
+        let pubkey = vec![0xabu8; 32];
+        state
+            .conn_manager
+            .set_authenticated_pubkey(conn_id, pubkey.clone());
+        let sub_id = "detached-release".to_owned();
+        state
+            .sub_registry
+            .register_scoped(community, conn_id, sub_id.clone(), Vec::new(), None);
+        subscriptions.lock().await.insert(sub_id, Vec::new());
+        state
+            .pubsub
+            .retain_topic(&tenant, buzz_pubsub::EventTopic::Global)
+            .await;
+        assert_eq!(
+            state
+                .pubsub
+                .topic_refcount(&tenant, buzz_pubsub::EventTopic::Global)
+                .await,
+            1
+        );
+
+        let hook = Arc::new(DetachedTopicReleaseTestHook {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        install_detached_topic_release_test_hook(Some(Arc::clone(&hook))).await;
+
+        // The caller deadline models the self-leave bulk window. Before the
+        // fix, detachment completed and this future then waited in the topic
+        // release hook until the deadline cancelled it, losing the only
+        // `RemovedSubscription` snapshot. The fixed path returns the pending
+        // revocation while an independent task owns that snapshot.
+        let prepared = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            state.prepare_pubkey_revocation(
+                &tenant,
+                &pubkey,
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                None,
+                false,
+                None,
+            ),
+        )
+        .await;
+        let release_started =
+            tokio::time::timeout(std::time::Duration::from_secs(1), hook.entered.notified()).await;
+        hook.release.notify_one();
+        install_detached_topic_release_test_hook(None).await;
+
+        assert!(
+            release_started.is_ok(),
+            "detached release task must reach the production topic-release seam"
+        );
+        let pending = prepared.expect(
+            "revocation preparation must finish after handing topic release to an independent task",
+        );
+        assert_eq!(pending.len(), 1);
+        state
+            .finish_pubkey_revocation(
+                pending,
+                &"0".repeat(64),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                None,
+                false,
+            )
+            .await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if state
+                    .pubsub
+                    .topic_refcount(&tenant, buzz_pubsub::EventTopic::Global)
+                    .await
+                    == 0
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached topic release must finish after caller cancellation");
+        state.conn_manager.deregister(conn_id);
+    }
+
+    #[tokio::test]
+    async fn detach_cancellation_keeps_registry_snapshot_for_retry() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(4);
+        let subscriptions = Arc::new(Mutex::new(HashMap::new()));
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            CancellationToken::new(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::clone(&subscriptions),
+            3,
+        );
+        let sub_id = "lock-stalled".to_owned();
+        state
+            .sub_registry
+            .register_scoped(community, conn_id, sub_id.clone(), Vec::new(), None);
+        let local_lock = subscriptions.lock().await;
+
+        let cancelled = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            state.detach_connection_subscriptions(conn_id),
+        )
+        .await;
+        assert!(cancelled.is_err(), "the local map lock must remain stalled");
+        assert!(
+            state.sub_registry.contains(conn_id, &sub_id),
+            "cancellation while waiting for the local map must retain the registry snapshot"
+        );
+
+        drop(local_lock);
+        let removed = state.detach_connection_subscriptions(conn_id).await;
+        assert_eq!(removed.len(), 1);
+        assert!(!state.sub_registry.contains(conn_id, &sub_id));
+        state.conn_manager.deregister(conn_id);
+    }
+
+    #[test]
+    fn owner_revocation_selection_includes_nip_oa_agent_sessions() {
+        let mgr = ConnectionManager::new();
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        let community = CommunityId::from_uuid(Uuid::nil());
+        mgr.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel,
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let owner = vec![4u8; 32];
+        mgr.set_authenticated_identity(conn_id, vec![5u8; 32], Some(owner.clone()));
+
+        assert_eq!(
+            mgr.connection_ids_for_pubkey_or_owner_in_community(community, &owner),
+            vec![conn_id]
+        );
+    }
+
+    #[test]
+    fn owner_revocation_selection_ignores_direct_member_backfill_metadata() {
+        let mgr = ConnectionManager::new();
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
+        let community = CommunityId::from_uuid(Uuid::nil());
+        mgr.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            CancellationToken::new(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let owner = vec![4u8; 32];
+        // A direct member may have the same owner persisted for receipts, but
+        // that metadata is deliberately not copied into connection admission
+        // provenance.
+        mgr.set_authenticated_identity(conn_id, vec![5u8; 32], None);
+
+        assert!(mgr
+            .connection_ids_for_pubkey_or_owner_in_community(community, &owner)
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn finish_pubkey_revocation_gives_self_leave_one_success_and_others_failure() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let event_id = "1".repeat(64);
+        let reason = RELAY_MEMBERSHIP_REVOKED_REASON;
+
+        let register = |state: &AppState| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(8);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            (conn_id, ctrl_rx, cancel)
+        };
+
+        let (self_conn, mut self_ctrl, self_cancel) = register(&state);
+        let (other_conn, mut other_ctrl, other_cancel) = register(&state);
+        let self_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(self_conn)
+            .expect("self revocation fence");
+        let other_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(other_conn)
+            .expect("other revocation fence");
+        let pending = vec![
+            PendingPubkeyRevocation {
+                conn_id: self_conn,
+                excluded: true,
+                removed: vec![crate::subscription::RemovedSubscription {
+                    sub_id: "self-sub".to_owned(),
+                    community_id: community,
+                    scope: crate::subscription::SubscriptionScope::Global,
+                }],
+                _revocation_guard: self_guard,
+            },
+            PendingPubkeyRevocation {
+                conn_id: other_conn,
+                excluded: false,
+                removed: Vec::new(),
+                _revocation_guard: other_guard,
+            },
+        ];
+        let success = crate::protocol::RelayMessage::ok(event_id.as_str(), true, "you left");
+        let finish = state
+            .finish_pubkey_revocation(
+                pending,
+                event_id.as_str(),
+                reason,
+                Some((self_conn, WsMessage::Text(success.into()))),
+                true,
+            )
+            .await;
+        assert_eq!(finish.closed, 2);
+        assert!(finish.ack_delivered);
+
+        let self_ack = self_ctrl.try_recv().expect("self ACK is queued");
+        assert!(matches!(self_ack, WsMessage::Text(ref text) if text.as_str().contains("true")));
+        let self_closed = self_ctrl.try_recv().expect("self subscription is closed");
+        assert!(
+            matches!(self_closed, WsMessage::Text(ref text) if text.as_str().contains("CLOSED") && text.as_str().contains("self-sub"))
+        );
+        let other_ack = other_ctrl
+            .try_recv()
+            .expect("other session gets a failure ACK");
+        assert!(
+            matches!(other_ack, WsMessage::Text(ref text) if text.as_str().contains("false") && text.as_str().contains(reason))
+        );
+        assert!(self_cancel.is_cancelled());
+        assert!(other_cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn self_leave_ack_full_control_queue_is_bounded_and_reported() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx.clone(),
+            None,
+            cancel.clone(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        // Occupy the only control slot. The ACK path must wait only for its
+        // bounded deadline, then return a terminal failure while still
+        // cancelling the policy-revoked socket.
+        ctrl_tx
+            .try_send(WsMessage::Ping(axum::body::Bytes::new()))
+            .expect("fill control queue");
+        let revocation_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(conn_id)
+            .expect("revocation fence");
+
+        let started = std::time::Instant::now();
+        let finish = state
+            .finish_pubkey_revocation(
+                vec![PendingPubkeyRevocation {
+                    conn_id,
+                    excluded: true,
+                    removed: Vec::new(),
+                    _revocation_guard: revocation_guard,
+                }],
+                &"2".repeat(64),
+                RELAY_MEMBERSHIP_REVOKED_REASON,
+                Some((
+                    conn_id,
+                    WsMessage::Text(
+                        crate::protocol::RelayMessage::ok(&"2".repeat(64), true, "you left").into(),
+                    ),
+                )),
+                true,
+            )
+            .await;
+
+        assert!(!finish.ack_delivered);
+        assert!(cancel.is_cancelled());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(matches!(ctrl_rx.try_recv(), Ok(WsMessage::Ping(_))));
     }
 
     #[tokio::test]

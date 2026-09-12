@@ -228,6 +228,9 @@ async fn handle_active_connection(
         subscriptions,
         state.config.slow_client_grace_limit,
     );
+    state
+        .conn_manager
+        .set_disconnect_reason_sender(conn_id, control.disconnect_reason_sender());
 
     let (ws_send, ws_recv) = socket.split();
 
@@ -392,7 +395,8 @@ async fn send_loop_inner<S>(
                 }
                 let close = disconnect_reason
                     .borrow()
-                    .map_or(WsMessage::Close(None), |reason| reason.close_message());
+                    .as_ref()
+                    .map_or(WsMessage::Close(None), CommunityDisconnectReason::close_message);
                 let _ = ws_send.send(close).await;
                 break;
             }
@@ -666,8 +670,22 @@ pub(crate) mod tests {
     pub(crate) fn test_conn_with_auth(
         auth: AuthState,
     ) -> (Arc<ConnectionState>, mpsc::Receiver<WsMessage>) {
+        let (conn, send_rx, _ctrl_rx) = test_conn_with_auth_and_ctrl(auth);
+        (conn, send_rx)
+    }
+
+    /// Test connection helper that also exposes the priority control queue.
+    /// The production revocation path queues correlated CLOSED/OK frames there
+    /// before cancellation, so rejection tests need to observe both channels.
+    pub(crate) fn test_conn_with_auth_and_ctrl(
+        auth: AuthState,
+    ) -> (
+        Arc<ConnectionState>,
+        mpsc::Receiver<WsMessage>,
+        mpsc::Receiver<WsMessage>,
+    ) {
         let (send_tx, send_rx) = mpsc::channel(4);
-        let (ctrl_tx, _ctrl_rx) = mpsc::channel(4);
+        let (ctrl_tx, ctrl_rx) = mpsc::channel(4);
         let conn = ConnectionState {
             conn_id: Uuid::new_v4(),
             tenant: TenantContext::resolved(
@@ -683,7 +701,7 @@ pub(crate) mod tests {
             backpressure_count: Arc::new(AtomicU8::new(0)),
             grace_limit: 3,
         };
-        (Arc::new(conn), send_rx)
+        (Arc::new(conn), send_rx, ctrl_rx)
     }
 
     /// An authenticated connection — the only state admission quotas apply to.
@@ -1066,6 +1084,36 @@ pub(crate) mod tests {
                 assert_eq!(close.reason.as_str(), "community deleted");
             }
             other => panic!("expected one 1008 deletion close, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_loop_sends_policy_close_when_relay_membership_is_revoked() {
+        let (_data_tx, data_rx) = mpsc::channel(1);
+        let (_ctrl_tx, ctrl_rx) = mpsc::channel(1);
+        let (_restart_tx, restart_rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let (reason_tx, reason_rx) = watch::channel(None);
+        reason_tx.send_replace(Some(CommunityDisconnectReason::Policy {
+            reason: crate::state::RELAY_MEMBERSHIP_REVOKED_REASON.to_owned(),
+        }));
+
+        let (sink, state) = MockSink::new(None);
+        send_loop_inner(sink, data_rx, ctrl_rx, restart_rx, cancel, reason_rx).await;
+
+        let state = state.lock().expect("mock sink poisoned");
+        assert_eq!(state.messages.len(), 1);
+        match &state.messages[0] {
+            WsMessage::Close(Some(close)) => {
+                assert_eq!(close.code, axum::extract::ws::close_code::POLICY);
+                assert_eq!(
+                    close.reason.as_str(),
+                    crate::state::RELAY_MEMBERSHIP_REVOKED_REASON
+                );
+            }
+            other => panic!("expected one policy close, got {other:?}"),
         }
     }
 

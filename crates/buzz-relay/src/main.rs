@@ -475,8 +475,9 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     tokio::spawn(async move { pubsub_for_cache.run_cache_invalidation_subscriber().await });
 
     // Spawn Redis pub/sub subscriber for cross-pod connection-control commands.
-    // Bans recorded on other pods are received here and applied to any local
-    // sockets (via the consumer loop below), enforcing live disconnect fan-out.
+    // Bans and relay-membership removals recorded on other pods are received
+    // here and applied to any local sockets (via the consumer loop below),
+    // enforcing live disconnect fan-out.
     let pubsub_for_conn_ctrl = Arc::clone(&pubsub);
     tokio::spawn(async move { pubsub_for_conn_ctrl.run_conn_control_subscriber().await });
 
@@ -1042,43 +1043,100 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     }
 
     // Cross-pod connection-control consumer: receive disconnect commands from
-    // Redis pub/sub (published by the pod that recorded a ban) and close any
-    // matching local sockets. A member's live connections may land on any pod,
-    // so this is how a ban reaches sockets the banning pod does not hold. The DB
-    // ban row is the durable backstop; even a dropped command still refuses the
-    // banned member's next auth attempt at the auth seam.
+    // Redis pub/sub (published by the pod that recorded a ban or membership
+    // removal) and close any matching local sockets. A principal's live
+    // connections may land on any pod, so this is how a revocation reaches
+    // sockets the origin pod does not hold. The durable authorization row is
+    // the backstop; even a dropped command still refuses the next auth attempt
+    // at the auth seam.
     {
         let state_for_conn_ctrl = Arc::clone(&state);
         let mut rx = state_for_conn_ctrl.pubsub.subscribe_conn_control();
+        let mut status_rx = state_for_conn_ctrl.pubsub.subscribe_conn_control_status();
         tokio::spawn(async move {
             loop {
-                match rx.recv().await {
-                    Ok(scoped) => match scoped.command {
-                        buzz_pubsub::conn_control::ConnControl::DisconnectCommunity => {
-                            state_for_conn_ctrl
-                                .community_connections
-                                .disconnect_community(scoped.community_id);
+                tokio::select! {
+                    status = status_rx.recv() => {
+                        match status {
+                            Ok(buzz_pubsub::conn_control::ConnControlStatus::Connected) => {
+                                // Commands published while Redis was offline
+                                // are lossy. Reconcile the durable roster at
+                                // every successful reconnect before accepting
+                                // the next stale-socket window.
+                                let closed = state_for_conn_ctrl
+                                    .revalidate_live_relay_memberships()
+                                    .await;
+                                if closed > 0 {
+                                    tracing::info!(closed, "closed revoked sockets after conn-control reconnect");
+                                }
+                            }
+                            Ok(buzz_pubsub::conn_control::ConnControlStatus::Disconnected) => {
+                                tracing::warn!("Connection-control Redis stream disconnected; awaiting bounded reconciliation on reconnect");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                metrics::counter!("buzz_conn_control_status_lag_total").increment(n);
+                                tracing::warn!("Connection-control status consumer lagged by {n} messages; reconciling durable roster");
+                                let closed = state_for_conn_ctrl
+                                    .revalidate_live_relay_memberships()
+                                    .await;
+                                if closed > 0 {
+                                    tracing::info!(closed, "closed revoked sockets after conn-control status lag recovery");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                tracing::error!("Connection-control status broadcast channel closed");
+                                break;
+                            }
                         }
-                        buzz_pubsub::conn_control::ConnControl::DisconnectPubkey {
-                            pubkey,
-                            event_id,
-                            reason,
-                        } => {
-                            state_for_conn_ctrl.conn_manager.disconnect_pubkey(
-                                scoped.community_id,
-                                &pubkey,
-                                &event_id,
-                                &reason,
-                            );
-                        }
-                    },
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        metrics::counter!("buzz_conn_control_lag_total").increment(n);
-                        tracing::warn!("Connection-control consumer lagged by {n} messages");
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::error!("Connection-control broadcast channel closed");
-                        break;
+                    scoped = rx.recv() => {
+                        match scoped {
+                            Ok(scoped) => match scoped.command {
+                                buzz_pubsub::conn_control::ConnControl::DisconnectCommunity => {
+                                    state_for_conn_ctrl
+                                        .community_connections
+                                        .disconnect_community(scoped.community_id);
+                                }
+                                buzz_pubsub::conn_control::ConnControl::DisconnectPubkey {
+                                    pubkey,
+                                    event_id,
+                                    reason,
+                                    exclude_conn_id,
+                                } => {
+                                    // The community id came from the server-owned
+                                    // Redis channel. The host is irrelevant to topic
+                                    // release; keep this synthetic context explicitly
+                                    // scoped to that trusted id.
+                                    let tenant = buzz_core::tenant::TenantContext::resolved(
+                                        scoped.community_id,
+                                        "conn-control",
+                                    );
+                                    state_for_conn_ctrl
+                                        .disconnect_pubkey_local(
+                                            &tenant,
+                                            &pubkey,
+                                            &event_id,
+                                            &reason,
+                                            exclude_conn_id,
+                                        )
+                                        .await;
+                                }
+                            },
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                metrics::counter!("buzz_conn_control_lag_total").increment(n);
+                                tracing::warn!("Connection-control consumer lagged by {n} messages; reconciling durable roster");
+                                let closed = state_for_conn_ctrl
+                                    .revalidate_live_relay_memberships()
+                                    .await;
+                                if closed > 0 {
+                                    tracing::info!(closed, "closed revoked sockets after conn-control lag recovery");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                tracing::error!("Connection-control broadcast channel closed");
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -1286,11 +1344,13 @@ async fn run_community_revalidator(
     cancel: CancellationToken,
 ) {
     run_periodic_until_cancelled(period, cancel, || async {
-        let closed = state.revalidate_live_communities().await;
-        if closed > 0 {
+        let closed_communities = state.revalidate_live_communities().await;
+        let closed_memberships = state.revalidate_live_relay_memberships().await;
+        if closed_communities > 0 || closed_memberships > 0 {
             tracing::info!(
-                closed,
-                "closed sockets for inactive communities during lifecycle revalidation"
+                closed_communities,
+                closed_memberships,
+                "closed stale sockets during lifecycle and relay-membership revalidation"
             );
         }
     })

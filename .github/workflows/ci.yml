@@ -373,6 +373,7 @@ jobs:
             -p buzz-test-client \
             --lib \
             --test e2e_event_reminder \
+            --test e2e_membership_revocation \
             --archive-file target/ci/backend-integration-tests.tar.zst
       - name: Save relay artifacts cache
         # PR-scoped exact-source entries cannot warm main or other PRs and churn
@@ -702,6 +703,29 @@ jobs:
           done
           cat /tmp/buzz-relay.log
           exit 1
+      - name: Writer-backed membership production seams
+        # These ignored library tests bind the direct REQ/COUNT/EVENT and
+        # fan-out guards to their real PostgreSQL-backed handlers. The live
+        # E2E tests below cover NIP-42 lifecycle and Redis control separately.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'package(buzz-relay) and test(/handlers::event::tests::fanout_access::postgres_tests::closed_relay_membership_removal_denies_req_count_event_and_fanout/)' \
+            --run-ignored ignored-only \
+            --no-tests fail
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'package(buzz-relay) and test(/api::relay_members::postgres_tests::current_relay_membership_for_auth_tracks_writer_roster_changes/)' \
+            --run-ignored ignored-only \
+            --no-tests fail
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'package(buzz-relay) and test(/handlers::event::tests::fanout_access::postgres_tests::self_leave_not_found_ack_wins_over_a_concurrent_revoked_event/)' \
+            --run-ignored ignored-only \
+            --no-tests fail
+        env:
+          BUZZ_TEST_DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+          BUZZ_TEST_REDIS_URL: redis://localhost:6379
       - name: Invite security tests
         run: |
           cargo nextest run \
@@ -734,6 +758,113 @@ jobs:
             --run-ignored ignored-only
         env:
           RELAY_URL: ws://localhost:3000
+      - name: Stop open relay before membership e2e
+        # Existing backend tests above intentionally use the open relay. Stop
+        # it before the Redis phase so PUBLISH's subscriber count identifies
+        # the membership relay instead of an unrelated consumer.
+        run: |
+          if [[ -f /tmp/buzz-relay.pid ]]; then
+            kill "$(cat /tmp/buzz-relay.pid)" 2>/dev/null || true
+            for attempt in $(seq 1 30); do
+              if ! kill -0 "$(cat /tmp/buzz-relay.pid)" 2>/dev/null; then
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "open relay did not stop" >&2
+            exit 1
+          fi
+      - name: Start membership-gated relay
+        # The Redis phase uses the production membership relay with a long
+        # sweep interval. Direct handler guards are exercised by the
+        # real-PostgreSQL library test above; this live phase keeps causal
+        # evidence focused on Redis connection-control.
+        run: |
+          docker exec -e PGPASSWORD=buzz_dev buzz-postgres \
+            psql -U buzz -d buzz -v ON_ERROR_STOP=1 -qtA -c "
+          INSERT INTO communities (id, host)
+          VALUES ('00000000-0000-4000-8000-00000000c0d1', 'localhost:3001')
+          ON CONFLICT (lower(host)) DO NOTHING
+          ;"
+          chmod +x ./target/ci/buzz-relay
+          nohup env \
+            DATABASE_URL="postgres://buzz:${BUZZ_TEST_POSTGRES_PASSWORD}@localhost:5432/buzz" \
+            REDIS_URL=redis://localhost:6379 \
+            RELAY_URL=ws://localhost:3001 \
+            BUZZ_BIND_ADDR=0.0.0.0:3001 \
+            BUZZ_HEALTH_PORT=8181 \
+            BUZZ_METRICS_PORT=9201 \
+            BUZZ_REQUIRE_AUTH_TOKEN=false \
+            BUZZ_REQUIRE_RELAY_MEMBERSHIP=true \
+            RELAY_OWNER_PUBKEY=79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 \
+            BUZZ_RELAY_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+            BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS=300 \
+            BUZZ_RECONCILE_CHANNELS=true \
+            BUZZ_GIT_PROBE_WRITERS=8 \
+            SPROUT_REMINDER_SCHEDULER_INTERVAL_SECS=1 \
+            ./target/ci/buzz-relay > /tmp/buzz-relay-membership.log 2>&1 &
+          echo $! > /tmp/buzz-relay-membership.pid
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$(cat /tmp/buzz-relay-membership.pid)" 2>/dev/null; then
+              cat /tmp/buzz-relay-membership.log
+              exit 1
+            fi
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8181/_readiness || true)
+            if [ "${status_code}" = "200" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/buzz-relay-membership.log
+          exit 1
+      - name: Live relay membership revocation e2e
+        # Exercise the causal Redis connection-control path while the durable
+        # membership row remains present. NIP-42 idle-sweep and fresh-auth
+        # denial run in the separate interval-1 phase below.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'binary(e2e_membership_revocation) and test(redis_connection_control_revokes_live_socket)' \
+            --run-ignored ignored-only \
+            --no-tests fail
+        env:
+          RELAY_URL: ws://localhost:3001
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+      - name: Stop request and Redis membership relay
+        run: |
+          if [[ -f /tmp/buzz-relay-membership.pid ]]; then
+            kill "$(cat /tmp/buzz-relay-membership.pid)" 2>/dev/null || true
+            for attempt in $(seq 1 30); do
+              if ! kill -0 "$(cat /tmp/buzz-relay-membership.pid)" 2>/dev/null; then
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "request/Redis membership relay did not stop" >&2
+            exit 1
+          fi
+      - name: Start sweep membership relay
+        # Reuse the standard test launcher on :3000 for a separate sweep
+        # phase. The previous relay is stopped, so Redis remains isolated to
+        # this one consumer.
+        run: |
+          BUZZ_REQUIRE_RELAY_MEMBERSHIP=true \
+          RELAY_OWNER_PUBKEY=79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 \
+          BUZZ_RELAY_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+          BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS=1 \
+          BUZZ_GIT_CONFORMANCE_PROBE=false \
+          CARGO_PROFILE=ci \
+          ./scripts/start-relay-for-tests.sh --no-build
+      - name: Live relay membership sweep e2e
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'binary(e2e_membership_revocation) and test(writer_membership_sweep_closes_idle_subscription)' \
+            --run-ignored ignored-only \
+            --no-tests fail
+        env:
+          RELAY_URL: ws://localhost:3000
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: NIP-MP coordinate deletion guard
         # Verifies the never-delete-newer invariant of soft_delete_by_coordinate:
         # a stale tombstone (created_at earlier than the live head) spares that
@@ -750,7 +881,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: backend-integration-relay-log
-          path: /tmp/buzz-relay.log
+          path: |
+            /tmp/buzz-relay.log
+            /tmp/buzz-relay-membership.log
           if-no-files-found: ignore
 
   relay-e2e:

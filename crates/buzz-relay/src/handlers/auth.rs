@@ -217,7 +217,7 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
             }
 
             // Relay membership gate — uses the shared helper with NIP-OA fallback.
-            let nip_oa_owner = match crate::api::relay_members::enforce_relay_membership(
+            let admission_owner = match crate::api::relay_members::enforce_relay_membership(
                 &state,
                 conn.tenant.community(),
                 pubkey.as_bytes(),
@@ -241,18 +241,22 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 }
             };
 
-            // Membership admission is not owner registration. Direct members on
-            // a closed relay return Ok(None) from enforce; still backfill NIP-OA.
-            let nip_oa_owner = crate::api::relay_members::owner_for_nip_oa_backfill(
-                nip_oa_owner,
-                pubkey.as_bytes(),
-                auth_tag_json.as_deref(),
-                Some(signed_auth_created_at),
-            );
+            // Backfill the verified relationship for receipts/observer data,
+            // but keep it separate from admission provenance. A direct member
+            // may carry an NIP-OA tag for that metadata; it must not acquire
+            // owner fallback after its own relay-membership row is removed.
+            let backfill_owner = if state.config.allow_nip_oa_auth {
+                crate::api::relay_members::owner_for_nip_oa_backfill(
+                    admission_owner,
+                    pubkey.as_bytes(),
+                    auth_tag_json.as_deref(),
+                    Some(signed_auth_created_at),
+                )
+            } else {
+                None
+            };
 
-            // Stash NIP-OA owner on the auth context only after the shared
-            // backfill confirms the first-write-wins relationship.
-            if let Some(owner) = nip_oa_owner {
+            if let Some(owner) = backfill_owner {
                 if crate::api::relay_members::materialize_nip_oa_owner(
                     &state,
                     &conn.tenant,
@@ -261,7 +265,12 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 )
                 .await
                 {
-                    auth_ctx.agent_owner_pubkey = Some(owner);
+                    // Only owner-attested admission is retained on the live
+                    // auth context. Direct-member backfill remains durable
+                    // metadata and never becomes an authorization fallback.
+                    if admission_owner.as_ref() == Some(&owner) {
+                        auth_ctx.agent_owner_pubkey = Some(owner);
+                    }
                 } else {
                     warn!(
                         conn_id = %conn_id,
@@ -269,14 +278,34 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                         nip_oa_owner = %owner.to_hex(),
                         "NIP-OA owner could not be materialized"
                     );
+                    if admission_owner.is_some() {
+                        metrics::counter!(
+                            "buzz_auth_failures_total",
+                            "reason" => "nip_oa_materialization_failed"
+                        )
+                        .increment(1);
+                        *conn.auth_state.write().await = AuthState::Failed;
+                        conn.send(RelayMessage::ok(
+                            &event_id_hex,
+                            false,
+                            "error: internal error establishing delegated admission",
+                        ));
+                        return;
+                    }
                 }
             }
 
             info!(conn_id = %conn_id, pubkey = %pubkey.to_hex(), "NIP-42 auth successful");
+            let agent_owner_pubkey = auth_ctx
+                .agent_owner_pubkey
+                .as_ref()
+                .map(|owner| owner.to_bytes().to_vec());
             *conn.auth_state.write().await = AuthState::Authenticated(auth_ctx);
-            state
-                .conn_manager
-                .set_authenticated_pubkey(conn_id, pubkey.to_bytes().to_vec());
+            state.conn_manager.set_authenticated_identity(
+                conn_id,
+                pubkey.to_bytes().to_vec(),
+                agent_owner_pubkey,
+            );
             conn.send(RelayMessage::ok(&event_id_hex, true, ""));
         }
         Err(e) => {

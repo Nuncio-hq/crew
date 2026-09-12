@@ -1179,7 +1179,8 @@ async fn send_loop<S>(
             _ = cancel.cancelled() => {
                 let close = disconnect_reason
                     .borrow()
-                    .map_or(WsMessage::Close(None), |reason| reason.close_message());
+                    .as_ref()
+                    .map_or(WsMessage::Close(None), crate::state::CommunityDisconnectReason::close_message);
                 let _ = ws_send.send(close).await;
                 break;
             }

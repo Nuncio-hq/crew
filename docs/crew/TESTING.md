@@ -110,6 +110,45 @@ identity once, and then verify a subsequent authenticated read and write. This
 admission is a staging control-plane operation; it does not grant channel
 membership, provider access, or generation permission.
 
+Membership removal is also a live-session boundary for the Nostr event
+WebSocket transport. After the operator runs `buzz-admin remove-member
+--pubkey <pubkey>` and the command commits, NIP-42 event sockets authenticated
+as that pubkey must receive the typed `restricted: not a relay member`
+rejection and close, including sockets held by another relay pod. A fresh
+connection must still complete the WebSocket handshake and then receive the
+same membership denial during AUTH; a relay restart is not required to make
+removal effective. Huddle audio uses a separate lifecycle transport and is
+outside this #362 event-WebSocket revocation contract.
+The relay also rechecks the writer-backed membership row before each live
+`REQ`, `COUNT`, and `EVENT`, and before fan-out delivery, so a missed
+connection-control message cannot preserve query, write, or subscription
+access.
+As an idle-session backstop, each pod periodically reconciles its authenticated
+identities against that same writer-backed roster (the interval is bounded by
+`BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS`), and repeats the reconciliation
+after a connection-control Redis reconnect or broadcast lag. A Redis publish
+failure therefore leaves an operator-visible propagation error while the
+durable row remains the authority for the next bounded sweep.
+
+### Closed-relay fan-out liveness (#362)
+
+The fan-out delivery chokepoint authorizes closed-relay recipients in batches
+of at most 512 unique principal and verified NIP-OA owner keys. All writer
+queries for one event share a two-second absolute deadline; a writer timeout or
+other lookup error drops the complete batch. A per-state semaphore, derived
+from the configured handler capacity, bounds concurrent fan-out batches; an
+exhausted semaphore also drops the batch immediately. Current writer results
+retain direct members and owner-admitted agents only when NIP-OA admission is
+enabled, while the receiver's community label is checked before the roster
+lookup. Terminal drops are counted by bounded reason labels in
+`buzz_fanout_membership_terminal_drops_total`.
+
+The production-bound PostgreSQL tests cover a locked writer, semaphore
+exhaustion, and a healthy 515-identity batch crossing the 512-key boundary.
+Run these ignored tests with `scripts/postgres-test-run.sh` and an owned
+isolated PostgreSQL database; the test lane's database wrapper supplies a
+fresh per-test database and removes it after the run.
+
 ## Project Wiki read/search/source slice (#397)
 
 The merged [#397](https://github.com/Nuncio-hq/crew/pull/397) implementation

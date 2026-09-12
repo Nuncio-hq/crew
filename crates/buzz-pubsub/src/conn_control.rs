@@ -1,18 +1,18 @@
 //! Cross-pod connection-control commands over Redis pub/sub.
 //!
 //! Under horizontal scaling a member's live connections may land on any pod,
-//! so a moderation action taken on one pod (a ban) must reach the pod holding
-//! the victim's socket. This module carries connection-control intents — today
-//! only "disconnect this pubkey" — to every pod, which each apply locally
-//! against their own [`crate::ConnectionManager`].
+//! so a moderation or membership action taken on one pod must reach the pod
+//! holding the principal's socket. This module carries connection-control
+//! intents — today only "disconnect this pubkey" — to every pod, which each
+//! apply locally against their own [`crate::ConnectionManager`].
 //!
 //! This is deliberately a **separate** channel from `cache_invalidation`: a
 //! cache-key drop is a pure, idempotent hint (the DB is re-read on the next
 //! access), whereas a disconnect is an imperative, non-idempotent action on a
 //! live socket. Folding it into the cache-invalidation enum would break that
 //! module's stated invariant ("a pure cache-key drop, never an evict payload").
-//! The DB ban row remains the durable backstop: even if a disconnect message is
-//! dropped, the next auth attempt is refused at the auth seam.
+//! The durable authorization row remains the backstop: even if a disconnect
+//! message is dropped, the next auth attempt is refused at the auth seam.
 
 use buzz_core::{CommunityId, TenantContext};
 use futures_util::StreamExt;
@@ -57,16 +57,23 @@ pub enum ConnControl {
     /// Disconnect every live socket bound to the carrying community.
     DisconnectCommunity,
     /// Disconnect every live connection authenticated as `pubkey` in the
-    /// carrying community — live ban enforcement. `pubkey` is 32 raw bytes.
+    /// carrying community — live ban or membership-revocation enforcement.
+    /// `pubkey` is 32 raw bytes.
     /// `event_id` and `reason` reproduce the same NIP-01 `OK` frame the origin
     /// pod sent, so a member disconnected on any pod learns why.
     DisconnectPubkey {
-        /// Banned member's pubkey bytes.
+        /// Revoked principal's pubkey bytes.
         pubkey: Vec<u8>,
-        /// Id echoed in the closing `OK` frame (the ban event's id on origin).
+        /// Id echoed in the closing `OK` frame (the triggering event's id on
+        /// the origin pod, or a synthetic id for operator commands).
         event_id: String,
         /// Human-readable close reason for the `OK` frame.
         reason: String,
+        /// Origin connection to leave open for a self-leave acknowledgement.
+        /// Remote pods normally have no matching UUID; the field is primarily
+        /// for the origin pod's own loopback publication.
+        #[serde(default)]
+        exclude_conn_id: Option<Uuid>,
     },
 }
 
@@ -77,6 +84,19 @@ pub struct ScopedConnControl {
     pub community_id: CommunityId,
     /// The tenant-local connection-control command.
     pub command: ConnControl,
+}
+
+/// Lifecycle notification for the Redis connection-control subscriber.
+///
+/// A successful reconnect is a resynchronization boundary: the relay must
+/// reconcile its local authenticated identities against the durable roster
+/// because commands published while this subscriber was offline were lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnControlStatus {
+    /// The subscriber has completed its pattern subscription.
+    Connected,
+    /// The current Redis stream ended and the reconnect loop will retry.
+    Disconnected,
 }
 
 /// Initial reconnect backoff (1 second).
@@ -90,11 +110,12 @@ const BACKOFF_MAX_SECS: u64 = 30;
 pub async fn run_conn_control_subscriber(
     redis_url: String,
     broadcast_tx: broadcast::Sender<ScopedConnControl>,
+    status_tx: broadcast::Sender<ConnControlStatus>,
 ) {
     let mut backoff_secs = BACKOFF_INITIAL_SECS;
 
     loop {
-        match connect_and_subscribe(&redis_url, &broadcast_tx).await {
+        match connect_and_subscribe(&redis_url, &broadcast_tx, &status_tx).await {
             Ok(()) => {
                 backoff_secs = BACKOFF_INITIAL_SECS;
                 tracing::warn!(
@@ -116,6 +137,7 @@ pub async fn run_conn_control_subscriber(
 async fn connect_and_subscribe(
     redis_url: &str,
     broadcast_tx: &broadcast::Sender<ScopedConnControl>,
+    status_tx: &broadcast::Sender<ConnControlStatus>,
 ) -> Result<(), redis::RedisError> {
     let client = redis::Client::open(redis_url)?;
     let mut conn = client.get_async_pubsub().await?;
@@ -123,6 +145,7 @@ async fn connect_and_subscribe(
     conn.psubscribe(CONN_CONTROL_PATTERN).await?;
 
     tracing::info!("Redis conn-control subscriber connected — listening on {CONN_CONTROL_PATTERN}");
+    let _ = status_tx.send(ConnControlStatus::Connected);
 
     let mut stream = conn.on_message();
     while let Some(msg) = stream.next().await {
@@ -157,6 +180,8 @@ async fn connect_and_subscribe(
             tracing::trace!("No conn-control receivers — message dropped");
         }
     }
+
+    let _ = status_tx.send(ConnControlStatus::Disconnected);
 
     Ok(())
 }
@@ -222,8 +247,26 @@ mod tests {
             pubkey: vec![7u8; 32],
             event_id: "abc123".to_string(),
             reason: "blocked: you are banned from this community".to_string(),
+            exclude_conn_id: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert_eq!(serde_json::from_str::<ConnControl>(&json).unwrap(), cmd);
+    }
+
+    #[test]
+    fn disconnect_command_accepts_legacy_payload_without_exclusion() {
+        let command: ConnControl = serde_json::from_str(
+            r#"{"op":"DisconnectPubkey","pubkey":[7,7],"event_id":"abc123","reason":"blocked"}"#,
+        )
+        .expect("legacy disconnect command should remain readable");
+        assert_eq!(
+            command,
+            ConnControl::DisconnectPubkey {
+                pubkey: vec![7, 7],
+                event_id: "abc123".to_string(),
+                reason: "blocked".to_string(),
+                exclude_conn_id: None,
+            }
+        );
     }
 }

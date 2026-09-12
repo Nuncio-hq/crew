@@ -307,6 +307,10 @@ async fn execute_relay_admin_command(
     let target_hex = extract_p_tag_hex(event)
         .ok_or_else(|| "missing or invalid p tag".to_string())?
         .to_ascii_lowercase();
+    // Decode before the DB mutation so a malformed target can never leave a
+    // committed removal without its live-session eviction.
+    let target_pubkey_bytes =
+        hex::decode(&target_hex).map_err(|e| format!("invalid target pubkey: {e}"))?;
 
     match kind {
         // kind:9030 — Add relay member
@@ -392,7 +396,30 @@ async fn execute_relay_admin_command(
             };
 
             match remove_result {
-                RemoveResult::Removed => {}
+                RemoveResult::Removed => {
+                    if state.config.require_relay_membership {
+                        // Membership is a relay-wide admission boundary only
+                        // when the deployment enforces the roster. Close the
+                        // target's already-authenticated sockets immediately
+                        // after the durable delete, and fan the same command to
+                        // every relay pod. Open relays deliberately retain
+                        // their existing admission semantics after a roster
+                        // row is removed.
+                        state
+                            .disconnect_pubkey_clusterwide(
+                                tenant,
+                                &target_pubkey_bytes,
+                                &event.id.to_hex(),
+                                "restricted: not a relay member",
+                            )
+                            .await
+                            .map_err(|e| {
+                                format!(
+                                    "member removed but live-session revocation publish failed: {e}"
+                                )
+                            })?;
+                    }
+                }
                 RemoveResult::IsOwner => {
                     return Err("cannot remove the relay owner".to_string());
                 }

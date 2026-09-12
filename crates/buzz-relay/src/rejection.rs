@@ -9,7 +9,8 @@
 use crate::admission::AdmissionError;
 use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::{ClientMessage, RelayMessage};
-use crate::state::AppState;
+use crate::state::{AppState, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT};
+use axum::extract::ws::Message as WsMessage;
 use buzz_auth::LimitType;
 
 /// What a rejected client frame is correlated back to.
@@ -42,6 +43,90 @@ pub(crate) fn request_rejection_message(target: RejectionTarget<'_>, reason: &st
         RejectionTarget::Event(event_id) => RelayMessage::ok(&event_id.to_hex(), false, reason),
         RejectionTarget::Connection => RelayMessage::notice(reason),
     }
+}
+
+/// Reject a request after the authenticated principal's relay membership has
+/// been revoked. The request-specific frame is queued on the priority control
+/// channel and the connection is cancelled. The connection manager records the
+/// policy close reason before cancellation so a full control channel still
+/// produces a typed policy close frame from the writer.
+pub(crate) async fn reject_revoked_connection(
+    state: &AppState,
+    conn: &ConnectionState,
+    target: RejectionTarget<'_>,
+    reason: &str,
+) {
+    // Self-leave holds this fence from before its durable delete through its
+    // event ACK and policy close. Wait for that finalization before evicting
+    // subscriptions or cancelling a request that raced with it; otherwise a
+    // late REQ/EVENT could cancel the origin before its leave ACK is queued.
+    // Bare test/teardown senders are not in the manager and retain the direct
+    // fallback behavior below.
+    let _revocation_guard = if state.conn_manager.has_connection(conn.conn_id) {
+        match state
+            .conn_manager
+            .acquire_revocation_lock(conn.conn_id, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT)
+            .await
+        {
+            Some(guard) => Some(guard),
+            None => {
+                // A managed connection can only hold this fence while a
+                // self-leave or another durable revocation owns its terminal
+                // path. The leave operation has its own bounded deadline that
+                // is shorter than this wait. If that contract is ever
+                // violated, do not cancel here: cancellation would race the
+                // owner's event ACK and turn a recoverable timeout into a
+                // permanently lost response. The owner remains responsible
+                // for the observable terminal close.
+                tracing::warn!(
+                    conn_id = %conn.conn_id,
+                    "revoked request observed an unfinished revocation fence; deferring cleanup to its owner"
+                );
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
+    // The fence owner queues its correlated leave ACK before cancelling the
+    // socket. A request that was waiting on the same fence can therefore wake
+    // after that terminal path has already run; the cancellation bit makes
+    // this rejection a no-op and prevents a duplicate event ACK or CLOSED
+    // frame from being appended after the policy close.
+    if conn.cancel.is_cancelled() {
+        return;
+    }
+
+    let target_sub_id = match target {
+        RejectionTarget::Subscription(sub_id) => Some(sub_id),
+        RejectionTarget::Event(_) | RejectionTarget::Connection => None,
+    };
+
+    // Remove all old subscriptions before cancellation. A request may be the
+    // first frame to discover a missed Redis revocation; cleaning both maps
+    // here prevents that stale connection from continuing to receive global
+    // fan-out after its denial frame is sent.
+    let removed = state
+        .evict_connection_subscriptions(&conn.tenant, conn.conn_id)
+        .await;
+    if state.conn_manager.mark_policy_close(conn.conn_id, reason) {
+        let frame = request_rejection_message(target, reason);
+        let _ = conn.ctrl_tx.try_send(WsMessage::Text(frame.into()));
+        for subscription in removed {
+            if target_sub_id.is_some_and(|sub_id| subscription.sub_id == sub_id) {
+                continue;
+            }
+            let frame = RelayMessage::closed(&subscription.sub_id, reason);
+            let _ = conn.ctrl_tx.try_send(WsMessage::Text(frame.into()));
+        }
+    } else {
+        // Unit tests and a connection that raced deregistration may not still
+        // be present in the manager; the ConnectionState sender remains valid.
+        let frame = request_rejection_message(target, reason);
+        let _ = conn.ctrl_tx.try_send(WsMessage::Text(frame.into()));
+    }
+    conn.cancel.cancel();
 }
 
 /// Applies the WebSocket admission quotas to `msg`, returning whether it may be
@@ -158,12 +243,15 @@ mod tests {
     //! connection's outbound channel.
 
     use std::sync::Arc;
+    use std::time::Duration;
 
     use axum::extract::ws::Message as WsMessage;
     use nostr::{EventBuilder, Keys, Kind};
     use tokio::sync::mpsc;
 
-    use crate::connection::tests::{authenticated_state, read_frame, test_conn_with_auth};
+    use crate::connection::tests::{
+        authenticated_state, read_frame, test_conn_with_auth, test_conn_with_auth_and_ctrl,
+    };
     use crate::connection::AuthState;
 
     use super::*;
@@ -332,5 +420,97 @@ mod tests {
 
         assert_eq!(frame[0], "CLOSED");
         assert_eq!(frame[1], "history-abc");
+    }
+
+    #[tokio::test]
+    async fn revoked_request_uses_its_subscription_closed_channel_and_cancels() {
+        let state = crate::state::tests::test_state().await;
+        let (conn, _send_rx, mut ctrl_rx) = test_conn_with_auth_and_ctrl(authenticated_state());
+
+        reject_revoked_connection(
+            &state,
+            &conn,
+            RejectionTarget::Subscription("live-sub"),
+            crate::state::RELAY_MEMBERSHIP_REVOKED_REASON,
+        )
+        .await;
+
+        let frame = read_frame(&mut ctrl_rx);
+        assert_eq!(frame[0], "CLOSED");
+        assert_eq!(frame[1], "live-sub");
+        assert_eq!(
+            frame[2],
+            crate::state::RELAY_MEMBERSHIP_REVOKED_REASON,
+            "a revoked REQ must settle on CLOSED before cancellation"
+        );
+        assert!(conn.cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn revoked_request_waits_for_self_leave_ack_before_cancelling() {
+        let state = crate::state::tests::test_state().await;
+        let (conn, _send_rx, mut ctrl_rx) = test_conn_with_auth_and_ctrl(authenticated_state());
+        state.conn_manager.register(
+            conn.conn_id,
+            conn.send_tx.clone(),
+            conn.ctrl_tx.clone(),
+            None,
+            conn.cancel.clone(),
+            conn.tenant.community(),
+            Arc::clone(&conn.backpressure_count),
+            Arc::clone(&conn.subscriptions),
+            conn.grace_limit,
+        );
+        let leave_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(conn.conn_id)
+            .expect("self-leave fence");
+
+        let rejection = tokio::spawn({
+            let state = Arc::clone(&state);
+            let conn = Arc::clone(&conn);
+            async move {
+                reject_revoked_connection(
+                    &state,
+                    &conn,
+                    RejectionTarget::Subscription("raced-req"),
+                    crate::state::RELAY_MEMBERSHIP_REVOKED_REASON,
+                )
+                .await;
+            }
+        });
+        let mut rejection = rejection;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut rejection)
+                .await
+                .is_err(),
+            "a request racing a self-leave must wait for the leave finalization"
+        );
+        assert!(!conn.cancel.is_cancelled());
+        assert!(matches!(
+            ctrl_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        // Model the self-leave finalizer's already-queued successful event ACK.
+        conn.ctrl_tx
+            .try_send(WsMessage::Text(
+                RelayMessage::ok(&"a".repeat(64), true, "you left").into(),
+            ))
+            .expect("queue self-leave ACK");
+        drop(leave_guard);
+
+        tokio::time::timeout(Duration::from_secs(1), &mut rejection)
+            .await
+            .expect("revoked request should finish after the leave fence releases")
+            .expect("revoked request task should not panic");
+        let leave_ack = read_frame(&mut ctrl_rx);
+        assert_eq!(leave_ack[0], "OK");
+        assert_eq!(leave_ack[2], true);
+        let request_closed = read_frame(&mut ctrl_rx);
+        assert_eq!(request_closed[0], "CLOSED");
+        assert_eq!(request_closed[1], "raced-req");
+        assert!(conn.cancel.is_cancelled());
+        state.conn_manager.deregister(conn.conn_id);
     }
 }
