@@ -32,100 +32,11 @@ fn agent_secret_store() -> Option<&'static SecretStore> {
     }
 }
 
-// Test-only credential I/O seam. The production keyring remains the default;
-// tests register only the exact pubkey they own so an unavailable OS keyring
-// cannot hide the local deletion/recovery behavior under test.
 #[cfg(test)]
-struct TestAgentKeyDelete {
-    result: Result<(), String>,
-    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    token: std::sync::Arc<()>,
-}
-
+#[path = "key_delete_test_support.rs"]
+mod key_delete_test_support;
 #[cfg(test)]
-fn test_agent_key_delete_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, TestAgentKeyDelete>> {
-    static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, TestAgentKeyDelete>>,
-    > = std::sync::OnceLock::new();
-    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-/// RAII handle for a test-only override of one agent key deletion.
-#[cfg(test)]
-pub(crate) struct TestAgentKeyDeleteGuard {
-    pubkey: String,
-    token: std::sync::Arc<()>,
-    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-}
-
-#[cfg(test)]
-impl TestAgentKeyDeleteGuard {
-    /// Return the number of times the production deletion seam used this key.
-    pub(crate) fn calls(&self) -> usize {
-        self.calls.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-#[cfg(test)]
-impl Drop for TestAgentKeyDeleteGuard {
-    fn drop(&mut self) {
-        let mut registry = test_agent_key_delete_registry()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if registry
-            .get(&self.pubkey)
-            .is_some_and(|entry| std::sync::Arc::ptr_eq(&entry.token, &self.token))
-        {
-            registry.remove(&self.pubkey);
-        }
-    }
-}
-
-/// Inject one exact agent-key deletion result for a production-bound test.
-///
-/// The override is keyed by pubkey and removed when the returned guard drops;
-/// all other keys continue through the real OS-keyring path.
-#[cfg(test)]
-pub(crate) fn install_test_agent_key_delete(
-    pubkey: &str,
-    result: Result<(), String>,
-) -> TestAgentKeyDeleteGuard {
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let token = std::sync::Arc::new(());
-    let mut registry = test_agent_key_delete_registry()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    assert!(
-        !registry.contains_key(pubkey),
-        "test agent-key deletion override already installed"
-    );
-    registry.insert(
-        pubkey.to_string(),
-        TestAgentKeyDelete {
-            result,
-            calls: std::sync::Arc::clone(&calls),
-            token: std::sync::Arc::clone(&token),
-        },
-    );
-    TestAgentKeyDeleteGuard {
-        pubkey: pubkey.to_string(),
-        token,
-        calls,
-    }
-}
-
-#[cfg(test)]
-fn test_agent_key_delete(pubkey: &str) -> Option<Result<(), String>> {
-    let registry = test_agent_key_delete_registry()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let entry = registry.get(pubkey)?;
-    entry
-        .calls
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    Some(entry.result.clone())
-}
+pub(crate) use key_delete_test_support::install_test_agent_key_delete;
 
 pub fn managed_agents_base_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let app_data_dir = app
@@ -736,7 +647,7 @@ fn copy_agent_keys_between_stores(pubkeys: &[String], src: &impl KeyStore, dst: 
 /// failures rather than swallowing them.
 pub(crate) fn try_delete_agent_key(pubkey: &str) -> Result<(), String> {
     #[cfg(test)]
-    if let Some(result) = test_agent_key_delete(pubkey) {
+    if let Some(result) = key_delete_test_support::test_agent_key_delete(pubkey) {
         return result;
     }
     if let Some(store) = agent_secret_store() {

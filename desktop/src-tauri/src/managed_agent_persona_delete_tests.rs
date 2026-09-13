@@ -252,7 +252,7 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
 
     let pubkey = nostr::Keys::generate().public_key().to_hex();
     let key_delete = managed_agents::install_test_agent_key_delete(&pubkey, Ok(()));
-    let mut record = persona().into_agent_record();
+    let mut record = persona.clone().into_agent_record();
     record.pubkey = pubkey.clone();
     record.persona_id = Some(persona.id.clone());
     record.relay_url = RELAY.into();
