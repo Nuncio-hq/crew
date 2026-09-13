@@ -10,6 +10,42 @@ use std::sync::{
 };
 use tauri::Manager;
 
+#[test]
+fn receipt_directory_scan_counts_unrelated_entries_before_stopping() {
+    let _path_guard = crate::managed_agents::lock_path_mutex();
+    let temp = tempfile::tempdir().expect("temporary app-data root");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).expect("temporary home");
+    let _env_guard = HomeGuard {
+        home: std::env::var_os("HOME"),
+        xdg_data_home: std::env::var_os("XDG_DATA_HOME"),
+    };
+    std::env::set_var("HOME", &home);
+    std::env::set_var("XDG_DATA_HOME", &home);
+    let app = app();
+    let dir = crate::managed_agents::managed_agents_base_dir(app.handle())
+        .expect("managed-agent data directory")
+        .join("agent-pids");
+    std::fs::create_dir_all(&dir).expect("receipt directory");
+    for index in 0..4096 {
+        std::fs::write(dir.join(format!("unrelated-{index}.txt")), b"")
+            .expect("bounded unrelated fixture entry");
+    }
+    let mut terminate = |_pid| -> Result<(), String> {
+        panic!("an unverified directory must not stop any process")
+    };
+    let pubkey = "f".repeat(64);
+    stop_untracked_agent_receipts(app.handle(), &pubkey, &mut terminate)
+        .expect("a complete scan at the entry limit is valid");
+    std::fs::write(dir.join("over-limit.txt"), b"").expect("one excess entry");
+    let error = stop_untracked_agent_receipts(app.handle(), &pubkey, &mut terminate)
+        .expect_err("an incomplete receipt scan must keep deletion pending");
+    assert_eq!(
+        error,
+        "managed-agent runtime receipt scan exceeded its entry limit; deletion remains pending"
+    );
+}
+
 struct HomeGuard {
     home: Option<std::ffi::OsString>,
     xdg_data_home: Option<std::ffi::OsString>,
