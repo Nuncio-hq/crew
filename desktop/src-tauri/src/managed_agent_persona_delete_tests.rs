@@ -278,11 +278,7 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
         .join(format!("{}.json", receipt.key.runtime_id()));
     let receipt_bytes = std::fs::read(&receipt_path).expect("read valid receipt bytes");
     assert!(managed_agents::process_is_running(child.pid()));
-    assert!(managed_agents::valid_agent_runtime_receipt(
-        &receipt_path,
-        &receipt,
-        &identifier
-    ));
+    crate::managed_agent_delete::assert_live_receipt_valid(&receipt_path, &receipt, &identifier);
     let receipt_target = temp.path().join("linked-owned-receipt-target.json");
     std::fs::write(&receipt_target, &receipt_bytes).expect("write symlink receipt target");
     std::fs::remove_file(&receipt_path).expect("remove regular receipt before replacement");
@@ -409,11 +405,11 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
         std::fs::remove_file(&receipt_path).expect("remove failed receipt symlink");
         managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
             .expect("restore regular receipt for fresh recovery");
-        assert!(managed_agents::valid_agent_runtime_receipt(
+        crate::managed_agent_delete::assert_live_receipt_valid(
             &receipt_path,
             &receipt,
-            &identifier
-        ));
+            &identifier,
+        );
         assert!(managed_agents::process_is_running(child.pid()));
 
         drop(app);

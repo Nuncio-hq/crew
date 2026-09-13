@@ -180,6 +180,39 @@ impl OwnedReceiptChild {
     }
 }
 
+/// Keep observations from the exact production matcher call when a live
+/// receipt fails validation; never retry a failed ownership decision here.
+#[cfg(unix)]
+pub(crate) fn assert_live_receipt_valid(
+    path: &std::path::Path,
+    receipt: &crate::managed_agents::ManagedAgentRuntimeReceipt,
+    instance_id: &str,
+) {
+    let running = std::cell::Cell::new(None);
+    let marker = std::cell::Cell::new(None);
+    let valid = crate::managed_agents::valid_agent_runtime_receipt_with(
+        path,
+        receipt,
+        instance_id,
+        |pid| {
+            let result = crate::managed_agents::process_is_running(pid);
+            running.set(Some(result));
+            result
+        },
+        |pid, instance| {
+            let result = crate::managed_agents::process_has_buzz_marker(pid, instance);
+            marker.set(Some(result));
+            result
+        },
+    );
+    assert!(
+        valid,
+        "owned receipt invalid: running={:?}, marker={:?}",
+        running.get(),
+        marker.get(),
+    );
+}
+
 /// Use our test executable: macOS omits the environment of `/bin/sleep` from
 /// KERN_PROCARGS2, preventing the real ownership matcher from seeing its marker.
 #[cfg(unix)]
@@ -334,11 +367,7 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
         child.pid(),
         &identifier
     ));
-    assert!(managed_agents::valid_agent_runtime_receipt(
-        &receipt_path,
-        &receipt,
-        &identifier
-    ));
+    crate::managed_agent_delete::assert_live_receipt_valid(&receipt_path, &receipt, &identifier);
     let receipt_target = temp.path().join("owned-receipt-target.json");
     std::fs::write(&receipt_target, &receipt_bytes).expect("write symlink receipt target");
     std::fs::remove_file(&receipt_path).expect("remove regular receipt before replacement");
@@ -429,11 +458,11 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
             .expect("inspect restored receipt")
             .file_type()
             .is_file());
-        assert!(managed_agents::valid_agent_runtime_receipt(
+        crate::managed_agent_delete::assert_live_receipt_valid(
             &receipt_path,
             &receipt,
-            &identifier
-        ));
+            &identifier,
+        );
         assert!(managed_agents::process_is_running(child.pid()));
         drop(app);
         let app = direct_delete_test_app(identifier, owner_keys);
