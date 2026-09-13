@@ -2,6 +2,8 @@
 
 use nostr::Event;
 
+/// Select the latest verified relay snapshot for the exact channel coordinate.
+/// A malformed latest coordinate is rejected without falling back to an older row.
 pub(crate) fn channel_membership_snapshot<'a>(
     events: &'a [Event],
     relay_pubkey: &str,
