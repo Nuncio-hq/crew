@@ -323,7 +323,8 @@ fn read_agent_runtime_receipts_for_pubkey<R: tauri::Runtime>(
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
             continue;
         }
-        paths.push((path, receipt_path_claims_pubkey(&path, pubkey)));
+        let claims_pubkey = receipt_path_claims_pubkey(&path, pubkey);
+        paths.push((path, claims_pubkey));
     }
     // Check target-named receipts first so a corrupt target cannot be hidden
     // behind unrelated files in a large receipt directory.
