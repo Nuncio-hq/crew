@@ -61,7 +61,7 @@ pub(crate) async fn save(
         crate::commands::revalidate_channel_bot_members(
             &requested,
             &channel_id,
-            app.state::<AppState>(),
+            &app.state::<AppState>(),
         ),
     )
     .await

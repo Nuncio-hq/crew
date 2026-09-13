@@ -62,32 +62,7 @@ impl<R: tauri::Runtime> Access for NativeAccess<R> {
             .await
             .map_err(|error| error.to_string())?;
         self.current().await?;
-        let event = exact_event(&events, 30617, owner, d)?;
-        let modes: Vec<_> = event
-            .tags
-            .iter()
-            .filter(|tag| {
-                tag.as_slice()
-                    .first()
-                    .is_some_and(|name| name == "crew-workspace-mode")
-            })
-            .collect();
-        let mode = match modes.as_slice() {
-            [] => "git",
-            [tag]
-                if tag.as_slice().len() == 2
-                    && matches!(tag.as_slice()[1].as_str(), "git" | "folder") =>
-            {
-                tag.as_slice()[1].as_str()
-            }
-            _ => return Err("Repository workspace mode is invalid".into()),
-        };
-        Ok(RepositoryAnchor {
-            coordinate: coordinate.into(),
-            event_id: event.id.to_hex(),
-            workspace_mode: mode.into(),
-            label: d.into(),
-        })
+        repository_anchor(&events, coordinate)
     }
     async fn head(&self, coordinate: &str, expected_id: &str) -> Result<(), String> {
         let (owner, repo) = coordinate_parts(coordinate)?;
@@ -187,6 +162,36 @@ pub(super) fn coordinate_parts(coordinate: &str) -> Result<(&str, &str), String>
     }
     Ok((owner, d))
 }
+fn repository_anchor(events: &[Event], coordinate: &str) -> Result<RepositoryAnchor, String> {
+    let (owner, d) = coordinate_parts(coordinate)?;
+    let event = exact_event(events, 30617, owner, d)?;
+    let modes: Vec<_> = event
+        .tags
+        .iter()
+        .filter(|tag| {
+            tag.as_slice()
+                .first()
+                .is_some_and(|name| name == "crew-workspace-mode")
+        })
+        .collect();
+    let mode = match modes.as_slice() {
+        [] => "git",
+        [tag]
+            if tag.as_slice().len() == 2
+                && matches!(tag.as_slice()[1].as_str(), "git" | "folder") =>
+        {
+            tag.as_slice()[1].as_str()
+        }
+        _ => return Err("Repository workspace mode is invalid".into()),
+    };
+    Ok(RepositoryAnchor {
+        coordinate: coordinate.into(),
+        event_id: event.id.to_hex(),
+        workspace_mode: mode.into(),
+        label: d.into(),
+    })
+}
+
 fn exact_event<'a>(
     events: &'a [Event],
     kind: u16,
@@ -279,6 +284,9 @@ mod tests {
         let owner = keys.public_key().to_hex();
         let event = signed_repository(&keys, vec![vec!["d", "repo.demo"]]);
 
-        assert!(exact_event(&[event], 30617, &owner, "repo.demo").is_ok());
+        let coordinate = format!("30617:{owner}:repo.demo");
+        let anchor = repository_anchor(&[event], &coordinate).expect("standard repository anchor");
+        assert_eq!(anchor.coordinate, coordinate);
+        assert_eq!(anchor.workspace_mode, "git");
     }
 }
