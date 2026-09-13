@@ -9688,14 +9688,40 @@ async function handleDeletePersona(args: { id: string }): Promise<void> {
     );
   }
 
-  mockPersonas = mockPersonas.filter((candidate) => candidate.id !== args.id);
-  const now = new Date().toISOString();
-  for (const agent of mockManagedAgents) {
-    if (agent.persona_id === args.id) {
-      agent.persona_id = null;
-      agent.updated_at = now;
-    }
+  const linkedAgents = mockManagedAgents.filter(
+    (agent) => agent.persona_id === args.id,
+  );
+  // The production persona command uses the same fail-closed target policy as
+  // direct managed-agent deletion: a deployed provider instance needs the
+  // explicit force flag, which the persona cascade intentionally does not
+  // expose. Preflight every target before changing any mock state.
+  if (
+    linkedAgents.some(
+      (agent) =>
+        agent.backend.type === "provider" && agent.backend_agent_id != null,
+    )
+  ) {
+    throw new Error(
+      "persona has a deployed remote agent; delete that instance with force_remote_delete first.",
+    );
   }
+
+  const linkedPubkeys = new Set(linkedAgents.map((agent) => agent.pubkey));
+  mockPersonas = mockPersonas.filter((candidate) => candidate.id !== args.id);
+  mockManagedAgents = mockManagedAgents.filter(
+    (agent) => !linkedPubkeys.has(agent.pubkey),
+  );
+  mockManagedAgentRuntimes = mockManagedAgentRuntimes.filter(
+    (runtime) => !linkedPubkeys.has(runtime.pubkey),
+  );
+  if (
+    mockBestieAssignment &&
+    linkedPubkeys.has(mockBestieAssignment.agent_pubkey)
+  ) {
+    mockBestieAssignment = null;
+  }
+  syncMockRelayAgentsFromManagedAgents();
+  await emit("agents-data-changed");
 }
 
 async function handleSetPersonaActive(args: {

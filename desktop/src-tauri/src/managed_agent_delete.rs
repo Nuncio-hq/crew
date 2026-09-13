@@ -31,6 +31,11 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use tauri::{AppHandle, Manager};
 
+#[path = "managed_agent_persona_delete.rs"]
+mod managed_agent_persona_delete;
+
+use managed_agent_persona_delete::CascadePayload;
+
 const VERSION: u32 = 1;
 const MAX_CHANNELS: usize = 64;
 const CANVAS_PAGE_SIZE: usize = 64;
@@ -82,6 +87,22 @@ struct Payload {
     tombstone_enqueued: bool,
     failures: u8,
     last_error: Option<String>,
+    /// Optional parent coordinator for a persona cascade child.  Keeping the
+    /// field optional preserves readability of pre-cascade journal rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cascade_parent: Option<String>,
+    /// Persona link captured for a cascade child. Direct deletion records and
+    /// older journal rows omit this field; cascade children must retain it so
+    /// a record that was reassigned after preparation cannot be deleted by a
+    /// stale child operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cascade_persona_id: Option<String>,
+    /// A persona cascade coordinator stores the complete prepared target set
+    /// alongside the child rows.  This makes the remainder durable even if a
+    /// terminal child is trimmed between its completion and the coordinator's
+    /// progress CAS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cascade: Option<CascadePayload>,
 }
 
 impl Payload {
@@ -113,6 +134,9 @@ impl Payload {
             tombstone_enqueued: false,
             failures: 0,
             last_error: None,
+            cascade_parent: None,
+            cascade_persona_id: None,
+            cascade: None,
         })
     }
 
@@ -419,6 +443,16 @@ fn local_commit<R: tauri::Runtime>(
         if !payload.fence.matches(&records[index]) {
             return Err("managed agent changed before deletion; review required".into());
         }
+        if payload
+            .cascade_persona_id
+            .as_deref()
+            .is_some_and(|persona_id| records[index].persona_id.as_deref() != Some(persona_id))
+        {
+            return Err(
+                "managed agent persona link changed before cascade deletion; review required"
+                    .into(),
+            );
+        }
         let base_dir = managed_agents_base_dir(app)?;
         run_managed_agent_deletion(&base_dir, &payload.fence.pubkey, &mut records, |records| {
             let record = records
@@ -445,6 +479,10 @@ async fn resume(
     let mut payload: Payload = serde_json::from_value(operation.payload.clone())
         .map_err(|_| "invalid managed-agent deletion record")?;
     validate_operation(&operation, &payload)?;
+    if payload.cascade.is_some() {
+        return managed_agent_persona_delete::resume_persona_cascade(app, token, operation, manual)
+            .await;
+    }
     if operation.reconciled {
         return Ok(());
     }
@@ -691,6 +729,12 @@ async fn begin(
         let payload: Payload = serde_json::from_value(operation.payload.clone())
             .map_err(|_| "invalid managed-agent deletion record")?;
         validate_operation(&operation, &payload)?;
+        if payload.cascade.is_some() || payload.cascade_parent.is_some() {
+            return Err(
+                "managed agent is part of a pending persona deletion; retry that persona deletion"
+                    .into(),
+            );
+        }
         if !payload.fence.matches(&record) {
             return Err("a deletion for an earlier managed-agent instance needs review".into());
         }
@@ -758,6 +802,12 @@ pub(crate) async fn delete(
     }
 }
 
+/// Delete one persona and its exact linked managed-agent records through the
+/// durable cascade coordinator.
+pub(crate) async fn delete_persona(app: AppHandle, persona_id: String) -> Result<(), String> {
+    managed_agent_persona_delete::delete_persona(app, persona_id).await
+}
+
 async fn enqueue_tombstone_for_scope(
     app: &AppHandle,
     token: &OwnerScopeToken,
@@ -775,8 +825,12 @@ async fn enqueue_tombstone_for_scope(
     let base_dir = managed_agents_base_dir(app)?;
     let db_path = crate::managed_agents::retention::scoped_retention_db_path(
         &base_dir,
-        &operation.scope.community,
-        &operation.scope.owner,
+        // Retention files are keyed by the normalized WebSocket relay URL,
+        // while `OperationScope::community` is its canonical HTTP origin.
+        // Use the captured relay form so the tombstone lands in the same
+        // database as the active retention flush worker.
+        &captured.relay_url,
+        &captured.keys.public_key().to_hex(),
     );
     crate::commands::tombstone_managed_agent_at(&db_path, &captured.keys, pubkey)
 }
@@ -882,6 +936,16 @@ pub(crate) async fn recover(app: &AppHandle) -> Result<(), String> {
         let operation = owner_operation_load(app.clone(), token.clone(), summary.id, None)
             .await?
             .value;
+        let is_cascade_child = match serde_json::from_value::<Payload>(operation.payload.clone()) {
+            Ok(payload) => payload.cascade_parent.is_some(),
+            Err(_) => false,
+        };
+        if is_cascade_child {
+            // The coordinator carries the complete prepared target set and
+            // owns child creation/progress. Do not independently replay a
+            // child merely because metadata pagination returned it too.
+            continue;
+        }
         if let Err(error) = resume(app.clone(), token.clone(), operation, false).await {
             eprintln!("buzz-desktop: managed-agent deletion recovery: {error}");
             first_error.get_or_insert(error);
@@ -891,101 +955,5 @@ pub(crate) async fn recover(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::owner_operations::{OperationScope, OperationStatus};
-
-    fn operation(payload: &Payload) -> Operation {
-        Operation {
-            version: 1,
-            scope: OperationScope {
-                owner: "a".repeat(64),
-                community: "https://example.com".into(),
-            },
-            id: "00000000-0000-0000-0000-000000000001".into(),
-            kind: OperationKind::ManagedAgentDelete,
-            resource_key: payload.fence.pubkey.clone(),
-            revision: 0,
-            created_at: 1,
-            updated_at: 1,
-            status: OperationStatus::Preparing,
-            reconciled: false,
-            payload: serde_json::to_value(payload).unwrap(),
-        }
-    }
-
-    fn payload() -> Payload {
-        Payload::new(
-            RecordFence {
-                pubkey: "b".repeat(64),
-                name: "agent".into(),
-                created_at: "created".into(),
-                relay_url: "wss://relay.example".into(),
-                backend_agent_id: None,
-            },
-            vec!["00000000-0000-0000-0000-000000000002".into()],
-            &"b".repeat(64),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn journal_records_channel_operation_before_local_removal() {
-        let payload = payload();
-        assert!(!payload.local_removed);
-        assert_eq!(payload.channels.len(), 1);
-        assert!(!payload.channels[0].operation_id.is_empty());
-        validate_operation(&operation(&payload), &payload).unwrap();
-    }
-
-    #[test]
-    fn journal_rejects_duplicate_channel_and_key_before_local_removal() {
-        let mut duplicate_payload = payload();
-        duplicate_payload
-            .channels
-            .push(duplicate_payload.channels[0].clone());
-        assert!(validate_operation(&operation(&duplicate_payload), &duplicate_payload).is_err());
-        let mut key_payload = payload();
-        key_payload.key_removed = true;
-        assert!(validate_operation(&operation(&key_payload), &key_payload).is_err());
-    }
-
-    #[test]
-    fn review_state_never_counts_as_settled() {
-        let mut payload = payload();
-        payload.channels[0].review_required = true;
-        assert!(!payload.all_settled());
-    }
-
-    #[test]
-    fn tombstone_progress_is_fenced_after_key_cleanup() {
-        let mut payload = payload();
-        payload.tombstone_enqueued = true;
-        assert!(validate_operation(&operation(&payload), &payload).is_err());
-
-        payload.key_removed = true;
-        assert!(validate_operation(&operation(&payload), &payload).is_err());
-
-        payload.local_removed = true;
-        assert!(validate_operation(&operation(&payload), &payload).is_ok());
-    }
-
-    #[test]
-    fn older_records_default_tombstone_progress_to_pending() {
-        let payload = payload();
-        let mut encoded = serde_json::to_value(&payload).unwrap();
-        encoded
-            .as_object_mut()
-            .unwrap()
-            .remove("tombstone_enqueued");
-        let decoded: Payload = serde_json::from_value(encoded).unwrap();
-        assert!(!decoded.tombstone_enqueued);
-    }
-
-    #[test]
-    fn error_bound_is_utf8_byte_safe() {
-        let bounded = bounded_error("é".repeat(MAX_ERROR_BYTES));
-        assert!(bounded.len() <= MAX_ERROR_BYTES);
-        assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
-    }
-}
+#[path = "managed_agent_delete_tests.rs"]
+mod tests;

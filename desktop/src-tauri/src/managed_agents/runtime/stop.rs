@@ -37,11 +37,12 @@ pub(crate) fn managed_agent_runtime_relay_urls<T>(
 /// runtime is reinserted so the pair stays visible and stoppable instead of
 /// becoming an invisible orphan. Touches no other pair for the agent and
 /// does no record-level stop bookkeeping — callers own that.
-fn stop_managed_agent_pair<R: tauri::Runtime>(
+fn stop_managed_agent_pair<R: tauri::Runtime, T: FnMut(u32) -> Result<(), String>>(
     app: &AppHandle<R>,
     record: &mut ManagedAgentRecord,
     runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     key: &ManagedAgentRuntimeKey,
+    terminate: &mut T,
 ) -> Result<(), String> {
     let Some(mut runtime) = runtimes.remove(key) else {
         super::super::transport_status::clear_key(app, key);
@@ -49,7 +50,7 @@ fn stop_managed_agent_pair<R: tauri::Runtime>(
     };
     let result = (|| -> Result<(), String> {
         #[cfg(unix)]
-        terminate_process(runtime.child.id())?;
+        terminate(runtime.child.id())?;
         #[cfg(windows)]
         match runtime.job.take() {
             Some(job) => drop(job),
@@ -63,6 +64,8 @@ fn stop_managed_agent_pair<R: tauri::Runtime>(
             .child
             .kill()
             .map_err(|error| format!("failed to kill agent process: {error}"))?;
+        #[cfg(windows)]
+        let _ = terminate;
         let status = runtime
             .child
             .wait()
@@ -100,13 +103,14 @@ fn stop_legacy_scalar_pid<R: tauri::Runtime>(
     app: &AppHandle<R>,
     record: &mut ManagedAgentRecord,
 ) -> Result<(), String> {
-    if let Some(pid) = record.runtime_pid.take() {
+    if let Some(pid) = record.runtime_pid {
         if process_is_running(pid)
             && process_belongs_to_us(pid)
             && process_has_buzz_marker(pid, &current_instance_id(app))
         {
             terminate_process(pid)?;
         }
+        record.runtime_pid = None;
         record.updated_at = now_iso();
     }
     super::super::remove_agent_pid_file(app, &record.pubkey);
@@ -131,7 +135,7 @@ pub fn stop_managed_agent_workspace_pair(
     let state = app.state::<crate::app_state::AppState>();
     match super::workspace_pair_key(app, record) {
         Some(pair_key) if runtimes.contains_key(&pair_key) => {
-            stop_managed_agent_pair(app, record, runtimes, &pair_key)?;
+            stop_managed_agent_pair(app, record, runtimes, &pair_key, &mut terminate_process)?;
             state.clear_agent_session_cache(&pair_key);
             super::super::remove_agent_pid_file(app, &record.pubkey);
             let now = now_iso();
@@ -157,10 +161,11 @@ pub fn stop_managed_agent_workspace_pair(
     Ok(())
 }
 
-pub fn stop_managed_agent_process<R: tauri::Runtime>(
+fn stop_managed_agent_process_with<R: tauri::Runtime, T: FnMut(u32) -> Result<(), String>>(
     app: &AppHandle<R>,
     record: &mut ManagedAgentRecord,
     runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
+    mut terminate: T,
 ) -> Result<(), String> {
     let keys = managed_agent_runtime_keys(runtimes, &record.pubkey);
     if keys.is_empty() {
@@ -169,29 +174,151 @@ pub fn stop_managed_agent_process<R: tauri::Runtime>(
         return Ok(());
     }
 
+    let prior_runtime_pid = record.runtime_pid;
+    let prior_updated_at = record.updated_at.clone();
+    let prior_last_stopped_at = record.last_stopped_at.clone();
+    let prior_last_exit_code = record.last_exit_code;
+    let prior_last_error = record.last_error.clone();
+    let prior_last_error_code = record.last_error_code.clone();
     let mut errors = Vec::new();
     for key in keys {
-        if let Err(error) = stop_managed_agent_pair(app, record, runtimes, &key) {
+        if let Err(error) = stop_managed_agent_pair(app, record, runtimes, &key, &mut terminate) {
             errors.push(format!("{}: {error}", key.relay_url));
         }
     }
 
-    let now = now_iso();
-    record.runtime_pid = None;
-    record.updated_at = now.clone();
-    record.last_stopped_at = Some(now);
-    record.last_error = None;
-    record.last_error_code = None;
-    super::super::remove_agent_pid_file(app, &record.pubkey);
-
     if errors.is_empty() {
+        let now = now_iso();
+        record.runtime_pid = None;
+        record.updated_at = now.clone();
+        record.last_stopped_at = Some(now);
+        record.last_error = None;
+        record.last_error_code = None;
+        super::super::remove_agent_pid_file(app, &record.pubkey);
         super::super::transport_status::clear_pubkey(app, &record.pubkey);
         Ok(())
     } else {
+        // A failed pair remains in `runtimes`; keep the record-level recovery
+        // fields intact as well.  The caller must persist this record and
+        // leave its durable deletion intent unresolved, so a retry can still
+        // identify the exact instance rather than creating an orphan.
+        record.runtime_pid = prior_runtime_pid;
+        record.updated_at = prior_updated_at;
+        record.last_stopped_at = prior_last_stopped_at;
+        record.last_exit_code = prior_last_exit_code;
+        record.last_error = prior_last_error.or_else(|| {
+            Some(format!(
+                "failed to stop one or more managed-agent runtimes: {}",
+                errors.join("; ")
+            ))
+        });
+        record.last_error_code = prior_last_error_code;
         Err(format!(
             "failed to stop one or more managed-agent runtimes: {}",
             errors.join("; ")
         ))
+    }
+}
+
+pub fn stop_managed_agent_process<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    record: &mut ManagedAgentRecord,
+    runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
+) -> Result<(), String> {
+    stop_managed_agent_process_with(app, record, runtimes, terminate_process)
+}
+
+#[cfg(all(test, unix))]
+mod stop_failure_tests {
+    use super::*;
+    use crate::managed_agents::{ManagedAgentProcess, ManagedAgentRuntimeKey};
+    use std::collections::HashMap;
+    use std::process::{Command, Stdio};
+
+    fn app() -> tauri::App<tauri::test::MockRuntime> {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = "xyz.nuncio.crew.stop-red".into();
+        tauri::test::mock_builder()
+            .build(context)
+            .expect("build the stop-failure fixture app")
+    }
+
+    fn process(child: std::process::Child) -> ManagedAgentProcess {
+        ManagedAgentProcess {
+            child,
+            log_path: std::path::PathBuf::new(),
+            spawn_started_at_ms: 1,
+            spawn_config: crate::managed_agents::spawn_snapshot::SpawnConfigSnapshot {
+                acp_command: "buzz-acp".into(),
+                command: "/usr/bin/true".into(),
+                args: Vec::new(),
+                mcp_command: String::new(),
+                env: std::collections::BTreeMap::new(),
+                relay_url: "ws://localhost:3000".into(),
+                team_instructions: None,
+                system_prompt: None,
+                model: None,
+                provider: None,
+                session_title: None,
+                auth_tag: None,
+                respond_to: "owner-only".into(),
+                respond_to_allowlist: None,
+                idle_timeout_seconds: None,
+                max_turn_duration_seconds: None,
+                parallelism: 1,
+                effort_level: None,
+                session_policy: "channel".into(),
+            },
+            setup_mode: false,
+            adapter_availability: None,
+            start_nonce: "stop-red".into(),
+            #[cfg(windows)]
+            job: None,
+        }
+    }
+
+    #[test]
+    fn failed_pair_stop_preserves_record_recovery_fields() {
+        let app = app();
+        let mut child = Command::new("/usr/bin/true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn the short-lived stop fixture");
+        child.wait().expect("reap the stop fixture before teardown");
+
+        let mut record = crate::managed_agents::runtime::test_fixtures::fixture(
+            crate::managed_agents::RespondTo::OwnerOnly,
+            Vec::new(),
+            None,
+        );
+        record.pubkey = "a".repeat(64);
+        record.runtime_pid = Some(4242);
+        record.last_exit_code = Some(7);
+        record.last_error = Some("prior stop error".into());
+        let prior_updated_at = record.updated_at.clone();
+        let key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), &record.relay_url)
+            .expect("fixture runtime key");
+        let runtime = ManagedAgentPairRuntime::starting(process(child));
+        let mut runtimes = HashMap::from([(key, runtime)]);
+
+        let result = stop_managed_agent_process_with(
+            &app.handle().clone(),
+            &mut record,
+            &mut runtimes,
+            |_| Err("injected pair stop failure".into()),
+        );
+
+        assert!(result.is_err(), "the injected pair stop must fail");
+        // Regression: an aggregate stop failure must preserve the exact
+        // record fields that still describe the recoverable runtime.
+        assert_eq!(record.runtime_pid, Some(4242));
+        assert_eq!(record.updated_at, prior_updated_at);
+        assert_eq!(record.last_stopped_at, None);
+        assert_eq!(record.last_exit_code, Some(7));
+        assert_eq!(record.last_error.as_deref(), Some("prior stop error"));
+        assert_eq!(runtimes.len(), 1, "failed runtime remains stoppable");
     }
 }
 

@@ -1,4 +1,4 @@
-//! Schema v3 compatibility, crash atomicity, and retention-pin invariants.
+//! Schema v4 compatibility, crash atomicity, and retention-pin invariants.
 //!
 //! Every assertion here runs against a real SQLite file through the shipping
 //! `OperationStore`; the crash cases run the real transaction in an owned
@@ -86,6 +86,114 @@ fn v1_rows(owner: &OperationScope) -> Vec<Operation> {
 }
 
 #[test]
+fn managed_delete_indexes_key_the_serialized_payload_envelope() {
+    let dir = tempfile::tempdir().expect("fixture directory");
+    let path = journal_path(&dir);
+    let owner = scope('a', "https://one.example");
+    let resource_key = "a".repeat(64);
+    let parent_id = uuid::Uuid::new_v4().to_string();
+    let child_id = uuid::Uuid::new_v4().to_string();
+    let fence = json!({
+        "pubkey": resource_key.clone(),
+        "name": "agent",
+        "created_at": "created",
+        "relay_url": "wss://relay.example",
+        "backend_agent_id": null
+    });
+    let parent = Operation {
+        version: 1,
+        scope: owner.clone(),
+        id: parent_id.clone(),
+        kind: OperationKind::ManagedAgentDelete,
+        resource_key: resource_key.clone(),
+        revision: 0,
+        created_at: 1,
+        updated_at: 1,
+        status: OperationStatus::Preparing,
+        reconciled: false,
+        payload: json!({
+            "version": 1,
+            "fence": fence,
+            "channels": [],
+            "local_removed": false,
+            "key_removed": false,
+            "tombstone_enqueued": false,
+            "failures": 0,
+            "last_error": null,
+            "cascade": null
+        }),
+    };
+    let child = Operation {
+        version: 1,
+        scope: owner,
+        id: child_id,
+        kind: OperationKind::ManagedAgentDelete,
+        resource_key: resource_key.clone(),
+        revision: 0,
+        created_at: 1,
+        updated_at: 1,
+        status: OperationStatus::Preparing,
+        reconciled: false,
+        payload: json!({
+            "version": 1,
+            "fence": {
+                "pubkey": resource_key,
+                "name": "agent",
+                "created_at": "created",
+                "relay_url": "wss://relay.example",
+                "backend_agent_id": null
+            },
+            "channels": [],
+            "local_removed": false,
+            "key_removed": false,
+            "tombstone_enqueued": false,
+            "failures": 0,
+            "last_error": null,
+            "cascade_parent": parent_id,
+            "cascade_persona_id": "persona-same-key",
+            "cascade": null
+        }),
+    };
+
+    let connection = Connection::open(&path).expect("open journal");
+    connection
+        .execute_batch(include_str!("schema.sql"))
+        .expect("v1 schema");
+    // `insert_v1_row` serializes the production Operation envelope, where
+    // cascade_parent is nested under payload. Both rows must fit the fresh
+    // scoped index before the managed-delete and v4 rebuild migrations run.
+    insert_v1_row(&connection, &parent);
+    insert_v1_row(&connection, &child);
+    connection
+        .execute_batch(include_str!("managed_delete_migration.sql"))
+        .expect("managed-delete migration");
+    connection
+        .execute_batch(include_str!("migration_2_to_3.sql"))
+        .expect("v3 migration");
+    connection
+        .execute_batch(include_str!("migration_3_to_4.sql"))
+        .expect("v4 index rebuild");
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM operations", [], |row| row
+                .get::<_, i64>(0))
+            .expect("operation count"),
+        2
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT json_extract(record_json, '$.payload.cascade_parent') \
+                 FROM operations WHERE id=?1",
+                [&child.id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("serialized child payload"),
+        parent_id
+    );
+}
+
+#[test]
 fn durable_core_schema_migration_is_idempotent_and_preserves_unresolved_claims() {
     let dir = tempfile::tempdir().expect("fixture directory");
     let path = journal_path(&dir);
@@ -109,8 +217,11 @@ fn durable_core_schema_migration_is_idempotent_and_preserves_unresolved_claims()
             .execute_batch(include_str!("migration_2_to_3.sql"))
             .expect("idempotent migration");
     }
+    connection
+        .execute_batch(include_str!("migration_3_to_4.sql"))
+        .expect("managed-delete claim migration");
     drop(connection);
-    assert_eq!(user_version(&path), 3);
+    assert_eq!(user_version(&path), 4);
 
     let mut store = OperationStore::open(&path, Limits::default()).expect("reopen migrated");
     for operation in &rows {
@@ -142,17 +253,17 @@ fn durable_core_schema_migration_is_idempotent_and_preserves_unresolved_claims()
 }
 
 /// The opener's accepted set is the whole compatibility contract. A build
-/// without the successor relation ends its set at `2`, so it refuses a v3
-/// journal through this very branch instead of ignoring pins it cannot honor
-/// (D-079).
+/// without the successor relation or coordinator claim indexes ends its set at
+/// `3`, so it refuses a v4 journal through this very branch instead of
+/// ignoring pins it cannot honor (D-079).
 #[test]
 fn durable_core_open_refuses_schema_versions_outside_its_supported_set() {
     assert_eq!(
         crate::owner_operations::storage::SUPPORTED_SCHEMA_VERSIONS.to_vec(),
-        vec![0_i64, 1, 2, 3]
+        vec![0_i64, 1, 2, 3, 4]
     );
-    assert_eq!(crate::owner_operations::storage::CURRENT_SCHEMA_VERSION, 3);
-    for version in [4_i64, 99] {
+    assert_eq!(crate::owner_operations::storage::CURRENT_SCHEMA_VERSION, 4);
+    for version in [5_i64, 99] {
         let dir = tempfile::tempdir().expect("fixture directory");
         let path = journal_path(&dir);
         let connection = Connection::open(&path).expect("open journal");
@@ -258,7 +369,7 @@ fn durable_core_crash_around_the_migration_commit_is_atomic() {
             if stage == "before-migration-commit" {
                 1
             } else {
-                3
+                4
             },
             "the migration commits atomically or not at all"
         );
@@ -269,7 +380,7 @@ fn durable_core_crash_around_the_migration_commit_is_atomic() {
                 .connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
         );
         for operation in &rows {
             assert_eq!(
