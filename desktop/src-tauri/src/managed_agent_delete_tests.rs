@@ -125,15 +125,7 @@ impl Drop for HomeGuard {
 #[cfg(unix)]
 impl OwnedReceiptChild {
     fn spawn(instance_id: &str) -> Self {
-        use std::os::unix::process::CommandExt;
-        let mut command = std::process::Command::new("/bin/sleep");
-        command
-            .arg("30")
-            .env("BUZZ_MANAGED_AGENT", instance_id)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .process_group(0);
+        let mut command = receipt_child_command(instance_id);
         let mut child = command.spawn().expect("spawn live receipt fixture");
         let pid = child.id();
         let exited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -162,6 +154,36 @@ impl OwnedReceiptChild {
             .expect("join live receipt reaper")
             .expect("wait for live receipt child")
     }
+}
+
+/// Use our test executable: macOS omits the environment of `/bin/sleep` from
+/// KERN_PROCARGS2, preventing the real ownership matcher from seeing its marker.
+#[cfg(unix)]
+pub(crate) fn receipt_child_command(instance_id: &str) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
+    let mut command = std::process::Command::new(
+        std::env::current_exe().expect("locate the owned receipt fixture executable"),
+    );
+    command
+        .args([
+            "--exact",
+            concat!(module_path!(), "::owned_receipt_child_process"),
+            "--ignored",
+        ])
+        .env("BUZZ_MANAGED_AGENT", instance_id)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0);
+    command
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "finite subprocess fixture, launched explicitly by receipt recovery tests"]
+fn owned_receipt_child_process() {
+    assert!(std::env::var("BUZZ_MANAGED_AGENT").is_ok());
+    std::thread::sleep(std::time::Duration::from_secs(30));
 }
 
 #[cfg(unix)]

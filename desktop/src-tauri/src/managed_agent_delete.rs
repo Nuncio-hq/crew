@@ -973,3 +973,6 @@ pub(crate) async fn recover<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(),
 #[cfg(test)]
 #[path = "managed_agent_delete_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+pub(crate) use tests::receipt_child_command;

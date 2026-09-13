@@ -555,16 +555,7 @@ mod stop_failure_tests {
 
     impl OwnedReceiptChild {
         fn spawn(instance_id: &str) -> Self {
-            use std::os::unix::process::CommandExt;
-
-            let mut command = Command::new("/bin/sleep");
-            command
-                .arg("30")
-                .env("BUZZ_MANAGED_AGENT", instance_id)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .process_group(0);
+            let mut command = crate::managed_agent_delete::receipt_child_command(instance_id);
             let mut child = command.spawn().expect("spawn finite receipt fixture");
             let pid = child.id();
             let exited = Arc::new(AtomicBool::new(false));
