@@ -12,8 +12,8 @@ use std::path::Path;
 use tempfile::NamedTempFile;
 
 use super::{
-    agent_keyring_name, hydrate_keys_with, migrate_inline_key, persist_agent_keys_with,
-    KeyMigration, KeyStore, KeyringProbe, ManagedAgentRecord,
+    agent_keyring_name, hydrate_keys_with, hydrate_selected_keys_with, migrate_inline_key,
+    persist_agent_keys_with, KeyMigration, KeyStore, KeyringProbe, ManagedAgentRecord,
 };
 
 #[cfg(unix)]
@@ -258,6 +258,54 @@ fn hydrate_leaves_key_empty_on_keyring_outage() {
         records[0].private_key_nsec.is_empty(),
         "an unreadable key must stay empty, not be fabricated"
     );
+}
+
+#[test]
+fn metadata_hydration_selector_performs_zero_reads_for_excluded_records() {
+    let store =
+        FakeKeyStore::reachable().with_key(&agent_keyring_name("metadata-only"), "nsec1metadata");
+    let mut records = vec![record_with_pubkey_and_key("metadata-only", "")];
+
+    hydrate_selected_keys_with(&store, &mut records, |_| false);
+
+    assert_eq!(
+        *store.read_count.borrow(),
+        0,
+        "metadata-only callers must not access the keyring"
+    );
+    assert!(records[0].private_key_nsec.is_empty());
+}
+
+#[test]
+fn selected_auto_start_record_hydrates_while_excluded_record_stays_unread() {
+    let store = FakeKeyStore::reachable()
+        .with_key(&agent_keyring_name("selected"), "nsec1selected")
+        .with_key(&agent_keyring_name("excluded"), "nsec1excluded");
+    let mut selected = record_with_pubkey_and_key("selected", "");
+    selected.start_on_app_launch = true;
+    let mut excluded = record_with_pubkey_and_key("excluded", "");
+    excluded.start_on_app_launch = false;
+    let mut records = vec![selected, excluded];
+
+    hydrate_selected_keys_with(&store, &mut records, |record| record.start_on_app_launch);
+
+    assert_eq!(*store.read_count.borrow(), 1);
+    assert_eq!(records[0].private_key_nsec, "nsec1selected");
+    assert!(records[1].private_key_nsec.is_empty());
+}
+
+#[test]
+fn selected_record_with_missing_key_remains_refused() {
+    let store = FakeKeyStore::reachable();
+    let mut record = record_with_pubkey_and_key("missing", "");
+    record.start_on_app_launch = true;
+    let mut records = vec![record];
+
+    hydrate_selected_keys_with(&store, &mut records, |record| record.start_on_app_launch);
+
+    assert_eq!(*store.read_count.borrow(), 1);
+    assert!(records[0].private_key_nsec.is_empty());
+    assert!(super::spawn_key_refusal(&records[0]).is_some());
 }
 
 #[test]

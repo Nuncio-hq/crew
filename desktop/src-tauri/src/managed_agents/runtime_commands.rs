@@ -4,12 +4,12 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::{
     agent_readiness, append_log_marker, current_instance_id, find_managed_agent_mut,
-    load_global_agent_config, load_managed_agents, load_personas, managed_agent_runtime_log_path,
-    process_is_running, record_agent_command, resolve_effective_agent_env, save_managed_agents,
-    spawn_agent_child, terminate_process, terminate_untracked_pair_runtime,
-    write_agent_runtime_receipt, AgentReadiness, BackendKind, ManagedAgentPairRuntime,
-    ManagedAgentRuntimeKey, ManagedAgentRuntimeLifecycle, ManagedAgentRuntimeReceipt,
-    ManagedAgentRuntimeStatus,
+    hydrate_selected_managed_agent_keys, load_global_agent_config, load_managed_agent_metadata,
+    load_managed_agents, load_personas, managed_agent_runtime_log_path, process_is_running,
+    record_agent_command, resolve_effective_agent_env, save_managed_agents, spawn_agent_child,
+    terminate_process, terminate_untracked_pair_runtime, write_agent_runtime_receipt,
+    AgentReadiness, BackendKind, ManagedAgentPairRuntime, ManagedAgentRuntimeKey,
+    ManagedAgentRuntimeLifecycle, ManagedAgentRuntimeReceipt, ManagedAgentRuntimeStatus,
 };
 use crate::app_state::AppState;
 
@@ -161,7 +161,7 @@ pub fn put_managed_agent_runtime_lifecycle(
 ) -> Result<ManagedAgentRuntimeStatus, String> {
     let key = observer_lifecycle_key(&outer_pubkey, &payload)?;
     let state = app.state::<AppState>();
-    let records = load_managed_agents(&app)?;
+    let records = load_managed_agent_metadata(&app)?;
     let record = records
         .iter()
         .find(|record| record.pubkey.eq_ignore_ascii_case(&key.pubkey))
@@ -211,7 +211,7 @@ pub async fn list_managed_agent_runtimes(
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        let mut records = load_managed_agents(&app)?;
+        let mut records = load_managed_agent_metadata(&app)?;
         let mut runtimes = state
             .managed_agent_processes
             .lock()
@@ -636,7 +636,10 @@ pub async fn reconcile_managed_agent_runtimes(
 ) -> Result<Vec<ManagedAgentRuntimeStatus>, String> {
     use futures_util::{stream, StreamExt};
 
-    let records = load_managed_agents(&app)?;
+    let mut records = load_managed_agent_metadata(&app)?;
+    hydrate_selected_managed_agent_keys(&mut records, |record| {
+        record.start_on_app_launch && record.backend == BackendKind::Local
+    });
     let mut jobs = Vec::new();
     for community in communities {
         for record in records

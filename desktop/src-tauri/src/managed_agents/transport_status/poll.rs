@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::app_state::AppState;
 use crate::managed_agents::runtime_commands::{emit_status, status_for_with, StatusInputs};
 use crate::managed_agents::{
-    current_instance_id, load_global_agent_config, load_managed_agents, load_personas,
+    current_instance_id, load_global_agent_config, load_managed_agent_metadata, load_personas,
     remove_agent_runtime_receipt, save_managed_agents, sync_managed_agent_processes,
 };
 use tauri::{AppHandle, Manager};
@@ -138,7 +138,7 @@ fn poll_once<R: tauri::Runtime>(app: &AppHandle<R>, cursor: usize) -> Result<usi
         .managed_agents_store_lock
         .lock()
         .map_err(|_| "managed records unavailable")?;
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let wall_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "local status clock unavailable")?

@@ -3,8 +3,8 @@ use crate::{
     managed_agents::{
         bestie_assignment::{recover_pending_assignment_cleanup, with_agent_assignments_cleared},
         build_managed_agent_summary, current_instance_id, ensure_persona_is_active,
-        find_managed_agent_mut, load_managed_agents, load_personas, load_teams,
-        normalize_agent_args, resolve_provider_binary, save_managed_agents,
+        find_managed_agent_mut, load_managed_agent_metadata, load_managed_agents, load_personas,
+        load_teams, normalize_agent_args, resolve_provider_binary, save_managed_agents,
         start_managed_agent_process, stop_managed_agent_workspace_pair,
         sync_managed_agent_processes, try_regenerate_nest, validate_provider_config, BackendKind,
         CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
@@ -93,7 +93,7 @@ pub(super) async fn start_local_agent_pairs_with_preflight(
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        load_managed_agents(app)?
+        load_managed_agent_metadata(app)?
             .into_iter()
             .find(|record| record.pubkey == pubkey)
             .ok_or_else(|| format!("agent {pubkey} not found"))?
@@ -153,7 +153,7 @@ pub(super) async fn start_local_agent_pairs_with_preflight(
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
-    let records = load_managed_agents(app)?;
+    let records = load_managed_agent_metadata(app)?;
     let runtimes = state
         .managed_agent_processes
         .lock()
@@ -328,7 +328,7 @@ pub async fn list_managed_agents(app: AppHandle) -> Result<Vec<ManagedAgentSumma
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
-        let mut records = load_managed_agents(&app)?;
+        let mut records = load_managed_agent_metadata(&app)?;
         let mut runtimes = state
             .managed_agent_processes
             .lock()

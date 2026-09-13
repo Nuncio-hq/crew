@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::app_state::AppState;
 use crate::managed_agents::runtime_commands::{emit_status, status_for_with, StatusInputs};
-use crate::managed_agents::{load_global_agent_config, load_managed_agents, load_personas};
+use crate::managed_agents::{load_global_agent_config, load_managed_agent_metadata, load_personas};
 use tauri::{AppHandle, Manager};
 
 /// Metadata-only explicit leave/rejoin operation. Ownership is native; this
@@ -28,7 +28,7 @@ pub fn set_managed_transport_eligibility(
         .managed_agents_store_lock
         .lock()
         .map_err(|_| "managed records unavailable")?;
-    let records = load_managed_agents(&app)?;
+    let records = load_managed_agent_metadata(&app)?;
     let mut runtimes = state
         .managed_agent_processes
         .lock()

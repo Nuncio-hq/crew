@@ -3,7 +3,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     app_state::AppState,
     managed_agents::{
-        latest_managed_agent_log_path, load_managed_agents, read_log_tail, BackendKind,
+        latest_managed_agent_log_path, load_managed_agent_metadata, read_log_tail, BackendKind,
         ManagedAgentLogResponse,
     },
 };
@@ -20,7 +20,7 @@ pub async fn get_managed_agent_log(
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
-        let records = load_managed_agents(&app)?;
+        let records = load_managed_agent_metadata(&app)?;
         let record = records
             .iter()
             .find(|record| record.pubkey == pubkey)

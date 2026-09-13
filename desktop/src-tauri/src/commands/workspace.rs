@@ -28,12 +28,72 @@ fn assert_current_apply_generation(
 }
 
 async fn begin_workspace_apply(
-    lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    transaction_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    workspace_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     generation: &std::sync::atomic::AtomicU64,
-) -> (tokio::sync::OwnedMutexGuard<()>, u64) {
-    let guard = lock.lock_owned().await;
+) -> (
+    tokio::sync::OwnedMutexGuard<()>,
+    tokio::sync::OwnedMutexGuard<()>,
+    u64,
+) {
+    // Keep the complete apply/restore transaction serialized while preserving
+    // the existing inner lock as the scope-capture/mutation fence.
+    let transaction_guard = transaction_lock.lock_owned().await;
+    let workspace_guard = workspace_lock.lock_owned().await;
     let ticket = next_apply_generation(generation);
-    (guard, ticket)
+    (transaction_guard, workspace_guard, ticket)
+}
+
+/// Release the short workspace fence before restore calls its normal scoped
+/// capture APIs, while retaining the outer transaction until restore ends.
+async fn hold_restore_transaction<F, T>(
+    transaction_guard: tokio::sync::OwnedMutexGuard<()>,
+    workspace_guard: tokio::sync::OwnedMutexGuard<()>,
+    restore: F,
+) -> T
+where
+    F: std::future::Future<Output = T> + Send,
+{
+    drop(workspace_guard);
+    let _transaction_guard = transaction_guard;
+    restore.await
+}
+
+/// Run the deferred restore phase after the apply fence has been released.
+/// The outer transaction remains held for the whole phase, and the pending
+/// latch is consumed only after a successful, non-shutdown restore.
+async fn complete_restore<R, F, Fut>(
+    transaction_guard: tokio::sync::OwnedMutexGuard<()>,
+    workspace_guard: tokio::sync::OwnedMutexGuard<()>,
+    app: AppHandle<R>,
+    restore_pending: bool,
+    restore: F,
+) where
+    R: tauri::Runtime,
+    F: FnOnce(AppHandle<R>, bool) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), String>> + Send + 'static,
+{
+    hold_restore_transaction(transaction_guard, workspace_guard, async move {
+        let restore_result = restore(app.clone(), restore_pending).await;
+        if !restore_pending {
+            return;
+        }
+        match restore_result {
+            Ok(())
+                if !app
+                    .state::<AppState>()
+                    .shutdown_started
+                    .load(Ordering::SeqCst) =>
+            {
+                app.state::<AppState>()
+                    .managed_agent_restore_pending
+                    .store(false, Ordering::Release);
+            }
+            Ok(()) => {}
+            Err(error) => eprintln!("buzz-desktop: failed to restore managed agents: {error}"),
+        }
+    })
+    .await;
 }
 
 // The real workspace apply and its scope regression share this mutation seam.
@@ -173,7 +233,8 @@ pub async fn apply_workspace(
     // apply that is already running remains authoritative until it releases
     // the lock; the next apply then advances the generation. This keeps every
     // awaited reconciliation/event-sync phase inside one ordered transaction.
-    let (apply_guard, apply_generation) = begin_workspace_apply(
+    let (apply_transaction_guard, apply_guard, apply_generation) = begin_workspace_apply(
+        state.workspace_apply_transaction_lock.clone(),
         state.workspace_apply_lock.clone(),
         &state.workspace_apply_generation,
     )
@@ -323,56 +384,68 @@ pub async fn apply_workspace(
         }
     }
 
-    let restore_pending = state
-        .managed_agent_restore_pending
-        .swap(false, Ordering::AcqRel);
+    let restore_pending = state.managed_agent_restore_pending.load(Ordering::Acquire);
 
-    // Transfer the apply guard to launch restoration. The command can return
-    // promptly, but a queued workspace cannot mutate relay/identity until the
-    // restore has completed every mutable workspace read and side effect.
+    // Transfer only the outer transaction guard to launch restoration. The
+    // inner scope fence is released before restore's normal capture path; a
+    // queued workspace still cannot mutate relay/identity until every restore
+    // read and side effect has completed.
     #[cfg(feature = "mesh-llm")]
     {
-        let restore_lock = apply_guard;
+        let restore_transaction_lock = apply_transaction_guard;
         let app = restore_app.clone();
         tauri::async_runtime::spawn(async move {
-            let _restore_lock = restore_lock;
-            let state = app.state::<AppState>();
-            if restore_pending {
-                if let Err(error) =
-                    crate::commands::mesh_llm::restore_mesh_sharing(&app, &state).await
-                {
-                    eprintln!("buzz-desktop: failed to restore Share Compute: {error}");
-                }
-            }
-            crate::mesh_llm::publish_current_status_once(&app, "workspace apply").await;
-            if restore_pending {
-                if let Err(error) =
-                    restore_managed_agents_on_launch(&app, &state.shutdown_started).await
-                {
-                    eprintln!("buzz-desktop: failed to restore managed agents: {error}");
-                }
-            }
+            complete_restore(
+                restore_transaction_lock,
+                apply_guard,
+                app,
+                restore_pending,
+                |app, restore_pending| async move {
+                    let state = app.state::<AppState>();
+                    if restore_pending {
+                        if let Err(error) =
+                            crate::commands::mesh_llm::restore_mesh_sharing(&app, &state).await
+                        {
+                            eprintln!("buzz-desktop: failed to restore Share Compute: {error}");
+                        }
+                    }
+                    crate::mesh_llm::publish_current_status_once(&app, "workspace apply").await;
+                    if restore_pending {
+                        restore_managed_agents_on_launch(&app, &state.shutdown_started).await
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .await;
         });
         return Ok(());
     }
 
     #[cfg(not(feature = "mesh-llm"))]
     if restore_pending {
-        let restore_lock = apply_guard;
+        let restore_transaction_lock = apply_transaction_guard;
         let app = restore_app.clone();
         tauri::async_runtime::spawn(async move {
-            let _restore_lock = restore_lock;
-            let state = app.state::<AppState>();
-            if let Err(error) =
-                restore_managed_agents_on_launch(&app, &state.shutdown_started).await
-            {
-                eprintln!("buzz-desktop: failed to restore managed agents: {error}");
-            }
+            complete_restore(
+                restore_transaction_lock,
+                apply_guard,
+                app,
+                restore_pending,
+                |app, _| async move {
+                    let state = app.state::<AppState>();
+                    restore_managed_agents_on_launch(&app, &state.shutdown_started).await
+                },
+            )
+            .await;
         });
         return Ok(());
     }
 
     assert_current_apply_generation(&state.workspace_apply_generation, apply_generation)?;
+
+    drop(apply_guard);
+    drop(apply_transaction_guard);
 
     Ok(())
 }
@@ -383,8 +456,13 @@ mod tests {
         atomic::{AtomicU64, Ordering},
         Arc,
     };
+    use std::time::Duration;
 
-    use super::{assert_current_apply_generation, begin_workspace_apply, next_apply_generation};
+    use super::{
+        assert_current_apply_generation, begin_workspace_apply, complete_restore,
+        next_apply_generation,
+    };
+    use tauri::Manager;
 
     #[test]
     fn explicit_newer_generation_supersedes_older_ticket() {
@@ -399,15 +477,27 @@ mod tests {
 
     #[tokio::test]
     async fn queued_apply_cannot_supersede_running_transaction_or_restore_phase() {
-        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        let transaction_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let workspace_lock = Arc::new(tokio::sync::Mutex::new(()));
         let generation = Arc::new(AtomicU64::new(0));
-        let (running_guard, running_ticket) =
-            begin_workspace_apply(Arc::clone(&lock), &generation).await;
+        let (running_transaction_guard, running_workspace_guard, running_ticket) =
+            begin_workspace_apply(
+                Arc::clone(&transaction_lock),
+                Arc::clone(&workspace_lock),
+                &generation,
+            )
+            .await;
 
-        let queued_lock = Arc::clone(&lock);
+        let queued_transaction_lock = Arc::clone(&transaction_lock);
+        let queued_workspace_lock = Arc::clone(&workspace_lock);
         let queued_generation = Arc::clone(&generation);
         let queued = tokio::spawn(async move {
-            let (_guard, ticket) = begin_workspace_apply(queued_lock, &queued_generation).await;
+            let (_transaction_guard, _workspace_guard, ticket) = begin_workspace_apply(
+                queued_transaction_lock,
+                queued_workspace_lock,
+                &queued_generation,
+            )
+            .await;
             ticket
         });
         tokio::task::yield_now().await;
@@ -419,10 +509,152 @@ mod tests {
         assert_current_apply_generation(&generation, running_ticket).unwrap();
         assert!(!queued.is_finished());
 
-        drop(running_guard);
+        drop(running_workspace_guard);
+        // The outer transaction guard still covers the restore phase, so a
+        // queued apply cannot enter while the inner scope lock is available
+        // for the normal owner-scope capture path.
+        let capture_workspace_guard = workspace_lock.lock_owned().await;
+        assert!(!queued.is_finished());
+        drop(capture_workspace_guard);
+        drop(running_transaction_guard);
         let queued_ticket = queued.await.unwrap();
         assert!(queued_ticket > running_ticket);
         assert_current_apply_generation(&generation, queued_ticket).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_handoff_runs_recovery_capture_and_holds_outer_transaction() {
+        let identifier = format!(
+            "xyz.nuncio.crew.test.workspace-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = identifier;
+        let app = tauri::test::mock_builder()
+            .manage(crate::app_state::build_app_state())
+            .build(context)
+            .unwrap();
+        let state = app.state::<crate::app_state::AppState>();
+        state
+            .managed_agent_restore_pending
+            .store(true, Ordering::Release);
+        let (transaction_guard, workspace_guard, running_ticket) = begin_workspace_apply(
+            Arc::clone(&state.workspace_apply_transaction_lock),
+            Arc::clone(&state.workspace_apply_lock),
+            &state.workspace_apply_generation,
+        )
+        .await;
+        let (recovery_tx, recovery_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let recovery_app = app.handle().clone();
+        let restore = tokio::spawn(async move {
+            complete_restore(
+                transaction_guard,
+                workspace_guard,
+                recovery_app,
+                true,
+                |app, _| async move {
+                    let result = crate::app_state::owner_scope::capture(app).await;
+                    let _ = recovery_tx.send(result.is_ok());
+                    release_rx.await.unwrap();
+                    result.map(|_| ())
+                },
+            )
+            .await;
+        });
+
+        let queued_transaction_lock = Arc::clone(&state.workspace_apply_transaction_lock);
+        let queued_workspace_lock = Arc::clone(&state.workspace_apply_lock);
+        let queued_app = app.handle().clone();
+        let mut queued = tokio::spawn(async move {
+            let queued_state = queued_app.state::<crate::app_state::AppState>();
+            let (_transaction_guard, _workspace_guard, ticket) = begin_workspace_apply(
+                queued_transaction_lock,
+                queued_workspace_lock,
+                &queued_state.workspace_apply_generation,
+            )
+            .await;
+            ticket
+        });
+
+        tokio::task::yield_now().await;
+        assert!(
+            matches!(futures_util::poll!(&mut queued), std::task::Poll::Pending),
+            "queued apply must be pending on the held outer transaction"
+        );
+        let capture_succeeded = tokio::time::timeout(Duration::from_secs(3), recovery_rx)
+            .await
+            .expect("restore recovery must not wait on its released inner lock")
+            .expect("restore recovery signal");
+        assert!(capture_succeeded, "owner scope capture failed");
+        assert_eq!(
+            state.workspace_apply_generation.load(Ordering::Acquire),
+            running_ticket
+        );
+
+        release_tx.send(()).unwrap();
+        restore.await.unwrap();
+        assert!(!state.managed_agent_restore_pending.load(Ordering::Acquire));
+        let queued_ticket = tokio::time::timeout(Duration::from_secs(3), queued)
+            .await
+            .expect("queued apply must proceed after restore")
+            .unwrap();
+        assert!(queued_ticket > running_ticket);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_handoff_releases_outer_transaction_after_restore_failure() {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = format!(
+            "xyz.nuncio.crew.test.workspace-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let app = tauri::test::mock_builder()
+            .manage(crate::app_state::build_app_state())
+            .build(context)
+            .unwrap();
+        let state = app.state::<crate::app_state::AppState>();
+        state
+            .managed_agent_restore_pending
+            .store(true, Ordering::Release);
+        let (transaction_guard, workspace_guard, running_ticket) = begin_workspace_apply(
+            Arc::clone(&state.workspace_apply_transaction_lock),
+            Arc::clone(&state.workspace_apply_lock),
+            &state.workspace_apply_generation,
+        )
+        .await;
+        let queued_transaction_lock = Arc::clone(&state.workspace_apply_transaction_lock);
+        let queued_workspace_lock = Arc::clone(&state.workspace_apply_lock);
+        let queued_app = app.handle().clone();
+        let queued = tokio::spawn(async move {
+            let queued_state = queued_app.state::<crate::app_state::AppState>();
+            let (_transaction_guard, _workspace_guard, ticket) = begin_workspace_apply(
+                queued_transaction_lock,
+                queued_workspace_lock,
+                &queued_state.workspace_apply_generation,
+            )
+            .await;
+            ticket
+        });
+
+        complete_restore(
+            transaction_guard,
+            workspace_guard,
+            app.handle().clone(),
+            true,
+            |app, _| async move {
+                assert!(crate::app_state::owner_scope::capture(app).await.is_ok());
+                Err("simulated restore failure".to_string())
+            },
+        )
+        .await;
+
+        let queued_ticket = tokio::time::timeout(Duration::from_secs(3), queued)
+            .await
+            .expect("queued apply must proceed after failed restore")
+            .unwrap();
+        assert!(queued_ticket > running_ticket);
+        assert!(state.managed_agent_restore_pending.load(Ordering::Acquire));
     }
 }
 
@@ -464,7 +696,9 @@ mod owner_scope_tests {
             state.capture_owner_scope(&guard).unwrap().token
         };
         {
-            let (_workspace, _) = begin_workspace_apply(
+            let transaction_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+            let (_transaction, _workspace, _) = begin_workspace_apply(
+                transaction_lock,
                 state.workspace_apply_lock.clone(),
                 &state.workspace_apply_generation,
             )
@@ -473,7 +707,9 @@ mod owner_scope_tests {
         }
         let initial = capture();
         for origin in ["wss://scope-b.example", "wss://scope-a.example"] {
-            let (_workspace, _) = begin_workspace_apply(
+            let transaction_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+            let (_transaction, _workspace, _) = begin_workspace_apply(
+                transaction_lock,
                 state.workspace_apply_lock.clone(),
                 &state.workspace_apply_generation,
             )
@@ -489,7 +725,9 @@ mod owner_scope_tests {
     #[tokio::test]
     async fn owner_scope_workspace_key_replacement_advances_identity_epoch() {
         let state = crate::app_state::build_app_state();
-        let (_workspace, _) = begin_workspace_apply(
+        let transaction_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let (_transaction, _workspace, _) = begin_workspace_apply(
+            transaction_lock,
             state.workspace_apply_lock.clone(),
             &state.workspace_apply_generation,
         )

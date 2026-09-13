@@ -1,8 +1,8 @@
 use super::{
     bestie_assignment::recover_pending_assignment_cleanup, find_managed_agent_mut,
-    kill_stale_tracked_processes, load_managed_agents, load_personas, managed_agents_base_dir,
-    save_managed_agents, spawn_agent_child, sync_managed_agent_processes, BackendKind,
-    ManagedAgentProcess,
+    hydrate_selected_managed_agent_keys, kill_stale_tracked_processes, load_managed_agent_metadata,
+    load_personas, managed_agents_base_dir, save_managed_agents, spawn_agent_child,
+    sync_managed_agent_processes, BackendKind, ManagedAgentProcess,
 };
 use crate::app_state::AppState;
 use crate::util;
@@ -47,7 +47,7 @@ pub fn backfill_persona_snapshots(app: &tauri::AppHandle) -> Result<(), String> 
         .lock()
         .map_err(|error| error.to_string())?;
 
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let needs_backfill = records
         .iter()
         .any(|r| r.persona_id.is_some() && r.persona_source_version.is_none());
@@ -131,7 +131,7 @@ pub async fn restore_managed_agents_on_launch(
             return Ok(());
         }
 
-        let mut records = load_managed_agents(app)?;
+        let mut records = load_managed_agent_metadata(app)?;
         recover_pending_assignment_cleanup(&managed_agents_base_dir(app)?, |pending_pubkey| {
             records
                 .iter()
@@ -204,7 +204,7 @@ pub async fn restore_managed_agents_on_launch(
             .map(|record| record.pubkey.clone())
             .collect();
 
-        let mut to_start = Vec::new();
+        let mut to_start_pubkeys = Vec::new();
         for pubkey in &candidates {
             if let Some(runtime) = runtimes
                 .iter_mut()
@@ -221,10 +221,25 @@ pub async fn restore_managed_agents_on_launch(
                         continue;
                     }
                 }
-                to_start.push(record.clone());
+                to_start_pubkeys.push(record.pubkey.clone());
             }
         }
-        agents_to_start = to_start;
+        // Decide liveness and deletion eligibility from metadata first. Only
+        // records that will actually spawn may consult the keyring.
+        hydrate_selected_managed_agent_keys(&mut records, |record| {
+            to_start_pubkeys
+                .iter()
+                .any(|pubkey| pubkey == &record.pubkey)
+        });
+        agents_to_start = records
+            .iter()
+            .filter(|record| {
+                to_start_pubkeys
+                    .iter()
+                    .any(|pubkey| pubkey == &record.pubkey)
+            })
+            .cloned()
+            .collect();
 
         // Re-snapshot persona config for agents about to be restored, matching
         // the interactive spawn path so auto-start agents also pick up the
@@ -422,7 +437,7 @@ pub async fn restore_managed_agents_on_launch(
         .managed_agents_store_lock
         .lock()
         .map_err(|error| error.to_string())?;
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let mut runtimes = state
         .managed_agent_processes
         .lock()
@@ -628,7 +643,7 @@ fn persist_restore_error(
         .managed_agents_store_lock
         .lock()
         .map_err(|error| error.to_string())?;
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let record = find_managed_agent_mut(&mut records, pubkey)?;
     record.updated_at = util::now_iso();
     record.last_error = Some(error);
