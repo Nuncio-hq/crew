@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
 pub(super) async fn run_logical_prompt(
     acp: &mut AcpClient,
     session_id: &str,
@@ -27,6 +28,7 @@ pub(super) async fn run_logical_prompt(
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // One logical turn's explicit execution boundaries.
 pub(super) async fn run_logical_prompt_with_invocation(
     acp: &mut AcpClient,
     session_id: &str,

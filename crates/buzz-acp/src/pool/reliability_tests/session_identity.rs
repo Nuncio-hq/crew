@@ -80,7 +80,7 @@ for line in sys.stdin:
         },
     );
 
-    let result = tokio::time::timeout(Duration::from_secs(5), result_rx.recv())
+    let mut result = tokio::time::timeout(Duration::from_secs(5), result_rx.recv())
         .await
         .expect("prompt worker must return a result")
         .expect("prompt worker result");

@@ -115,7 +115,7 @@ impl TaskSessionIdentity {
 
     fn matches(&self, expected: &str) -> bool {
         match self.0.lock() {
-            Ok(current) => current.as_deref().map_or(true, |actual| actual == expected),
+            Ok(current) => current.as_deref().is_none_or(|actual| actual == expected),
             Err(_) => false,
         }
     }
@@ -2491,6 +2491,7 @@ fn send_prompt_result(
 /// Most direct callers are recovery and unit-test paths. The dispatch path
 /// uses [`run_prompt_task_with_session_identity`] so its TaskMeta can follow a
 /// session replacement performed during workspace validation.
+#[allow(clippy::too_many_arguments)] // Existing prompt task boundary plus exact-steer receiver.
 pub async fn run_prompt_task(
     agent: OwnedAgent,
     batch: Option<FlushBatch>,
@@ -2527,6 +2528,7 @@ pub async fn run_prompt_task(
 ///
 /// The agent is ALWAYS returned — even on panic the `JoinSet` detects the
 /// abort and the caller uses `task_map` to recover the agent index.
+#[allow(clippy::too_many_arguments)] // Prompt task boundary with shared resolved session identity.
 pub async fn run_prompt_task_with_session_identity(
     mut agent: OwnedAgent,
     batch: Option<FlushBatch>,

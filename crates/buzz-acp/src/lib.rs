@@ -4379,7 +4379,7 @@ fn dispatch_pending(
             continue;
         }
         let affinity_hit = pool.has_session_for(channel_id);
-        let mut agent = match pool.try_claim(Some(channel_id)) {
+        let agent = match pool.try_claim(Some(channel_id)) {
             Some(a) => a,
             None => {
                 let pending = queue.pending_channels();

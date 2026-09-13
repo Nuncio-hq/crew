@@ -238,7 +238,10 @@ pub(crate) fn handle_steer_turn_control(
                         ("stale_target".into(), None)
                     }
                     Ok(pool::SteerAck::Err(pool::SteerError::Busy)) => ("busy".into(), None),
-                    Ok(pool::SteerAck::Err(pool::SteerError::StrictUnsupported)) => (
+                    Ok(pool::SteerAck::Err(
+                        pool::SteerError::StrictUnsupported
+                        | pool::SteerError::ExpectedRunIdMissing,
+                    )) => (
                         "rejected".into(),
                         Some("selected adapter does not support strict steering"),
                     ),
@@ -247,6 +250,7 @@ pub(crate) fn handle_steer_turn_control(
                     // Keep replay disabled until the user verifies the run.
                     Ok(pool::SteerAck::Err(
                         pool::SteerError::StrictResponseMismatch
+                        | pool::SteerError::StrictOutcome { .. }
                         | pool::SteerError::OutcomeRejected { .. }
                         | pool::SteerError::Transport(_)
                         | pool::SteerError::AgentError { .. },
@@ -293,7 +297,7 @@ pub(crate) fn handle_steer_turn_control(
                 None,
             );
         }
-        Err(pool::SteerError::StrictUnsupported | pool::SteerError::StrictTargetMismatch) => {
+        Err(pool::SteerError::StrictTargetMismatch) => {
             emit_steer_result(
                 observer,
                 channel_id,
@@ -305,6 +309,16 @@ pub(crate) fn handle_steer_turn_control(
                 None,
             );
         }
+        Err(pool::SteerError::StrictUnsupported) => emit_steer_result(
+            observer,
+            channel_id,
+            conversation_id,
+            session_id,
+            turn_id,
+            request_id,
+            "rejected",
+            Some("selected adapter does not support strict steering"),
+        ),
         Err(_) => emit_steer_result(
             observer,
             channel_id,
@@ -318,6 +332,7 @@ pub(crate) fn handle_steer_turn_control(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Correlated result identity remains explicit at the boundary.
 fn emit_steer_result(
     observer: Option<&observer::ObserverHandle>,
     channel_id: uuid::Uuid,

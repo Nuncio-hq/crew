@@ -810,8 +810,6 @@ async fn strict_steer_session(app: &Arc<App>, id: Value, params: Value, wire_tx:
             strict_steer::Admission::Accepted { sender, claim } => {
                 let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
                 let request = strict_steer::Request {
-                    request_id: p.request_id.clone(),
-                    turn_id: p.expected_turn_id.clone(),
                     text: text.clone(),
                     deadline: tokio::time::Instant::now() + strict_steer::REQUEST_DEADLINE,
                     claim: claim.clone(),
