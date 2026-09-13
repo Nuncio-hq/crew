@@ -63,7 +63,6 @@ impl<R: tauri::Runtime> Access for NativeAccess<R> {
             .map_err(|error| error.to_string())?;
         self.current().await?;
         let event = exact_event(&events, 30617, owner, d)?;
-        exact_coordinate_tag(event, coordinate)?;
         let modes: Vec<_> = event
             .tags
             .iter()
@@ -272,5 +271,14 @@ mod tests {
             ],
         );
         assert!(exact_coordinate_tag(&event, &coordinate).is_err());
+    }
+
+    #[test]
+    fn repository_event_validation_does_not_require_a_self_association_tag() {
+        let keys = Keys::generate();
+        let owner = keys.public_key().to_hex();
+        let event = signed_repository(&keys, vec![vec!["d", "repo.demo"]]);
+
+        assert!(exact_event(&[event], 30617, &owner, "repo.demo").is_ok());
     }
 }
