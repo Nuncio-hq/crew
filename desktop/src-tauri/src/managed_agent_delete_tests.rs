@@ -392,6 +392,12 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
         assert_eq!(failed.status, OperationStatus::Failed);
         assert!(!failed.reconciled);
         assert!(!failed_payload.local_removed);
+        assert!(!failed_payload.key_removed);
+        assert_eq!(
+            key_delete.calls(),
+            0,
+            "failed stop must retain the agent key"
+        );
         assert!(failed_payload.failures > 0);
         assert_eq!(
             failed_payload.last_error.as_deref(),

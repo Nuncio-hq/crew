@@ -367,6 +367,12 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
         assert_eq!(failed_child.status, OperationStatus::Failed);
         assert!(!failed_child.reconciled);
         assert!(!failed_child_payload.local_removed);
+        assert!(!failed_child_payload.key_removed);
+        assert_eq!(
+            key_delete.calls(),
+            0,
+            "failed stop must retain the agent key"
+        );
         assert!(failed_child_payload.failures > 0);
         assert_eq!(
             failed_child_payload.last_error.as_deref(),
