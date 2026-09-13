@@ -1,4 +1,7 @@
 use super::*;
+use crate::managed_agents::wiki_runtime_validation::{
+    reject_enabled_secret_sources, validate_profile_config,
+};
 use std::collections::BTreeMap;
 
 fn hermes(profile: &str) -> WikiRuntimeSelection {
@@ -232,9 +235,71 @@ fn hermes_profile_launch_keeps_staged_profile_config_enabled() {
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
     assert!(args.windows(2).any(|pair| pair == ["-p", "wiki-proof"]));
+    assert!(args.iter().any(|arg| arg == "--usage-file"));
     assert!(args.iter().any(|arg| arg == "--toolsets"));
     assert!(args.iter().any(|arg| arg == "--safe-mode"));
     assert!(!args.iter().any(|arg| arg == "--ignore-user-config"));
+}
+
+#[cfg(unix)]
+#[test]
+fn hermes_generation_rejects_effective_model_mismatch() {
+    let (fixture, executable) = fake_runtime(
+        r#"#!/bin/sh
+set -eu
+usage=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--usage-file" ]; then usage="$arg"; fi
+  previous="$arg"
+done
+if [ -n "$usage" ]; then
+  printf '%s' '{"model":"fallback-model","provider":"profile-provider","api_calls":1,"completed":true,"failed":false}' > "$usage"
+fi
+printf 'generated page'
+"#,
+    );
+    let source_home = fixture.path().join("source-hermes");
+    let source_profile = source_home.join("profiles/wiki-proof");
+    std::fs::create_dir_all(&source_profile).expect("source profile");
+    std::fs::write(
+        source_profile.join("config.yaml"),
+        "model:\n  provider: profile-provider\n  default: profile-model\n",
+    )
+    .expect("valid profile config");
+    let state = fixture.path().join("state");
+    let _path_guard = crate::managed_agents::lock_path_mutex();
+    let _home_guard = HermesHomeGuard::set(&source_home);
+    let generator = WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state)
+        .expect("generator");
+    generator.stage_hermes_profile().expect("staged profile");
+    let (page, snapshot) = page_snapshot("source");
+
+    let error = generator
+        .generate(&page, &snapshot, "en")
+        .expect_err("fallback model must not be accepted as the selected profile model");
+
+    assert!(error.to_string().contains("effective provider or model"));
+}
+
+#[cfg(unix)]
+#[test]
+fn installed_hermes_generation_requires_usage_telemetry() {
+    let (fixture, executable) = fake_runtime("#!/bin/sh\nprintf 'generated page'\n");
+    let state = fixture.path().join("state");
+    let mut generator =
+        WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state)
+            .expect("generator");
+    generator.require_hermes_usage_report = true;
+    let (page, snapshot) = page_snapshot("source");
+
+    let error = generator
+        .generate(&page, &snapshot, "en")
+        .expect_err("installed Hermes must report effective runtime telemetry");
+
+    assert!(error
+        .to_string()
+        .contains("valid effective provider and model telemetry"));
 }
 
 #[cfg(unix)]
@@ -252,6 +317,7 @@ safe="${HERMES_SAFE_MODE:-}"
 ignore_rules="${HERMES_IGNORE_RULES:-}"
 ignore_user_config="${HERMES_IGNORE_USER_CONFIG:-}"
 managed_dir=""
+usage=""
 apply_env_file() {
   file="$1"
   [ -f "$file" ] || return 0
@@ -275,12 +341,18 @@ for arg in "$@"; do
     ignore_user_config=1
   fi
 done
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--usage-file" ]; then usage="$arg"; fi
+  previous="$arg"
+done
 if [ "$safe" != "1" ] || [ "$ignore_rules" != "1" ] || [ "$ignore_user_config" != "1" ]; then
   printf 'child-ran' > "$PWD/child-ran"
   exit 91
 fi
 provider=$(sed -n 's/^  provider: //p' "$profile/config.yaml")
 model=$(sed -n 's/^  default: //p' "$profile/config.yaml")
+printf '{"model":"%s","provider":"%s","api_calls":1,"completed":true,"failed":false}' "$model" "$provider" > "$usage"
 printf 'safe-mode-page|%s|%s' "$provider" "$model"
 "#,
     );
@@ -300,9 +372,10 @@ printf 'safe-mode-page|%s|%s' "$provider" "$model"
     let _path_guard = crate::managed_agents::lock_path_mutex();
     let _home_guard = HermesHomeGuard::set(&source_home);
 
-    let generator =
+    let mut generator =
         WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state.clone())
             .expect("generator");
+    generator.require_hermes_usage_report = true;
     generator
         .stage_hermes_profile()
         .expect("profile staging and config validation");
@@ -390,7 +463,7 @@ fn hermes_secret_gate_rejects_enabled_yaml_forms_and_merges() {
         ))
         .expect("secret config");
         assert_eq!(
-            reject_enabled_hermes_secret_sources(&config),
+            reject_enabled_secret_sources(&config),
             Err(WikiRuntimeFailure::ProfileBinding),
             "enabled form should be rejected: {enabled}"
         );
@@ -403,14 +476,14 @@ fn hermes_secret_gate_rejects_enabled_yaml_forms_and_merges() {
     ] {
         let config =
             serde_yaml::from_str::<serde_yaml::Value>(config_text).expect("disabled secret config");
-        assert!(reject_enabled_hermes_secret_sources(&config).is_ok());
+        assert!(reject_enabled_secret_sources(&config).is_ok());
     }
     let merged = serde_yaml::from_str::<serde_yaml::Value>(
         "defaults: &defaults\n  enabled: true\nsecrets:\n  onepassword:\n    <<: *defaults\n",
     )
     .expect("merged secret config");
     assert_eq!(
-        reject_enabled_hermes_secret_sources(&merged),
+        reject_enabled_secret_sources(&merged),
         Err(WikiRuntimeFailure::ProfileBinding)
     );
     let tagged = serde_yaml::from_str::<serde_yaml::Value>(
@@ -418,7 +491,7 @@ fn hermes_secret_gate_rejects_enabled_yaml_forms_and_merges() {
     )
     .expect("tagged secret config");
     assert_eq!(
-        reject_enabled_hermes_secret_sources(&tagged),
+        reject_enabled_secret_sources(&tagged),
         Err(WikiRuntimeFailure::ProfileBinding)
     );
 }
@@ -561,9 +634,9 @@ fn staged_hermes_config_allows_missing_and_empty_first_run_states() {
     let fixture = tempfile::tempdir().expect("fixture dir");
     let profile = fixture.path().join("profile");
     std::fs::create_dir_all(&profile).expect("profile");
-    assert!(validate_staged_hermes_profile_config(&profile).is_ok());
+    assert!(validate_profile_config(&profile).is_ok());
     std::fs::write(profile.join("config.yaml"), "").expect("empty config");
-    assert!(validate_staged_hermes_profile_config(&profile).is_ok());
+    assert!(validate_profile_config(&profile).is_ok());
 }
 
 #[cfg(unix)]

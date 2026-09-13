@@ -998,10 +998,17 @@ dotenv bytes remain byte-identical, a missing `.env` is created empty, and the
 child receives a fresh empty private managed directory. The production-bound
 fake-process regression stages a real profile copy, preserves safe dotenv
 bytes, verifies the private directory, and emulates native reassertion at the
-child boundary; it catches removal of the CLI guard or profile-binding seam
-without claiming that an installed Hermes provider or model has run. These
-tests live in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs` so
-the runtime implementation remains under the repository file-size gate.
+child boundary. Native installed runs also require Hermes' bounded
+`--usage-file` report for every generated page. A report must identify a
+completed, non-failed API call and its effective provider/model; when the staged
+profile declares both values, either mismatch fails the generation instead of
+silently accepting provider fallback. The report stays inside disposable state
+and only validated, non-secret identifiers enter diagnostics. These regressions
+catch removal of the CLI guard, profile binding, telemetry requirement, or
+effective-model fence without claiming that a fake process ran an installed
+provider. They live in
+`desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs` so the runtime
+implementation remains under the repository file-size gate.
 
 This source-level guard does not close the installed-runtime acceptance gap.
 No native Hermes launch, provider/auth check, effective-model receipt, or
