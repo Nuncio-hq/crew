@@ -59,6 +59,8 @@ export function WikiPageView({
   repoName,
   repoPath,
   repoState,
+  readError,
+  readPending,
   readStatus,
   snapshot,
   toc,
@@ -93,6 +95,8 @@ export function WikiPageView({
   repoName: string;
   repoPath?: string | null;
   repoState?: RelayEvent;
+  readError?: Error | null;
+  readPending?: boolean;
   readStatus?: WikiRepositoryReadStatus;
   snapshot?: WikiSnapshotRead | null;
   toc: WikiToc | null;
@@ -522,8 +526,9 @@ export function WikiPageView({
   }, [navigationKey]);
 
   const emptyCompany = isCompany && !shown && !companyPending && !companyError;
-  const readStale = readStatus?.stale ?? false;
-  const readUnavailable = readStatus?.unavailable ?? false;
+  const readStale = !readPending && (readStatus?.stale ?? false);
+  const readUnavailable =
+    !readPending && (Boolean(readError) || (readStatus?.unavailable ?? false));
   const searchQuery = useWikiSearch({
     coordinate:
       owner && repoD ? wikiRepositoryCoordinate(owner, repoD) : undefined,
@@ -580,6 +585,9 @@ export function WikiPageView({
               repoD={repoD}
               repoPath={repoPath}
               repoState={repoState}
+              readError={readError}
+              readPending={readPending}
+              readStatus={readStatus}
               search={search}
               showCadence={admin && Boolean(repoD)}
               toc={toc}
@@ -654,7 +662,11 @@ export function WikiPageView({
                   className="mb-3 rounded-md bg-destructive/10 p-2 text-2xs text-destructive"
                   data-testid="wiki-read-unavailable"
                 >
-                  <p>{readStatus?.message ?? "Wiki read unavailable."}</p>
+                  <p>
+                    {readError?.message ??
+                      readStatus?.message ??
+                      "Wiki read unavailable."}
+                  </p>
                   {onRetryRead ? (
                     <button
                       className="mt-2 rounded-md bg-destructive/15 px-2 py-1"
@@ -666,6 +678,16 @@ export function WikiPageView({
                     </button>
                   ) : null}
                 </div>
+              ) : null}
+              {!isCompany && readPending ? (
+                <p
+                  aria-live="polite"
+                  className="text-sm text-muted-foreground"
+                  data-testid="wiki-read-loading"
+                  role="status"
+                >
+                  Loading Wiki…
+                </p>
               ) : null}
               {isCompany && companyPending && !shown ? (
                 <p
@@ -700,7 +722,7 @@ export function WikiPageView({
                   <WikiCompanyEditor proposals={proposals ?? []} />
                 </div>
               ) : null}
-              {!isCompany && search.trim() ? (
+              {!isCompany && !readPending && search.trim() ? (
                 <WikiSearchResultsPanel
                   query={search}
                   searchQuery={searchQuery}
@@ -711,7 +733,10 @@ export function WikiPageView({
                   hasSnapshot={snapshot?.state === "complete"}
                 />
               ) : null}
-              {!shown &&
+              {!readPending &&
+              !readUnavailable &&
+              !readError &&
+              !shown &&
               !emptyCompany &&
               !isCompany &&
               readStatus?.state === "missing" ? (

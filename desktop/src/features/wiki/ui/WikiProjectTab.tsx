@@ -9,6 +9,11 @@ import { sameOwnerOperationScope } from "@/shared/api/ownerOperations";
 import type { Repository } from "@/features/projects/hooks";
 import { wikiRepositoryCoordinate } from "@/shared/api/wikiSnapshot";
 
+function queryError(error: unknown): Error | null {
+  if (!error) return null;
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 export function WikiProjectTab({
   project,
   projectId,
@@ -64,6 +69,29 @@ export function WikiProjectTab({
   );
   const readStatus = eventsQuery.data?.repositoryStatuses[coordinate];
   const snapshot = eventsQuery.data?.repositorySnapshots[coordinate] ?? null;
+  const readPending =
+    !snapshot &&
+    (eventsQuery.scopeQuery.isPending ||
+      (eventsQuery.scopeQuery.isFetching && !operationScope) ||
+      (operationScope !== undefined &&
+        (eventsQuery.repositoryPending || eventsQuery.repositoryFetching)));
+  const readError = readPending
+    ? null
+    : (queryError(eventsQuery.scopeQuery.error) ??
+      (snapshot ? null : eventsQuery.repositoryError));
+  const retryRead = React.useCallback(() => {
+    if (!operationScope || eventsQuery.scopeQuery.error) {
+      void eventsQuery.scopeQuery.refetch();
+      return;
+    }
+    eventsQuery.retryRepository(coordinate);
+  }, [
+    coordinate,
+    eventsQuery.retryRepository,
+    eventsQuery.scopeQuery.error,
+    eventsQuery.scopeQuery.refetch,
+    operationScope,
+  ]);
   return (
     <WikiPageView
       admin={false}
@@ -79,9 +107,11 @@ export function WikiProjectTab({
       repoPath={project.localWorkspacePath}
       workspaceMode={project.workspaceMode}
       repoState={repoState}
+      readError={readError}
+      readPending={readPending}
       readStatus={readStatus}
       snapshot={snapshot}
-      onRetryRead={() => eventsQuery.retryRepository(coordinate)}
+      onRetryRead={retryRead}
       operationScope={operationScope}
       toc={toc}
       recoveryJob={job}
