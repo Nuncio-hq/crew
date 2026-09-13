@@ -5281,6 +5281,20 @@ done
         client.steering_supported()
     }
 
+    async fn strict_steering_supported_after_initialize(init_result: &str) -> bool {
+        let script = format!(
+            "read -r _init; printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{result}}}'; \
+             sleep 5",
+            result = init_result,
+        );
+        let mut client = spawn_script(&script).await;
+        client
+            .initialize()
+            .await
+            .expect("initialize should succeed");
+        client.strict_steering_supported
+    }
+
     /// Test 1a: an adapter advertising `_meta.steering.supported: true`
     /// (claude-agent-acp `src/acp-agent.ts:1444`, codex-acp
     /// `src/CodexAcpServer.ts:247`) is recorded as steering-capable.
@@ -5321,6 +5335,27 @@ done
         assert!(
             !supported,
             "_meta.steering.supported: false must leave steering_supported false"
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_records_strict_steering_only_when_exact_capability_is_advertised() {
+        let supported = strict_steering_supported_after_initialize(
+            r#"{"protocolVersion":2,"_meta":{"steering":{"supported":true,"strictTurnTarget":true}}}"#,
+        )
+        .await;
+        assert!(
+            supported,
+            "strict Activity Steer requires the exact strictTurnTarget capability"
+        );
+
+        let unsupported = strict_steering_supported_after_initialize(
+            r#"{"protocolVersion":2,"_meta":{"steering":{"supported":true}}}"#,
+        )
+        .await;
+        assert!(
+            !unsupported,
+            "ordinary steering support must not imply strict Activity Steer"
         );
     }
 

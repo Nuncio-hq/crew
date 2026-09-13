@@ -98,6 +98,12 @@ pub struct TaskMeta {
     pub channel_id: Option<Uuid>,
     /// Real NIP-29 channel used for relay operations and observer context.
     pub routing_channel_id: Option<Uuid>,
+    /// ACP session identity known when this task was dispatched.
+    ///
+    /// First turns may have no value because `session/new` runs inside the
+    /// task. In that case the ACP read loop remains the authoritative session
+    /// fence; an existing session is checked here before queueing a steer.
+    pub session_id: Option<String>,
     /// Identifies terminal events when the task panics before returning a result.
     pub turn_id: String,
     /// Clone of batch for Queue mode panic recovery.
@@ -1053,7 +1059,10 @@ impl AgentPool {
     }
 
     /// Send a strict steer only to the task whose routing channel,
-    /// conversation, and turn identities all match.
+    /// conversation, turn, and known session identities all match.
+    ///
+    /// A first turn may not have a session ID until `session/new` completes;
+    /// those requests remain fenced by the ACP read loop's lexical session.
     pub fn send_exact_steer(
         &mut self,
         routing_channel_id: Uuid,
@@ -1061,13 +1070,22 @@ impl AgentPool {
         turn_id: &str,
         request: SteerRequest,
     ) -> Result<(), SteerError> {
+        let Some(strict_target) = request.strict_target.as_ref() else {
+            return Err(SteerError::StrictTargetMismatch);
+        };
         let meta = self
             .task_map
             .values_mut()
             .find(|meta| {
+                let session_matches = meta
+                    .session_id
+                    .as_deref()
+                    .map(|session_id| session_id == strict_target.session_id.as_str())
+                    .unwrap_or(true);
                 meta.routing_channel_id == Some(routing_channel_id)
                     && meta.channel_id == Some(conversation_id)
                     && meta.turn_id == turn_id
+                    && session_matches
             })
             .ok_or(SteerError::StrictTargetMismatch)?;
         let tx = meta
