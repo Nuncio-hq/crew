@@ -96,6 +96,17 @@ fn payload() -> ScopedObserverControl {
         request_id: uuid::Uuid::new_v4(),
     }
 }
+
+fn steer_payload() -> ScopedObserverControl {
+    ScopedObserverControl::SteerTurn {
+        channel_id: uuid::Uuid::new_v4(),
+        conversation_id: uuid::Uuid::new_v4(),
+        session_id: "selected-session".into(),
+        turn_id: "selected-turn".into(),
+        request_id: uuid::Uuid::new_v4(),
+        prompt: "keep the selected run focused".into(),
+    }
+}
 fn accepted(event: Event) -> Option<serde_json::Value> {
     Some(serde_json::json!({"event_id":event.id.to_hex(),"accepted":true,"message":"ok"}))
 }
@@ -148,6 +159,33 @@ async fn scoped_stop_exact_encrypted_target_uses_captured_owner() {
     let agent = Keys::generate();
     let recipient = agent.public_key().to_hex();
     let request = payload();
+    let expected_payload = serde_json::to_value(&request).unwrap();
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+    let server = relay(move |event| {
+        let decoded: serde_json::Value =
+            buzz_core_pkg::observer::decrypt_observer_payload(&agent, &event).unwrap();
+        assert_eq!(decoded, expected_payload);
+        seen_tx.send(event.pubkey.to_hex()).unwrap();
+        accepted(event)
+    })
+    .await;
+    let app = app(&server.url);
+    let token = capture(app.handle().clone()).await.unwrap().token;
+    let expected_owner = token.scope.owner.clone();
+    let result = send_at_scope(app.handle().clone(), recipient, request, token).await;
+    assert!(matches!(result, ScopedControlPublication::Accepted { .. }));
+    assert_eq!(seen_rx.await.unwrap(), expected_owner);
+    assert_eq!(server.connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn scoped_steer_exact_encrypted_target_uses_captured_owner() {
+    let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
+    let _reset = ResetAdmission;
+    crate::relay_admission::reset_rate_limit_gate();
+    let agent = Keys::generate();
+    let recipient = agent.public_key().to_hex();
+    let request = steer_payload();
     let expected_payload = serde_json::to_value(&request).unwrap();
     let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
     let server = relay(move |event| {
