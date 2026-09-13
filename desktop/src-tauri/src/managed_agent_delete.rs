@@ -485,8 +485,13 @@ async fn resume<R: tauri::Runtime>(
         .map_err(|_| "invalid managed-agent deletion record")?;
     validate_operation(&operation, &payload)?;
     if payload.cascade.is_some() {
-        return managed_agent_persona_delete::resume_persona_cascade(app, token, operation, manual)
-            .await;
+        // Keep the cascade state machine out of every direct-delete future.
+        // Startup recovery and cascades both nest this entry point; embedding
+        // their full async frames exhausts the normal worker-thread stack.
+        return Box::pin(managed_agent_persona_delete::resume_persona_cascade(
+            app, token, operation, manual,
+        ))
+        .await;
     }
     if operation.reconciled {
         return Ok(());
@@ -962,7 +967,7 @@ pub(crate) async fn recover<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(),
             // child merely because metadata pagination returned it too.
             continue;
         }
-        if let Err(error) = resume(app.clone(), token.clone(), operation, false).await {
+        if let Err(error) = Box::pin(resume(app.clone(), token.clone(), operation, false)).await {
             eprintln!("buzz-desktop: managed-agent deletion recovery: {error}");
             first_error.get_or_insert(error);
         }
