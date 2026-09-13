@@ -861,13 +861,15 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
               repository={repository}
             />
             <div
-              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-y-none px-4 pb-4"
+              className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overscroll-y-none px-4 pb-4 ${activeTab === "wiki" ? "overflow-y-hidden" : "overflow-y-auto"}`}
               data-testid="project-detail-scroll"
             >
               {/* min-h-full + flex chain lets the commit detail's diff pane
                     grow to the bottom of the scrollport without forcing a
                     taller page when content already overflows. */}
-              <div className="flex min-h-full w-full flex-col space-y-3">
+              <div
+                className={`flex w-full flex-col space-y-3 ${activeTab === "wiki" ? "min-h-0 flex-1" : "min-h-full"}`}
+              >
                 <ProjectDetailRepositoryHeader
                   identityPubkey={identityPubkey}
                   onRepositoryChange={handleRepositoryChange}
@@ -888,6 +890,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                   </Button>
                 ) : null}
                 <ProjectOutcomeDetail
+                  contentOnly={activeTab === "wiki"}
                   openPlumbing={Boolean(
                     tab || commitHash || issueId || pullRequestId || filePath,
                   )}
