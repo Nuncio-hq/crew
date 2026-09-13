@@ -525,7 +525,12 @@ citations both open a dismissible verified-source pane; the pane hides the
 table of contents, returns focus to its activating control, and is scoped to
 the exact owner, repository, path, and line range recorded on the page.
 Native reads still require the selected root and live snapshot checks, and real
-cross-client acceptance remains a separate gate. #365
+cross-client acceptance remains a separate gate. On macOS, an exact repository
+read passes the retained root descriptor to the trusted `buzz-dev-mcp` /
+`crew-wiki` multicall helper over stdin; the helper validates the directory,
+changes directory by descriptor, and execs only the bounded read allowlist.
+Missing helper support leaves folder reads available while Git revision reads
+are unavailable. Linux retains its descriptor-bound `/dev/fd` path. #365
 proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
 and ACL-safe origin links. These are gates, not source-handoff implementations.

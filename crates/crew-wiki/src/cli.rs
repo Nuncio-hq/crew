@@ -13,6 +13,8 @@ pub fn run(args: Vec<String>) -> i32 {
     let mut argv = args.iter();
     let cmd = argv.next().map(String::as_str).unwrap_or("help");
     match cmd {
+        #[cfg(target_os = "macos")]
+        "__source-git" => crate::source_git_command::run_helper(argv.cloned().collect()),
         "generate" => generate_cmd(argv.cloned().collect()),
         "plan" => plan_cmd(argv.cloned().collect()),
         "status" => {
