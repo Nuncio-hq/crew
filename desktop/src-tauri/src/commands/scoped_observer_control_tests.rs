@@ -135,7 +135,10 @@ async fn scoped_stop_expected_scope_and_malformed_target_never_connect() {
     let mut malformed = payload();
     let ScopedObserverControl::CancelTurn {
         ref mut turn_id, ..
-    } = malformed;
+    } = malformed
+    else {
+        panic!("payload fixture must be a cancel control");
+    };
     *turn_id = " ".into();
     let result = send_at_scope(
         app.handle().clone(),

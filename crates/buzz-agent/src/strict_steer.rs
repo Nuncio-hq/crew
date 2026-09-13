@@ -52,8 +52,6 @@ impl Outcome {
 
 /// A request accepted into the invocation's bounded round-boundary queue.
 pub(crate) struct Request {
-    pub(crate) request_id: String,
-    pub(crate) turn_id: String,
     pub(crate) text: String,
     pub(crate) deadline: Instant,
     pub(crate) claim: Claim,
@@ -135,24 +133,13 @@ pub(crate) enum Admission {
 /// This state is always accessed while the owning `App::sessions` mutex is
 /// held.  The channel is bounded and `try_send` is used by the caller, so no
 /// asynchronous operation is performed while that mutex is held.
+#[derive(Default)]
 pub(crate) struct State {
     invocation_id: Option<String>,
     accepting: bool,
     sender: Option<mpsc::Sender<Request>>,
     entries: HashMap<String, Entry>,
     terminal_order: VecDeque<String>,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            invocation_id: None,
-            accepting: false,
-            sender: None,
-            entries: HashMap::new(),
-            terminal_order: VecDeque::new(),
-        }
-    }
 }
 
 impl State {

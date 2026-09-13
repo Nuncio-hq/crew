@@ -48,10 +48,10 @@
       ]
     },
     {
-      "area": "crates/buzz-agent/tests/regressions.rs",
-      "why": "Approve the real MCP shell call before testing cancellation; building the Wiki Source helper (#364) exposes the formerly skipped executable-dependent regression.",
-      "resolve": "Keep the production permission exchange and cancellation timing/PID-death assertions; drop this test-only delta when upstream adopts the approval-aware wait.",
-      "filesAtRecord": 1
+      "area": "crates/buzz-agent/**",
+      "why": "Crew's native agent adapter: #354 exact selected-invocation Steer admission, bounded deduplication and round-boundary append; #364 approval-aware Wiki Source cancellation regression.",
+      "resolve": "Preserve exact session/turn/request correlation, first-wins terminal outcomes, bounded request state and no successor-invocation delivery. Keep the production permission exchange and cancellation timing/PID-death assertions until upstream adopts them.",
+      "filesAtRecord": 5
     },
     {
       "area": "crates/buzz-core/**",

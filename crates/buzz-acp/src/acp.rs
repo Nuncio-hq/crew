@@ -913,6 +913,7 @@ impl AcpClient {
     ///
     /// The idle deadline resets on any stdout activity from the agent. The hard
     /// deadline is an absolute wall-clock cap (safety valve).
+    #[allow(dead_code)] // Public compatibility API; production uses the invocation-aware form.
     pub async fn session_prompt_with_idle_timeout(
         &mut self,
         session_id: &str,
@@ -935,6 +936,7 @@ impl AcpClient {
     /// Used for slash-command pass-through: ACP connectors detect commands via
     /// the **first** block's text starting with `/`, so the harness sends
     /// `["/cmd args", "<buzz context>"]` instead of one wrapped block.
+    #[allow(dead_code)] // Public compatibility API; production uses the invocation-aware form.
     pub async fn session_prompt_blocks_with_idle_timeout(
         &mut self,
         session_id: &str,
@@ -1879,9 +1881,8 @@ impl AcpClient {
                     let prompt_block_refs: Vec<&str> =
                         req.prompt_blocks.iter().map(String::as_str).collect();
                     let selected = if let Some(target) = req.strict_target.as_ref() {
-                        if !self.strict_steering_supported {
-                            None
-                        } else if target.session_id != session_id
+                        if !self.strict_steering_supported
+                            || target.session_id != session_id
                             || self.observer_context.turn_id.as_deref()
                                 != Some(target.turn_id.as_str())
                         {
@@ -2752,6 +2753,7 @@ impl AcpClient {
 }
 
 /// Build `session/prompt` params from one or more text content blocks.
+#[cfg(test)]
 fn build_prompt_params(session_id: &str, prompt_blocks: &[&str]) -> serde_json::Value {
     build_prompt_params_with_invocation(session_id, prompt_blocks, None)
 }

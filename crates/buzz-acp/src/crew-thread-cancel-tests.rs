@@ -369,6 +369,45 @@ async fn thread_exact_steer_crosses_handler_and_pool_with_exact_target() {
 }
 
 #[tokio::test]
+async fn thread_exact_steer_reports_unsupported_adapter_without_claiming_delivery() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let session = "selected-session";
+    let turn = "selected-turn";
+    let request_id = Uuid::new_v4();
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, session, turn);
+    let observer = observer::ObserverHandle::in_process();
+
+    handle_steer_turn_control(
+        &serde_json::json!({
+            "type": "steer_turn",
+            "channelId": channel,
+            "conversationId": conversation,
+            "sessionId": session,
+            "turnId": turn,
+            "requestId": request_id,
+            "prompt": "keep the selected run focused"
+        }),
+        &mut pool,
+        Some(&observer),
+    );
+
+    let request = receiver.recv().await.expect("selected task receives steer");
+    assert!(request
+        .ack_tx
+        .send(pool::SteerAck::Err(pool::SteerError::ExpectedRunIdMissing))
+        .is_ok());
+    let result = wait_for_steer_result(&observer, "rejected").await;
+    assert_eq!(result["requestId"], request_id.to_string());
+    assert_eq!(
+        result["error"],
+        "selected adapter does not support strict steering"
+    );
+}
+
+#[tokio::test]
 async fn pool_exact_steer_rejects_stale_session_before_queueing() {
     let channel = Uuid::new_v4();
     let conversation = Uuid::new_v4();
