@@ -386,6 +386,14 @@ before capturing a remote record, so an in-flight deployment either finishes
 before the deletion fence or is blocked by it. Spawn, restart, lazy reconcile
 and launch restore all check the claim while holding the same transition/store
 fence used to reserve deletion.
+Workspace apply holds an outer transaction lock through launch restoration,
+but releases the inner workspace scope lock before recovery captures its owner
+scope. Queued workspace changes remain serialized while normal scoped reads
+can complete. The one-shot restore latch clears only after successful,
+non-shutdown restoration; failures retain it for a later apply retry. Directory,
+status, and startup eligibility reads use persisted agent metadata without
+hydrating every agent key. Start/deploy paths hydrate selected records and
+retain the existing missing-key refusal.
 Canvas discovery pages signed kind 40100 history with the relay's composite
 cursor and fails closed when the bounded scan cannot prove exhaustion. The
 native recovery list exposes redacted unresolved summaries across communities;
