@@ -96,7 +96,7 @@ fn error_bound_is_utf8_byte_safe() {
 }
 
 #[cfg(unix)]
-struct OwnedReceiptChild {
+pub(crate) struct OwnedReceiptChild {
     pid: u32,
     exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
     reaper: Option<std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>>,
@@ -125,7 +125,7 @@ impl Drop for HomeGuard {
 
 #[cfg(unix)]
 impl OwnedReceiptChild {
-    fn spawn(instance_id: &str) -> Self {
+    pub(crate) fn spawn(instance_id: &str) -> Self {
         let ready_dir = tempfile::tempdir().expect("temporary receipt readiness directory");
         let ready_path = ready_dir.path().join("ready");
         let mut command = receipt_child_command(instance_id, &ready_path);
@@ -148,7 +148,7 @@ impl OwnedReceiptChild {
         child
     }
 
-    fn pid(&self) -> u32 {
+    pub(crate) fn pid(&self) -> u32 {
         self.pid
     }
 
@@ -170,7 +170,7 @@ impl OwnedReceiptChild {
         }
     }
 
-    fn join(mut self) -> std::process::ExitStatus {
+    pub(crate) fn join(mut self) -> std::process::ExitStatus {
         self.reaper
             .take()
             .expect("live receipt reaper")
@@ -305,6 +305,7 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
     }
     .into_agent_record();
     let pubkey = nostr::Keys::generate().public_key().to_hex();
+    let key_delete = managed_agents::install_test_agent_key_delete(&pubkey, Ok(()));
     record.pubkey = pubkey.clone();
     record.relay_url = "wss://direct-delete-seam.example".into();
     record.acp_command = "buzz-acp".into();
@@ -489,6 +490,11 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
             std::fs::read(&receipt_target).expect("failed symlink target must remain readable"),
             receipt_bytes,
             "receipt cleanup must not change the failed symlink target"
+        );
+        assert_eq!(
+            key_delete.calls(),
+            1,
+            "fresh recovery must use the scoped credential cleanup seam"
         );
     });
 }
