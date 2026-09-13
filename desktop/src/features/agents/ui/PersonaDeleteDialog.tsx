@@ -43,18 +43,28 @@ type PersonaDeleteDialogProps = {
 export function personaDeleteDescription(
   persona: AgentPersona | null,
   instanceCount: number,
+  hermesProfileCount = 0,
 ): string {
   if (!persona) {
     return "Delete this agent.";
   }
+
+  const retainedState =
+    hermesProfileCount > 0
+      ? "Messages, DM history, runtime installations, and worktrees remain in place. Hermes profiles remain on this machine unless you explicitly choose Archive below."
+      : "Messages, DM history, runtime installations, and worktrees remain in place. Hermes profile data is untouched.";
   if (instanceCount === 0) {
-    return `Delete ${persona.displayName}.`;
+    return `Remove the ${persona.displayName} persona definition. ${retainedState}`;
   }
   const cascade =
     instanceCount === 1
-      ? "Also deletes 1 agent instance and archives its identity on the relay, so it no longer appears in member lists or mention suggestions."
-      : `Also deletes ${instanceCount} agent instances and archives their identities on the relay, so they no longer appear in member lists or mention suggestions.`;
-  return `Delete ${persona.displayName}. ${cascade}`;
+      ? "Delete 1 linked agent instance and archive its identity on the relay, so it no longer appears in member lists or mention suggestions."
+      : `Delete ${instanceCount} linked agent instances and archive their identities on the relay, so they no longer appear in member lists or mention suggestions.`;
+  return `Remove the ${persona.displayName} persona definition. ${cascade} ${retainedState}`;
+}
+
+export function personaDeleteTitle(persona: AgentPersona | null): string {
+  return persona ? `Delete ${persona.displayName}?` : "Delete agent?";
 }
 
 export function PersonaDeleteDialog({
@@ -89,9 +99,13 @@ export function PersonaDeleteDialog({
     <AlertDialog onOpenChange={onOpenChange} open={open}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete agent?</AlertDialogTitle>
+          <AlertDialogTitle>{personaDeleteTitle(persona)}</AlertDialogTitle>
           <AlertDialogDescription>
-            {personaDeleteDescription(persona, instanceCount)}
+            {personaDeleteDescription(
+              persona,
+              instanceCount,
+              uniqueProfiles.length,
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {primaryProfile ? (
