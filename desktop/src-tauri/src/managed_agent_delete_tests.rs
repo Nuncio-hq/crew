@@ -97,7 +97,9 @@ fn error_bound_is_utf8_byte_safe() {
 
 #[cfg(unix)]
 struct OwnedReceiptChild {
-    child: Option<std::process::Child>,
+    pid: u32,
+    exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reaper: Option<std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>>,
 }
 
 #[cfg(unix)]
@@ -126,34 +128,50 @@ impl OwnedReceiptChild {
         use std::os::unix::process::CommandExt;
         let mut command = std::process::Command::new("/bin/sleep");
         command
-            .arg("30")
+            .arg("5")
             .env("BUZZ_MANAGED_AGENT", instance_id)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .process_group(0);
+        let mut child = command.spawn().expect("spawn live receipt fixture");
+        let pid = child.id();
+        let exited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reaper_exited = std::sync::Arc::clone(&exited);
+        let reaper = std::thread::spawn(move || {
+            let result = child.wait();
+            reaper_exited.store(true, std::sync::atomic::Ordering::SeqCst);
+            result
+        });
         Self {
-            child: Some(command.spawn().expect("spawn live receipt fixture")),
+            pid,
+            exited,
+            reaper: Some(reaper),
         }
     }
 
     fn pid(&self) -> u32 {
-        self.child.as_ref().expect("live receipt child").id()
+        self.pid
     }
 
-    fn reap(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.wait();
-        }
+    fn join(mut self) -> std::process::ExitStatus {
+        self.reaper
+            .take()
+            .expect("live receipt reaper")
+            .join()
+            .expect("join live receipt reaper")
+            .expect("wait for live receipt child")
     }
 }
 
 #[cfg(unix)]
 impl Drop for OwnedReceiptChild {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+        if !self.exited.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = crate::managed_agents::terminate_process(self.pid);
+        }
+        if let Some(reaper) = self.reaper.take() {
+            let _ = reaper.join();
         }
     }
 }
@@ -240,16 +258,38 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
     let mut child = OwnedReceiptChild::spawn(&identifier);
     let receipt_key = ManagedAgentRuntimeKey::new(pubkey.clone(), &record.relay_url)
         .expect("fixture runtime key");
-    managed_agents::write_agent_runtime_receipt(
-        &app.handle(),
-        &ManagedAgentRuntimeReceipt {
-            key: receipt_key,
-            pid: child.pid(),
-            desktop_instance_id: identifier.clone(),
-            started_at: "2026-09-13T00:00:00Z".into(),
-        },
-    )
-    .expect("persist live pair receipt");
+    let receipt = ManagedAgentRuntimeReceipt {
+        key: receipt_key.clone(),
+        pid: child.pid(),
+        desktop_instance_id: identifier.clone(),
+        started_at: "2026-09-13T00:00:00Z".into(),
+    };
+    managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+        .expect("persist live pair receipt");
+    let receipt_path = managed_agents::managed_agents_base_dir(app.handle())
+        .expect("resolve runtime receipt directory")
+        .join("agent-pids")
+        .join(format!("{}.json", receipt.key.runtime_id()));
+    let receipt_bytes = std::fs::read(&receipt_path).expect("read valid receipt bytes");
+    assert!(managed_agents::process_is_running(child.pid()));
+    assert!(managed_agents::process_has_buzz_marker(
+        child.pid(),
+        &identifier
+    ));
+    assert!(managed_agents::valid_agent_runtime_receipt(
+        &receipt_path,
+        &receipt,
+        &identifier
+    ));
+    let receipt_target = temp.path().join("owned-receipt-target.json");
+    std::fs::write(&receipt_target, &receipt_bytes).expect("write symlink receipt target");
+    std::fs::remove_file(&receipt_path).expect("remove regular receipt before replacement");
+    std::os::unix::fs::symlink(&receipt_target, &receipt_path)
+        .expect("replace receipt with symlink fixture");
+    assert!(std::fs::symlink_metadata(&receipt_path)
+        .expect("inspect replaced receipt")
+        .file_type()
+        .is_symlink());
 
     tauri::async_runtime::block_on(async {
         let captured = capture(app.handle().clone())
@@ -272,6 +312,8 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
         };
         drop(journal);
 
+        let expected_stop_error =
+            "managed-agent runtime receipt is not a regular file; deletion remains pending";
         let first_attempt = resume(
             app.handle().clone(),
             token.clone(),
@@ -279,9 +321,9 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
             false,
         )
         .await;
-        assert!(
-            first_attempt.is_err(),
-            "the owned child must remain unreaped long enough for production stop to fail"
+        assert_eq!(
+            first_attempt.expect_err("strict receipt failure must propagate"),
+            expected_stop_error
         );
         let journal = open_journal_store(app.handle()).expect("reopen failed delete journal");
         let failed = journal
@@ -293,6 +335,10 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
         assert!(!failed.reconciled);
         assert!(!failed_payload.local_removed);
         assert!(failed_payload.failures > 0);
+        assert_eq!(
+            failed_payload.last_error.as_deref(),
+            Some(expected_stop_error)
+        );
         assert!(pending_in_store(&journal, &pubkey).expect("inspect pending delete claim"));
         assert!(
             managed_agents::load_managed_agents(app.handle())
@@ -301,9 +347,30 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
                 .any(|candidate| candidate.pubkey == pubkey),
             "a failed stop must retain the exact record for recovery"
         );
+        assert!(std::fs::symlink_metadata(&receipt_path)
+            .expect("failed delete must retain receipt path")
+            .file_type()
+            .is_symlink());
+        assert!(
+            receipt_target.exists(),
+            "symlink target must remain untouched"
+        );
+        assert!(managed_agents::process_is_running(child.pid()));
         drop(journal);
 
-        child.reap();
+        std::fs::remove_file(&receipt_path).expect("remove failed receipt symlink");
+        managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+            .expect("restore regular receipt for fresh recovery");
+        assert!(std::fs::symlink_metadata(&receipt_path)
+            .expect("inspect restored receipt")
+            .file_type()
+            .is_file());
+        assert!(managed_agents::valid_agent_runtime_receipt(
+            &receipt_path,
+            &receipt,
+            &identifier
+        ));
+        assert!(managed_agents::process_is_running(child.pid()));
         drop(app);
         let app = direct_delete_test_app(identifier, owner_keys);
         assert!(app
@@ -317,11 +384,18 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
             .expect("capture fresh restart scope")
             .token;
         assert_eq!(restarted_token, token, "restart must preserve owner scope");
+        assert!(managed_agents::process_is_running(child.pid()));
 
         let app_handle = app.handle();
         recover(&app_handle)
             .await
             .expect("fresh AppState recovery must retry direct deletion");
+        use std::os::unix::process::ExitStatusExt;
+        let exit_status = child.join();
+        assert!(
+            exit_status.signal().is_some(),
+            "fresh recovery must terminate the live receipt child"
+        );
 
         let journal = open_journal_store(app.handle()).expect("open recovered delete journal");
         let completed = journal
@@ -347,6 +421,14 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
                 .into_iter()
                 .all(|(_, receipt)| receipt.key.pubkey != pubkey),
             "fresh recovery must retire the consumed runtime receipt"
+        );
+        assert!(
+            std::fs::symlink_metadata(&receipt_path).is_err(),
+            "fresh recovery must remove the receipt path"
+        );
+        assert!(
+            receipt_target.exists(),
+            "receipt cleanup must not follow the failed symlink target"
         );
     });
 }
