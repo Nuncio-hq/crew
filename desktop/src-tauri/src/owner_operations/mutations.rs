@@ -442,25 +442,22 @@ impl OperationStore {
         // an unknown remainder.
         let mut existing = Vec::with_capacity(candidates.len());
         for (candidate, digest) in &candidates {
-            match read(&tx, scope, &candidate.id, limits.bytes_per_operation)? {
-                Some(operation) => {
-                    let stored_digest: Option<Vec<u8>> = tx
-                        .query_row(
-                            "SELECT CASE WHEN length(initial_digest)=32 THEN initial_digest END \
-                             FROM operations WHERE owner=?1 AND community=?2 AND id=?3",
-                            params![scope.owner, scope.community, candidate.id],
-                            |row| row.get(0),
-                        )
-                        .map_err(sql_error)?;
-                    if operation.kind != candidate.kind
-                        || operation.resource_key != candidate.resource_key
-                        || stored_digest.as_deref() != Some(digest.as_slice())
-                    {
-                        return Err(StoreError::Conflict);
-                    }
-                    existing.push(operation);
+            if let Some(operation) = read(&tx, scope, &candidate.id, limits.bytes_per_operation)? {
+                let stored_digest: Option<Vec<u8>> = tx
+                    .query_row(
+                        "SELECT CASE WHEN length(initial_digest)=32 THEN initial_digest END \
+                         FROM operations WHERE owner=?1 AND community=?2 AND id=?3",
+                        params![scope.owner, scope.community, candidate.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error)?;
+                if operation.kind != candidate.kind
+                    || operation.resource_key != candidate.resource_key
+                    || stored_digest.as_deref() != Some(digest.as_slice())
+                {
+                    return Err(StoreError::Conflict);
                 }
-                None => {}
+                existing.push(operation);
             }
         }
         if !existing.is_empty() {

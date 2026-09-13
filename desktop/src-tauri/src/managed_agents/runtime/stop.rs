@@ -191,7 +191,7 @@ fn stop_managed_agent_process_with<R: tauri::Runtime, T: FnMut(u32) -> Result<()
     let prior_last_stopped_at = record.last_stopped_at.clone();
     let prior_last_exit_code = record.last_exit_code;
     let prior_last_error = record.last_error.clone();
-    let prior_last_error_code = record.last_error_code.clone();
+    let prior_last_error_code = record.last_error_code;
     let mut errors = Vec::new();
     for key in keys {
         if let Err(error) = stop_managed_agent_pair(app, record, runtimes, &key, &mut terminate) {

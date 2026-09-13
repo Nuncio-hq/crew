@@ -270,7 +270,7 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
         desktop_instance_id: identifier.clone(),
         started_at: "2026-09-13T00:00:00Z".into(),
     };
-    managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+    managed_agents::write_agent_runtime_receipt(app.handle(), &receipt)
         .expect("persist linked child receipt");
     let receipt_path = managed_agents::managed_agents_base_dir(app.handle())
         .expect("resolve runtime receipt directory")
@@ -403,7 +403,7 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
         drop(journal);
 
         std::fs::remove_file(&receipt_path).expect("remove failed receipt symlink");
-        managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+        managed_agents::write_agent_runtime_receipt(app.handle(), &receipt)
             .expect("restore regular receipt for fresh recovery");
         crate::managed_agent_delete::assert_live_receipt_valid(
             &receipt_path,
@@ -427,7 +427,7 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
         assert_eq!(restarted_token, token, "restart must preserve owner scope");
         assert!(managed_agents::process_is_running(child.pid()));
 
-        recover(&app.handle())
+        recover(app.handle())
             .await
             .expect("fresh AppState recovery must retry the cascade");
         let exit_status = child.join();

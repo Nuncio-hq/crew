@@ -404,8 +404,8 @@ pub(super) fn claim(
             return Err(StoreError::Corrupt);
         }
         if !op.reconciled
-            && payload_contains_pubkey(&op, pubkey)?
-            && !cascade_parent_id(&op)?.is_some_and(|parent_id| {
+            && payload_contains_pubkey(op, pubkey)?
+            && !cascade_parent_id(op)?.is_some_and(|parent_id| {
                 unresolved_ids.contains(&(
                     op.scope.owner.as_str(),
                     op.scope.community.as_str(),
@@ -413,7 +413,7 @@ pub(super) fn claim(
                 )) && operations.iter().any(|parent| {
                     parent.scope == op.scope
                         && parent.id == parent_id
-                        && parent_contains_child(parent, &op).unwrap_or(false)
+                        && parent_contains_child(parent, op).unwrap_or(false)
                 })
             })
         {

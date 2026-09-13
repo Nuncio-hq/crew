@@ -355,7 +355,7 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
         desktop_instance_id: identifier.clone(),
         started_at: "2026-09-13T00:00:00Z".into(),
     };
-    managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+    managed_agents::write_agent_runtime_receipt(app.handle(), &receipt)
         .expect("persist live pair receipt");
     let receipt_path = managed_agents::managed_agents_base_dir(app.handle())
         .expect("resolve runtime receipt directory")
@@ -452,7 +452,7 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
         drop(journal);
 
         std::fs::remove_file(&receipt_path).expect("remove failed receipt symlink");
-        managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+        managed_agents::write_agent_runtime_receipt(app.handle(), &receipt)
             .expect("restore regular receipt for fresh recovery");
         assert!(std::fs::symlink_metadata(&receipt_path)
             .expect("inspect restored receipt")
@@ -480,7 +480,7 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
         assert!(managed_agents::process_is_running(child.pid()));
 
         let app_handle = app.handle();
-        recover(&app_handle)
+        recover(app_handle)
             .await
             .expect("fresh AppState recovery must retry direct deletion");
         use std::os::unix::process::ExitStatusExt;

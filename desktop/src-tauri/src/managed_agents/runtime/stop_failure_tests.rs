@@ -251,7 +251,7 @@ fn empty_runtime_map_stops_owned_pair_receipt_before_local_delete() {
         desktop_instance_id: first_app.config().identifier.clone(),
         started_at: "now".into(),
     };
-    crate::managed_agents::write_agent_runtime_receipt(&first_app.handle(), &receipt)
+    crate::managed_agents::write_agent_runtime_receipt(first_app.handle(), &receipt)
         .expect("write pair receipt");
     // Startup recovery runs before runtime receipt hydration. Rebuild the
     // app state so the production stop seam is exercised with an empty
@@ -277,7 +277,7 @@ fn empty_runtime_map_stops_owned_pair_receipt_before_local_delete() {
     record.relay_url = "ws://localhost:3000".into();
     let mut runtimes = HashMap::new();
 
-    stop_managed_agent_process(&app.handle(), &mut record, &mut runtimes)
+    stop_managed_agent_process(app.handle(), &mut record, &mut runtimes)
         .expect("receipt-owned pair must be stopped before deletion");
     use std::os::unix::process::ExitStatusExt;
     let exit_status = child.join();
@@ -288,7 +288,7 @@ fn empty_runtime_map_stops_owned_pair_receipt_before_local_delete() {
 
     assert_eq!(record.runtime_pid, None);
     assert!(
-        crate::managed_agents::read_all_agent_runtime_receipts(&app.handle())
+        crate::managed_agents::read_all_agent_runtime_receipts(app.handle())
             .into_iter()
             .all(|(_, receipt)| receipt.key.pubkey != pubkey),
         "stopped pair receipt must be removed only after the child exits"
@@ -320,7 +320,7 @@ fn empty_runtime_map_refuses_live_foreign_receipt() {
         desktop_instance_id: "foreign-desktop".into(),
         started_at: "now".into(),
     };
-    crate::managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+    crate::managed_agents::write_agent_runtime_receipt(app.handle(), &receipt)
         .expect("write foreign receipt");
 
     let mut record = crate::managed_agents::runtime::test_fixtures::fixture(
@@ -334,12 +334,12 @@ fn empty_runtime_map_refuses_live_foreign_receipt() {
     record.runtime_pid = None;
     let mut runtimes = HashMap::new();
 
-    let error = stop_managed_agent_process(&app.handle(), &mut record, &mut runtimes)
+    let error = stop_managed_agent_process(app.handle(), &mut record, &mut runtimes)
         .expect_err("foreign live receipt must fail closed");
     assert!(error.contains("receipt"));
     assert_eq!(record.runtime_pid, None);
     assert!(
-        crate::managed_agents::read_all_agent_runtime_receipts(&app.handle())
+        crate::managed_agents::read_all_agent_runtime_receipts(app.handle())
             .into_iter()
             .any(|(_, candidate)| candidate.key.pubkey == pubkey),
         "the foreign live receipt remains as a recovery witness"
@@ -363,7 +363,7 @@ fn target_named_corrupt_receipt_keeps_delete_pending() {
 
     let app = app();
     let pubkey = "d".repeat(64);
-    let dir = crate::managed_agents::managed_agents_base_dir(&app.handle())
+    let dir = crate::managed_agents::managed_agents_base_dir(app.handle())
         .expect("resolve managed-agent data directory")
         .join("agent-pids");
     std::fs::create_dir_all(&dir).expect("create receipt directory");
@@ -371,7 +371,7 @@ fn target_named_corrupt_receipt_keeps_delete_pending() {
         .expect("write corrupt target receipt");
 
     let mut terminate = |_pid: u32| Ok::<(), String>(());
-    let error = stop_untracked_agent_receipts(&app.handle(), &pubkey, &mut terminate)
+    let error = stop_untracked_agent_receipts(app.handle(), &pubkey, &mut terminate)
         .expect_err("corrupt target receipt must keep deletion pending");
     assert!(error.contains("corrupt"));
 }
@@ -393,7 +393,7 @@ fn target_named_symlink_receipt_keeps_delete_pending() {
 
     let app = app();
     let pubkey = "f".repeat(64);
-    let dir = crate::managed_agents::managed_agents_base_dir(&app.handle())
+    let dir = crate::managed_agents::managed_agents_base_dir(app.handle())
         .expect("resolve managed-agent data directory")
         .join("agent-pids");
     std::fs::create_dir_all(&dir).expect("create receipt directory");
@@ -402,7 +402,7 @@ fn target_named_symlink_receipt_keeps_delete_pending() {
     symlink(&outside, dir.join(format!("{pubkey}__symlink.json"))).expect("write symlink receipt");
 
     let mut terminate = |_pid: u32| Ok::<(), String>(());
-    let error = stop_untracked_agent_receipts(&app.handle(), &pubkey, &mut terminate)
+    let error = stop_untracked_agent_receipts(app.handle(), &pubkey, &mut terminate)
         .expect_err("target symlink must keep deletion pending");
     assert!(error.contains("regular file"));
     assert!(
@@ -426,14 +426,14 @@ fn target_named_nonregular_receipt_keeps_delete_pending() {
 
     let app = app();
     let pubkey = "g".repeat(64);
-    let path = crate::managed_agents::managed_agents_base_dir(&app.handle())
+    let path = crate::managed_agents::managed_agents_base_dir(app.handle())
         .expect("resolve managed-agent data directory")
         .join("agent-pids")
         .join(format!("{pubkey}__directory.json"));
     std::fs::create_dir_all(&path).expect("write directory receipt");
 
     let mut terminate = |_pid: u32| Ok::<(), String>(());
-    let error = stop_untracked_agent_receipts(&app.handle(), &pubkey, &mut terminate)
+    let error = stop_untracked_agent_receipts(app.handle(), &pubkey, &mut terminate)
         .expect_err("target directory must keep deletion pending");
     assert!(error.contains("regular file"));
 }
@@ -454,14 +454,14 @@ fn agent_pids_symlink_keeps_delete_pending() {
     std::env::set_var("XDG_DATA_HOME", &home);
 
     let app = app();
-    let base = crate::managed_agents::managed_agents_base_dir(&app.handle())
+    let base = crate::managed_agents::managed_agents_base_dir(app.handle())
         .expect("resolve managed-agent data directory");
     let outside = temp.path().join("outside-agent-pids");
     std::fs::create_dir_all(&outside).expect("create outside receipt directory");
     symlink(&outside, base.join("agent-pids")).expect("write agent-pids symlink");
 
     let mut terminate = |_pid: u32| Ok::<(), String>(());
-    let error = stop_untracked_agent_receipts(&app.handle(), &"h".repeat(64), &mut terminate)
+    let error = stop_untracked_agent_receipts(app.handle(), &"h".repeat(64), &mut terminate)
         .expect_err("agent-pids symlink must keep deletion pending");
     assert!(error.contains("directory is unsafe"));
 }
@@ -489,7 +489,7 @@ fn target_named_oversized_receipt_is_bounded_and_keeps_delete_pending() {
         desktop_instance_id: app.config().identifier.clone(),
         started_at: "x".repeat(MAX_RUNTIME_RECEIPT_BYTES as usize),
     };
-    let dir = crate::managed_agents::managed_agents_base_dir(&app.handle())
+    let dir = crate::managed_agents::managed_agents_base_dir(app.handle())
         .expect("resolve managed-agent data directory")
         .join("agent-pids");
     std::fs::create_dir_all(&dir).expect("create receipt directory");
@@ -499,7 +499,7 @@ fn target_named_oversized_receipt_is_bounded_and_keeps_delete_pending() {
     std::fs::write(path, payload).expect("write oversized target receipt");
 
     let mut terminate = |_pid: u32| Ok::<(), String>(());
-    let error = stop_untracked_agent_receipts(&app.handle(), &pubkey, &mut terminate)
+    let error = stop_untracked_agent_receipts(app.handle(), &pubkey, &mut terminate)
         .expect_err("oversized target receipt must keep deletion pending");
     assert!(error.contains("too large"));
 }
