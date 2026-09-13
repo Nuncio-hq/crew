@@ -18,7 +18,7 @@ async fn busy_session_owner_waits_while_unrelated_work_uses_idle_slot() {
             agent_index: 0,
             channel_id: Some(Uuid::new_v4()),
             routing_channel_id: None,
-            session_id: None,
+            session_id: TaskSessionIdentity::default(),
             turn_id: "other-turn".into(),
             recoverable_batch: None,
             control_tx: None,
