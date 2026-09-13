@@ -6,6 +6,7 @@ use crate::{
     },
 };
 mod relay_directory;
+pub(crate) use relay_directory::revalidate_channel_bot_members;
 pub use relay_directory::{list_relay_agents, revalidate_relay_agents};
 mod forced_single_flight;
 mod git_bash_prerequisite;
@@ -28,7 +29,6 @@ pub async fn discover_acp_providers(
 ) -> Result<Vec<AcpRuntimeCatalogEntry>, String> {
     forced_single_flight::discover(app, force.unwrap_or(false)).await
 }
-
 /// Write a user-defined harness definition to `<app-data>/custom_harnesses/<id>.json`.
 ///
 /// Validates the definition (id regex, builtin-id collision, non-empty command

@@ -417,6 +417,79 @@ pub async fn list_relay_agents(state: State<'_, AppState>) -> Result<Vec<RelayAg
     list_relay_agents_for_state(&state).await
 }
 
+/// Revalidate selected role holders against the relay-signed channel roster.
+///
+/// A bot-role membership is the eligibility signal for a channel-scoped role;
+/// the global agent directory is only a runtime/profile projection and may not
+/// contain a stopped managed agent. Owner-authenticated managed identities may
+/// retain eligibility with a non-bot cosmetic role, matching the full
+/// directory path. This helper reads only the owner-signed identity coordinate
+/// and relay membership; it does not hydrate runtime kind:0 or kind:10100
+/// records. Runtime, provider, and key authorization remain separate checks at
+/// their respective execution seams.
+pub async fn revalidate_channel_bot_members(
+    requested_pubkeys: &[String],
+    channel_id: &str,
+    state: &AppState,
+) -> Result<std::collections::HashSet<String>, String> {
+    let requested = requested_pubkeys
+        .iter()
+        .map(|pubkey| {
+            nostr::PublicKey::from_hex(pubkey)
+                .map(|key| key.to_hex())
+                .map_err(|_| "invalid selected agent".to_string())
+        })
+        .collect::<Result<std::collections::HashSet<_>, _>>()?;
+    if requested.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+
+    let viewer_pubkey = current_user_pubkey(state)?;
+    let relay_pubkey = identity_archive::fetch_relay_self(state)
+        .await?
+        .ok_or_else(|| "relay agent membership authority is unavailable".to_string())?;
+    let owned_events = query_all_relay_pages(
+        state,
+        serde_json::json!({
+            "kinds": [30177],
+            "authors": [&viewer_pubkey],
+            "#d": requested,
+        }),
+    )
+    .await
+    .map_err(|error| format!("relay owned-agent query failed: {error}"))?;
+    let owned_events = owned_events
+        .into_iter()
+        .filter(|event| event.pubkey.to_hex().eq_ignore_ascii_case(&viewer_pubkey))
+        .collect::<Vec<_>>();
+    let known_agent_pubkeys = nostr_convert::managed_agent_pubkeys_from_events(&owned_events);
+    let membership_events = query_all_relay_pages(
+        state,
+        serde_json::json!({
+            "kinds": [39002],
+            "authors": [&relay_pubkey],
+            "#p": [&viewer_pubkey],
+            "#d": [channel_id],
+        }),
+    )
+    .await
+    .map_err(|error| format!("relay agent channel-membership query failed: {error}"))?;
+    let membership = nostr_convert::member_agent_channel_ids_from_events(
+        &membership_events,
+        &relay_pubkey,
+        &known_agent_pubkeys,
+    );
+
+    Ok(requested
+        .into_iter()
+        .filter(|pubkey| {
+            membership
+                .get(pubkey)
+                .is_some_and(|channels| channels.iter().any(|id| id == channel_id))
+        })
+        .collect())
+}
+
 /// Revalidate only the selected relay agents in the target channel.
 ///
 /// This preserves the full directory command for autocomplete while keeping

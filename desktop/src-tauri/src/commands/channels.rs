@@ -148,21 +148,30 @@ pub async fn get_channel_members(
     channel_id: String,
     state: State<'_, AppState>,
 ) -> Result<ChannelMembersResponse, String> {
+    let relay_pubkey = crate::commands::fetch_relay_self(&state)
+        .await?
+        .ok_or_else(|| "channel membership authority is unavailable".to_string())?;
     let events = query_relay(
         &state,
         &[serde_json::json!({
             "kinds": [39002],
+            "authors": [&relay_pubkey],
             "#d": [channel_id],
             "limit": 1
         })],
     )
     .await?;
 
-    let mut response = events
+    let event = events
         .first()
-        .map(nostr_convert::channel_members_from_event)
-        .transpose()?
         .ok_or_else(|| "channel members not found".to_string())?;
+    if event.kind.as_u16() != 39002
+        || !event.pubkey.to_hex().eq_ignore_ascii_case(&relay_pubkey)
+        || event.verify().is_err()
+    {
+        return Err("channel membership snapshot is not relay-signed".into());
+    }
+    let mut response = nostr_convert::channel_members_from_event(event)?;
 
     // Batch-fetch kind:0 profiles to populate display names, capped so the
     // query cost is bounded on large rosters (see MEMBER_PROFILE_JOIN_LIMIT).

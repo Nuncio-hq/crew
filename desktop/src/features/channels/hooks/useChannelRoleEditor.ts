@@ -1,6 +1,6 @@
 import * as React from "react";
 import { getCanvas } from "@/shared/api/canvas";
-import { listRelayAgents } from "@/shared/api/tauri";
+import { getChannelMembers } from "@/shared/api/tauri";
 import {
   captureOwnerOperationScope,
   sameOwnerOperationScope,
@@ -14,7 +14,8 @@ import {
   saveChannelCrewConfig,
   type CrewSaveProgress,
 } from "@/shared/api/channelCrewConfig";
-import type { CanvasResponse, RelayAgent } from "@/shared/api/types";
+import type { CanvasResponse, ChannelMember } from "@/shared/api/types";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   createRoleDraft,
   createRoleDraftFromSubmitted,
@@ -22,10 +23,15 @@ import {
   type ChannelRoleDraft,
 } from "../lib/channelRoleDraft";
 
+type RoleMember = {
+  pubkey: string;
+  name: string;
+};
+
 type Snapshot = {
   scope: OwnerOperationScope;
   canvas: CanvasResponse;
-  members: RelayAgent[];
+  members: RoleMember[];
 };
 
 function recoveryPriority(progress: CrewSaveProgress): number {
@@ -51,9 +57,9 @@ function selectRecoveryProgress(
 /** Captures both sides of unscoped legacy reads before exposing a draft. */
 export async function loadRoleSnapshot(channelId: string): Promise<Snapshot> {
   const scope = await captureOwnerOperationScope();
-  const [canvas, agents] = await Promise.all([
+  const [canvas, channelMembers] = await Promise.all([
     getCanvas(channelId),
-    listRelayAgents(),
+    getChannelMembers(channelId),
   ]);
   const after = await captureOwnerOperationScope();
   if (!sameOwnerOperationScope(scope, after))
@@ -61,7 +67,15 @@ export async function loadRoleSnapshot(channelId: string): Promise<Snapshot> {
   return {
     scope,
     canvas,
-    members: agents.filter((agent) => agent.channelIds.includes(channelId)),
+    members: channelMembers.filter((member) => member.isAgent).map(roleMember),
+  };
+}
+
+function roleMember(member: ChannelMember): RoleMember {
+  const displayName = member.displayName?.trim();
+  return {
+    pubkey: member.pubkey.trim().toLowerCase(),
+    name: displayName || truncatePubkey(member.pubkey),
   };
 }
 
