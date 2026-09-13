@@ -85,6 +85,129 @@ fn v1_rows(owner: &OperationScope) -> Vec<Operation> {
     ]
 }
 
+fn create_legacy_v3_schema(connection: &Connection) {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE operations (
+                owner TEXT NOT NULL,
+                community TEXT NOT NULL,
+                id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                resource_key TEXT NOT NULL,
+                initial_digest BLOB NOT NULL CHECK (length(initial_digest) = 32),
+                revision INTEGER NOT NULL CHECK (revision >= 0),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                reconciled INTEGER NOT NULL CHECK (reconciled IN (0, 1)),
+                record_json TEXT NOT NULL,
+                bytes INTEGER NOT NULL CHECK (bytes = length(CAST(record_json AS BLOB))),
+                PRIMARY KEY (owner, community, id)
+            );
+            CREATE UNIQUE INDEX unresolved_resource
+                ON operations(owner, community, kind, resource_key)
+                WHERE reconciled = 0;
+            CREATE INDEX owner_retention ON operations(owner, reconciled, updated_at);
+            PRAGMA user_version = 1;
+            CREATE UNIQUE INDEX unresolved_managed_agent_delete
+                ON operations(resource_key)
+                WHERE kind = 'managed-agent-delete' AND reconciled = 0;
+            PRAGMA user_version = 2;
+            CREATE TABLE wiki_publication_successors (
+                owner TEXT NOT NULL,
+                community TEXT NOT NULL,
+                resource_key TEXT NOT NULL CHECK (length(resource_key) BETWEEN 1 AND 512),
+                predecessor_id TEXT NOT NULL,
+                predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+                successor_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL CHECK (created_at >= 0),
+                PRIMARY KEY (owner, community, predecessor_id),
+                UNIQUE (owner, community, successor_id)
+            );
+            CREATE INDEX wiki_successor_by_owner
+                ON wiki_publication_successors(owner, community, successor_id);
+            PRAGMA user_version = 3;
+            "#,
+        )
+        .expect("legacy v3 schema");
+}
+
+fn paired_managed_delete_batch(
+    pubkey: &str,
+    persona_id: &str,
+) -> Vec<crate::owner_operations::NewOperation> {
+    let parent_id = uuid::Uuid::new_v4().to_string();
+    let child_id = uuid::Uuid::new_v4().to_string();
+    let fence = |pubkey: &str| {
+        json!({
+            "pubkey": pubkey,
+            "name": "agent",
+            "created_at": "created",
+            "relay_url": "wss://relay.example",
+            "backend_agent_id": null
+        })
+    };
+    let payload = json!({
+        "version": 1,
+        "fence": fence(pubkey),
+        "channels": [],
+        "local_removed": false,
+        "key_removed": false,
+        "tombstone_enqueued": false,
+        "failures": 0,
+        "last_error": null,
+        "cascade": {
+            "persona": {
+                "id": persona_id,
+                "d_tag": persona_id,
+                "created_at": "created",
+                "updated_at": "updated"
+            },
+            "targets": [{
+                "operation_id": child_id,
+                "persona_id": persona_id,
+                "fence": fence(pubkey),
+                "channels": [],
+                "local_removed": false,
+                "key_removed": false,
+                "tombstone_enqueued": false,
+                "failures": 0,
+                "last_error": null,
+                "settled": false
+            }],
+            "coordinator_only": false,
+            "persona_removed": false
+        }
+    });
+    vec![
+        crate::owner_operations::NewOperation {
+            id: parent_id.clone(),
+            kind: OperationKind::ManagedAgentDelete,
+            resource_key: pubkey.into(),
+            payload,
+        },
+        crate::owner_operations::NewOperation {
+            id: child_id,
+            kind: OperationKind::ManagedAgentDelete,
+            resource_key: pubkey.into(),
+            payload: json!({
+                "version": 1,
+                "fence": fence(pubkey),
+                "channels": [],
+                "local_removed": false,
+                "key_removed": false,
+                "tombstone_enqueued": false,
+                "failures": 0,
+                "last_error": null,
+                "cascade_parent": parent_id,
+                "cascade_persona_id": persona_id,
+                "cascade": null
+            }),
+        },
+    ]
+}
+
 #[test]
 fn managed_delete_indexes_key_the_serialized_payload_envelope() {
     let dir = tempfile::tempdir().expect("fixture directory");
@@ -191,6 +314,42 @@ fn managed_delete_indexes_key_the_serialized_payload_envelope() {
             .expect("serialized child payload"),
         parent_id
     );
+}
+
+#[test]
+fn legacy_v3_open_rebuilds_claim_indexes_for_paired_cascade() {
+    let dir = tempfile::tempdir().expect("fixture directory");
+    let path = journal_path(&dir);
+    let existing_scope = scope('a', "https://one.example");
+    let existing_rows = v1_rows(&existing_scope);
+    let connection = Connection::open(&path).expect("open legacy journal");
+    create_legacy_v3_schema(&connection);
+    for operation in &existing_rows {
+        insert_v1_row(&connection, operation);
+    }
+    drop(connection);
+    assert_eq!(user_version(&path), 3);
+
+    let mut store = OperationStore::open(&path, Limits::default()).expect("upgrade legacy v3");
+    assert_eq!(user_version(&path), 4);
+    for operation in &existing_rows {
+        assert_eq!(
+            store.load(&operation.scope, &operation.id).unwrap(),
+            operation.clone(),
+            "v4 opener must preserve every legacy operation row"
+        );
+    }
+
+    let pair_scope = scope('c', "https://three.example");
+    let committed = store
+        .create_managed_agent_delete_batch(
+            &pair_scope,
+            paired_managed_delete_batch(&"c".repeat(64), "persona-after-v3"),
+            30,
+        )
+        .expect("v4 must admit a coordinator and paired first child");
+    assert_eq!(committed.len(), 2);
+    assert_eq!(store.list(&pair_scope, None, 100).unwrap().len(), 2);
 }
 
 #[test]
