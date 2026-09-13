@@ -9,6 +9,9 @@
 use super::discovery::bounded_command::{
     output_with_policy, output_with_policy_and_stdin, BoundedFailure, BoundedPolicy, OutputBudget,
 };
+use super::wiki_runtime_validation::{
+    clear_report, report_path, validate_profile_config, validate_report,
+};
 use super::{
     hermes_profile::{is_hermes_home_profile, validate_hermes_profile_name},
     hermes_profile_lifecycle::hermes_profile_dir,
@@ -35,7 +38,6 @@ const HERMES_PROFILE_FILE_LIMIT: usize = 1024;
 const HERMES_PROFILE_ENTRY_LIMIT: usize = 4096;
 const HERMES_PROFILE_DEPTH_LIMIT: usize = 32;
 const HERMES_PROFILE_BYTES_LIMIT: u64 = 32 * 1024 * 1024;
-const HERMES_PROFILE_CONFIG_BYTES_LIMIT: u64 = 1024 * 1024;
 const HERMES_PROFILE_DOTENV_BYTES_LIMIT: u64 = 1024 * 1024;
 const HERMES_PROFILE_BINDING_KEYS: [&str; 2] = ["HERMES_HOME", "HERMES_MANAGED_DIR"];
 
@@ -147,6 +149,10 @@ pub(crate) enum WikiRuntimeFailure {
     ProfileConfigLimit,
     /// The selected profile attempts to redirect private runtime state.
     ProfileBinding,
+    /// The staged Hermes profile did not produce trustworthy run telemetry.
+    InvalidRuntimeTelemetry,
+    /// Hermes used a provider or model other than the staged profile selection.
+    EffectiveRuntimeMismatch,
     /// The selected process could not be safely owned or completed.
     Process(BoundedFailure),
     /// The process exited unsuccessfully.
@@ -192,6 +198,12 @@ impl std::fmt::Display for WikiRuntimeFailure {
             Self::ProfileBinding => {
                 f.write_str("The selected Wiki runtime profile cannot be bound to isolated state.")
             }
+            Self::InvalidRuntimeTelemetry => f.write_str(
+                "Wiki runtime did not report valid effective provider and model telemetry.",
+            ),
+            Self::EffectiveRuntimeMismatch => f.write_str(
+                "Wiki runtime effective provider or model did not match the selected profile.",
+            ),
             Self::Process(failure) => {
                 write!(f, "Wiki runtime process was not bounded ({failure:?}).")
             }
@@ -216,6 +228,7 @@ pub(crate) struct WikiRuntimeGenerator {
     /// Keeps the installed-runtime state disposable; test callers may provide
     /// their own directory and leave this as `None`.
     temp_state: Option<tempfile::TempDir>,
+    require_hermes_usage_report: bool,
     cancel: Arc<AtomicBool>,
 }
 
@@ -242,6 +255,7 @@ impl WikiRuntimeGenerator {
         let mut generator =
             Self::with_executable_and_cancel(selection, executable, state_dir, cancel)?;
         generator.stage_hermes_profile()?;
+        generator.require_hermes_usage_report = generator.selection.runtime_id == "hermes";
         generator.temp_state = Some(state);
         Ok(generator)
     }
@@ -285,6 +299,7 @@ impl WikiRuntimeGenerator {
             executable,
             state_dir,
             temp_state: None,
+            require_hermes_usage_report: false,
             cancel,
         })
     }
@@ -307,7 +322,7 @@ impl WikiRuntimeGenerator {
         };
         let mut budget = ProfileCopyBudget::default();
         copy_profile_tree(&source, &destination, &mut budget, 0)?;
-        validate_staged_hermes_profile_config(&destination)?;
+        validate_profile_config(&destination)?;
         validate_staged_hermes_profile_dotenv(&destination)?;
         ensure_private_hermes_managed_dir(&self.state_dir)
     }
@@ -380,7 +395,9 @@ impl WikiRuntimeGenerator {
                         // page generator instead of relying on prompt text.
                         "--toolsets",
                         "context_engine",
+                        "--usage-file",
                     ]);
+                command.arg(report_path(&self.state_dir));
                 if let Some(profile) = self.selection.profile.as_deref() {
                     command.args(["-p", profile]);
                 }
@@ -444,6 +461,10 @@ impl WikiRuntimeGenerator {
         if prompt.len() > WIKI_RUNTIME_INPUT_LIMIT {
             return Err(WikiRuntimeFailure::InputLimit);
         }
+        let is_hermes = self.selection.runtime_id.trim() == "hermes";
+        if is_hermes {
+            clear_report(&self.state_dir)?;
+        }
         let policy = BoundedPolicy {
             timeout: WIKI_RUNTIME_TIMEOUT,
             budget: OutputBudget::PerStream {
@@ -466,102 +487,22 @@ impl WikiRuntimeGenerator {
         if !output.status.success() {
             return Err(WikiRuntimeFailure::NonzeroExit);
         }
+        if is_hermes && (self.require_hermes_usage_report || report_path(&self.state_dir).exists())
+        {
+            validate_report(
+                &self.state_dir,
+                self.selection
+                    .profile
+                    .as_deref()
+                    .ok_or(WikiRuntimeFailure::MissingProfile)?,
+            )?;
+        }
         let text =
             String::from_utf8(output.stdout).map_err(|_| WikiRuntimeFailure::InvalidOutput)?;
         if text.trim().is_empty() || text.contains('\0') {
             return Err(WikiRuntimeFailure::InvalidOutput);
         }
         Ok(text)
-    }
-}
-
-/// Validate the copied Hermes config before an installed provider process can start.
-///
-/// Hermes treats a missing or empty config as a valid first-run state, while a
-/// non-mapping root or malformed YAML is not a usable user config for a
-/// non-interactive launch. Keep this check bounded and return a fixed failure so
-/// config contents never cross the runtime error boundary.
-fn validate_staged_hermes_profile_config(profile_dir: &Path) -> Result<(), WikiRuntimeFailure> {
-    let config = profile_dir.join("config.yaml");
-    let metadata = match std::fs::symlink_metadata(&config) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(_) => return Err(WikiRuntimeFailure::InvalidProfileConfig),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(WikiRuntimeFailure::InvalidProfileConfig);
-    }
-    if metadata.len() > HERMES_PROFILE_CONFIG_BYTES_LIMIT {
-        return Err(WikiRuntimeFailure::ProfileConfigLimit);
-    }
-    let file =
-        std::fs::File::open(&config).map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
-    let mut contents = Vec::new();
-    file.take(HERMES_PROFILE_CONFIG_BYTES_LIMIT + 1)
-        .read_to_end(&mut contents)
-        .map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
-    if contents.len() as u64 > HERMES_PROFILE_CONFIG_BYTES_LIMIT {
-        return Err(WikiRuntimeFailure::ProfileConfigLimit);
-    }
-    let contents =
-        String::from_utf8(contents).map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
-    let value = serde_yaml::from_str::<serde_yaml::Value>(&contents)
-        .map_err(|_| WikiRuntimeFailure::InvalidProfileConfig)?;
-    if !matches!(
-        value,
-        serde_yaml::Value::Null | serde_yaml::Value::Mapping(_)
-    ) {
-        return Err(WikiRuntimeFailure::InvalidProfileConfig);
-    }
-    reject_enabled_hermes_secret_sources(&value)
-}
-
-/// Reject profile-owned external secret fetches until the native launcher has
-/// a final environment pin. A source can write arbitrary valid environment
-/// names after dotenv loading, including the two paths that bind this child to
-/// its disposable state. Empty and disabled source sections remain harmless.
-fn reject_enabled_hermes_secret_sources(
-    config: &serde_yaml::Value,
-) -> Result<(), WikiRuntimeFailure> {
-    if yaml_contains_merge_key(config) {
-        return Err(WikiRuntimeFailure::ProfileBinding);
-    }
-    let serde_yaml::Value::Mapping(config) = config else {
-        return Ok(());
-    };
-    let Some(secrets) = config.get(serde_yaml::Value::String("secrets".into())) else {
-        return Ok(());
-    };
-    let serde_yaml::Value::Mapping(secrets) = secrets else {
-        return match secrets {
-            serde_yaml::Value::Null => Ok(()),
-            _ => Err(WikiRuntimeFailure::ProfileBinding),
-        };
-    };
-    if secrets.values().any(|source| {
-        let serde_yaml::Value::Mapping(source) = source else {
-            return false;
-        };
-        match source.get(serde_yaml::Value::String("enabled".into())) {
-            None | Some(serde_yaml::Value::Null) | Some(serde_yaml::Value::Bool(false)) => false,
-            Some(_) => true,
-        }
-    }) {
-        return Err(WikiRuntimeFailure::ProfileBinding);
-    }
-    Ok(())
-}
-
-fn yaml_contains_merge_key(value: &serde_yaml::Value) -> bool {
-    match value {
-        serde_yaml::Value::Mapping(mapping) => mapping.iter().any(|(key, value)| {
-            matches!(key, serde_yaml::Value::String(key) if key == "<<")
-                || yaml_contains_merge_key(key)
-                || yaml_contains_merge_key(value)
-        }),
-        serde_yaml::Value::Sequence(sequence) => sequence.iter().any(yaml_contains_merge_key),
-        serde_yaml::Value::Tagged(_) => true,
-        _ => false,
     }
 }
 

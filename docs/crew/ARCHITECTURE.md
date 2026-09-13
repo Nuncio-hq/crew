@@ -508,13 +508,18 @@ malformed/non-mapping config with a fixed error. It also rejects profile
 `HERMES_MANAGED_DIR`, invalid or ambiguous dotenv bytes, and every enabled
 external secret source. Accepted dotenv bytes remain unchanged, a missing
 `.env` is created empty, and `HERMES_MANAGED_DIR` is bound to a fresh empty
-directory under the disposable state root. Missing or failed runtime
-execution is a failed generation with no heuristic or HTTP fallback; the
-unsigned legacy preview remains deterministic for compatibility. The adapter's
-state, prompt input, stdout/stderr, deadline, and cancellation are bounded, and
+directory under the disposable state root. Each installed Hermes page request
+writes its native usage report inside that directory. Successful generation
+requires a completed API call and valid effective provider/model identifiers;
+values declared by the staged profile must match exactly, so a fallback cannot
+be reported as the selected model. Missing or failed runtime execution is a
+failed generation with no heuristic or HTTP fallback; the unsigned legacy
+preview remains deterministic for compatibility. The adapter's state, prompt
+input, stdout/stderr, telemetry, deadline, and cancellation are bounded, and
 selection is independent from employee sessions and recap settings. The source
-guard, config gate, and profile-binding boundary are covered by production
-seam tests in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
+guard, config gate, profile-binding, and effective-runtime boundary are covered
+by production seam tests in
+`desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
 they do not certify a native Hermes launch, provider/auth path,
 effective model, or installed tool isolation. The #363 installed-runtime
 acceptance must run in the #348 staging environment; #348 owns that environment
