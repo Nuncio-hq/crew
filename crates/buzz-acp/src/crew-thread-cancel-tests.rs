@@ -60,7 +60,7 @@ fn thread_exact_cancel_task(
             agent_index: 0,
             channel_id: Some(conversation),
             routing_channel_id: Some(channel),
-            session_id: None,
+            session_id: TaskSessionIdentity::default(),
             turn_id: turn.into(),
             recoverable_batch: None,
             control_tx: Some(tx),
@@ -267,8 +267,12 @@ fn thread_exact_steer_task(
     conversation: Uuid,
     session: &str,
     turn: &str,
-) -> tokio::sync::mpsc::Receiver<pool::SteerRequest> {
+) -> (
+    tokio::sync::mpsc::Receiver<pool::SteerRequest>,
+    TaskSessionIdentity,
+) {
     let (steer_tx, steer_rx) = tokio::sync::mpsc::channel(1);
+    let session_identity = TaskSessionIdentity::new(Some(session.into()));
     let handle = pool.join_set.spawn(std::future::pending());
     pool.task_map_mut().insert(
         handle.id(),
@@ -276,7 +280,7 @@ fn thread_exact_steer_task(
             agent_index: 0,
             channel_id: Some(conversation),
             routing_channel_id: Some(channel),
-            session_id: Some(session.into()),
+            session_id: session_identity.clone(),
             turn_id: turn.into(),
             recoverable_batch: None,
             control_tx: None,
@@ -284,7 +288,7 @@ fn thread_exact_steer_task(
             successful_steer_deliveries: HashSet::new(),
         },
     );
-    steer_rx
+    (steer_rx, session_identity)
 }
 
 async fn wait_for_steer_result(
@@ -317,7 +321,8 @@ async fn thread_exact_steer_crosses_handler_and_pool_with_exact_target() {
     let turn = "selected-turn";
     let request_id = Uuid::new_v4();
     let mut pool = AgentPool::from_slots(vec![]);
-    let mut receiver = thread_exact_steer_task(&mut pool, channel, conversation, session, turn);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, session, turn);
     let observer = observer::ObserverHandle::in_process();
 
     handle_steer_turn_control(
@@ -368,7 +373,7 @@ async fn pool_exact_steer_rejects_stale_session_before_queueing() {
     let channel = Uuid::new_v4();
     let conversation = Uuid::new_v4();
     let mut pool = AgentPool::from_slots(vec![]);
-    let mut receiver =
+    let (mut receiver, _) =
         thread_exact_steer_task(&mut pool, channel, conversation, "current-session", "turn");
     let (ack_tx, _ack_rx) = tokio::sync::oneshot::channel();
     let request = pool::SteerRequest {
@@ -386,4 +391,47 @@ async fn pool_exact_steer_rejects_stale_session_before_queueing() {
         Err(pool::SteerError::StrictTargetMismatch)
     ));
     assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn pool_exact_steer_tracks_session_replacement_and_rejects_retired_target() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let turn = "rotated-turn";
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, session_identity) =
+        thread_exact_steer_task(&mut pool, channel, conversation, "old-session", turn);
+    session_identity.set("new-session".into());
+
+    let (stale_ack_tx, _stale_ack_rx) = tokio::sync::oneshot::channel();
+    let stale_request = pool::SteerRequest {
+        prompt_blocks: vec!["before rotation".into()],
+        strict_target: Some(pool::StrictSteerTarget {
+            session_id: "old-session".into(),
+            turn_id: turn.into(),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+        ack_tx: stale_ack_tx,
+    };
+    assert!(matches!(
+        pool.send_exact_steer(channel, conversation, turn, stale_request),
+        Err(pool::SteerError::StrictTargetMismatch)
+    ));
+    assert!(receiver.try_recv().is_err());
+
+    let (ack_tx, _ack_rx) = tokio::sync::oneshot::channel();
+    let request = pool::SteerRequest {
+        prompt_blocks: vec!["after rotation".into()],
+        strict_target: Some(pool::StrictSteerTarget {
+            session_id: "new-session".into(),
+            turn_id: turn.into(),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+        ack_tx,
+    };
+
+    assert!(pool
+        .send_exact_steer(channel, conversation, turn, request)
+        .is_ok());
+    assert!(receiver.recv().await.is_some());
 }

@@ -92,18 +92,47 @@ pub struct StrictSteerTarget {
     pub request_id: String,
 }
 
+/// Session identity shared by a live task's pool metadata and prompt worker.
+///
+/// Workspace validation can invalidate a cached session before the prompt
+/// resolves its replacement. Sharing the identity lets the worker publish the
+/// replacement into the exact-steer fence before Activity can target it.
+#[derive(Clone, Debug, Default)]
+pub struct TaskSessionIdentity(Arc<Mutex<Option<String>>>);
+
+impl TaskSessionIdentity {
+    /// Create a shared identity with the session known before task dispatch.
+    pub(crate) fn new(session_id: Option<String>) -> Self {
+        Self(Arc::new(Mutex::new(session_id)))
+    }
+
+    /// Publish a session replacement before a new selected-run control.
+    pub(crate) fn set(&self, session_id: String) {
+        if let Ok(mut current) = self.0.lock() {
+            *current = Some(session_id);
+        }
+    }
+
+    fn matches(&self, expected: &str) -> bool {
+        match self.0.lock() {
+            Ok(current) => current.as_deref().map_or(true, |actual| actual == expected),
+            Err(_) => false,
+        }
+    }
+}
+
 pub struct TaskMeta {
     pub agent_index: usize,
     /// Scheduler/session identity. For channel work this identifies a thread.
     pub channel_id: Option<Uuid>,
     /// Real NIP-29 channel used for relay operations and observer context.
     pub routing_channel_id: Option<Uuid>,
-    /// ACP session identity known when this task was dispatched.
+    /// Shared ACP session identity for this task.
     ///
     /// First turns may have no value because `session/new` runs inside the
-    /// task. In that case the ACP read loop remains the authoritative session
-    /// fence; an existing session is checked here before queueing a steer.
-    pub session_id: Option<String>,
+    /// task. In that case the worker updates this value when `session/new`
+    /// or `session/load` resolves; the ACP read loop remains the final fence.
+    pub session_id: TaskSessionIdentity,
     /// Identifies terminal events when the task panics before returning a result.
     pub turn_id: String,
     /// Clone of batch for Queue mode panic recovery.
@@ -1077,15 +1106,10 @@ impl AgentPool {
             .task_map
             .values_mut()
             .find(|meta| {
-                let session_matches = meta
-                    .session_id
-                    .as_deref()
-                    .map(|session_id| session_id == strict_target.session_id.as_str())
-                    .unwrap_or(true);
                 meta.routing_channel_id == Some(routing_channel_id)
                     && meta.channel_id == Some(conversation_id)
                     && meta.turn_id == turn_id
-                    && session_matches
+                    && meta.session_id.matches(&strict_target.session_id)
             })
             .ok_or(SteerError::StrictTargetMismatch)?;
         let tx = meta
@@ -2462,6 +2486,35 @@ fn send_prompt_result(
     });
 }
 
+/// Run a prompt task without a pool-owned session identity.
+///
+/// Most direct callers are recovery and unit-test paths. The dispatch path
+/// uses [`run_prompt_task_with_session_identity`] so its TaskMeta can follow a
+/// session replacement performed during workspace validation.
+pub async fn run_prompt_task(
+    agent: OwnedAgent,
+    batch: Option<FlushBatch>,
+    prompt_text: Option<String>,
+    ctx: Arc<PromptContext>,
+    result_tx: mpsc::UnboundedSender<PromptResult>,
+    control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
+    steer_rx: Option<mpsc::Receiver<SteerRequest>>,
+    turn_id: String,
+) {
+    run_prompt_task_with_session_identity(
+        agent,
+        batch,
+        prompt_text,
+        ctx,
+        result_tx,
+        control_rx,
+        steer_rx,
+        turn_id,
+        TaskSessionIdentity::default(),
+    )
+    .await;
+}
+
 /// Core async function spawned for each prompt.
 ///
 /// Lifecycle:
@@ -2474,7 +2527,7 @@ fn send_prompt_result(
 ///
 /// The agent is ALWAYS returned — even on panic the `JoinSet` detects the
 /// abort and the caller uses `task_map` to recover the agent index.
-pub async fn run_prompt_task(
+pub async fn run_prompt_task_with_session_identity(
     mut agent: OwnedAgent,
     batch: Option<FlushBatch>,
     prompt_text: Option<String>,
@@ -2483,6 +2536,7 @@ pub async fn run_prompt_task(
     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
     mut steer_rx: Option<mpsc::Receiver<SteerRequest>>,
     turn_id: String,
+    task_session_identity: TaskSessionIdentity,
 ) {
     agent.acp.set_tool_idle_timeout(ctx.tool_idle_timeout);
     agent
@@ -3365,6 +3419,7 @@ pub async fn run_prompt_task(
             }
         }
     };
+    task_session_identity.set(session_id.clone());
     agent
         .acp
         .set_observer_context(observer::context_for_conversation_turn(
