@@ -134,6 +134,31 @@ export function ThreadActivityRunControls({
       },
     });
   };
+  const publishSteer = async (
+    run: ThreadRunSelection,
+    requestId: string,
+    prompt: string,
+  ): Promise<Publication> => {
+    if (!epoch.current || !chosen || keyFor(chosen.run) !== keyFor(run)) {
+      return {
+        status: "not_attempted",
+        message: "The selected run changed before sending.",
+      };
+    }
+    return invokeTauri<Publication>("send_scoped_observer_control", {
+      agentPubkey: run.agentPubkey,
+      expectedScope: chosen.token,
+      payload: {
+        type: "steer_turn",
+        channelId: run.channelId,
+        conversationId: run.conversationId,
+        sessionId: run.sessionId,
+        turnId: run.turnId,
+        requestId,
+        prompt,
+      },
+    });
+  };
   if (!owned) return null;
   return (
     <div className="border-b border-border/60 p-2">
@@ -184,10 +209,8 @@ export function ThreadActivityRunControls({
       <ThreadSelectedRunControls
         selection={chosen?.run ?? null}
         publishStop={publishStop}
+        publishSteer={publishSteer}
       />
-      <p className="text-xs text-muted-foreground">
-        Steer is unavailable until this runtime supports targeting an exact run.
-      </p>
     </div>
   );
 }

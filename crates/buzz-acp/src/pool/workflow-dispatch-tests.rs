@@ -95,6 +95,7 @@ async fn authenticated_workflows_keep_parallel_thread_identity_through_actual_ac
                 Arc::clone(&ctx),
                 tx.clone(),
                 None,
+                None,
                 "workflow-first".into()
             ),
             run_prompt_task(
@@ -103,6 +104,7 @@ async fn authenticated_workflows_keep_parallel_thread_identity_through_actual_ac
                 None,
                 Arc::clone(&ctx),
                 tx,
+                None,
                 None,
                 "workflow-second".into()
             ),

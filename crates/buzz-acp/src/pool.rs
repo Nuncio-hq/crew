@@ -24,7 +24,7 @@ mod logical_prompt;
 mod receipt_recovery_tests;
 #[cfg(test)]
 mod reliability_tests;
-use logical_prompt::run_logical_prompt;
+use logical_prompt::run_logical_prompt_with_invocation;
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -82,6 +82,14 @@ const RECENT_ACTIVITY_WINDOW: Duration = Duration::from_secs(60);
 pub struct SuccessfulSteerDelivery {
     pub event_id: String,
     pub session_id: String,
+}
+
+/// Identity supplied by Activity when steering one selected live run.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct StrictSteerTarget {
+    pub session_id: String,
+    pub turn_id: String,
+    pub request_id: String,
 }
 
 pub struct TaskMeta {
@@ -511,6 +519,9 @@ pub struct SteerRequest {
     /// `queue::native_steer_framing()` + `queue::format_event_block` so
     /// the wording cannot drift from the cancel+merge fallback path.
     pub prompt_blocks: Vec<String>,
+    /// Exact selected-run identity. `None` retains the ordinary event-driven
+    /// steering behavior and its existing fallback semantics.
+    pub strict_target: Option<StrictSteerTarget>,
     /// Oneshot for the read loop to report the outcome.
     pub ack_tx: tokio::sync::oneshot::Sender<SteerAck>,
 }
@@ -561,6 +572,17 @@ pub enum SteerError {
     /// drop the user's message: codex-acp answers unrecognized extension
     /// methods with a bare `{}` success rather than `-32601`.
     OutcomeRejected { outcome: String },
+    /// The adapter answered a strict request with a terminal outcome other
+    /// than `appended`; the native observer layer forwards it verbatim.
+    StrictOutcome { outcome: String },
+    /// The selected task disappeared before the strict request could be sent.
+    StrictTargetMismatch,
+    /// The selected adapter did not advertise the exact strict contract.
+    StrictUnsupported,
+    /// The bounded steer queue is already occupied.
+    Busy,
+    /// A strict adapter returned a result for a different request or turn.
+    StrictResponseMismatch,
     /// The read loop never got to dispatch the steer because the prompt
     /// completed first. Delivery state for the underlying message is
     /// unknown after prompt completion — the main loop must treat this as
@@ -1028,6 +1050,34 @@ impl AgentPool {
             .ok_or_else(|| SteerError::Transport("steer_tx not installed".into()))?;
         tx.try_send(request)
             .map_err(|e| SteerError::Transport(e.to_string()))
+    }
+
+    /// Send a strict steer only to the task whose routing channel,
+    /// conversation, and turn identities all match.
+    pub fn send_exact_steer(
+        &mut self,
+        routing_channel_id: Uuid,
+        conversation_id: Uuid,
+        turn_id: &str,
+        request: SteerRequest,
+    ) -> Result<(), SteerError> {
+        let meta = self
+            .task_map
+            .values_mut()
+            .find(|meta| {
+                meta.routing_channel_id == Some(routing_channel_id)
+                    && meta.channel_id == Some(conversation_id)
+                    && meta.turn_id == turn_id
+            })
+            .ok_or(SteerError::StrictTargetMismatch)?;
+        let tx = meta
+            .steer_tx
+            .as_ref()
+            .ok_or(SteerError::StrictTargetMismatch)?;
+        tx.try_send(request).map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => SteerError::Busy,
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => SteerError::StrictTargetMismatch,
+        })
     }
 
     /// Durably associate a successful steer with the exact ACP session that
@@ -2372,11 +2422,9 @@ fn emit_session_aging_if_needed(
 ///
 /// Clearing `steer_rx` here — rather than per-arm — makes the `install_steer_rx`
 /// invariant (`steer_rx.is_none()` at dispatch) structurally unviolatable: a receiver
-/// installed for a turn that ends before the read loop's `take()` (e.g. session-create
-/// error) is always dropped before the agent re-enters the pool, so the next dispatch
-/// can never trigger the assert.
-///
-/// On the happy path the read loop has already called `take()`, so this is a no-op.
+/// installed for a task that ends before the read loop runs (e.g. session-create
+/// error) is always dropped before the agent re-enters the pool. The receiver is
+/// shared across the prompt and any plan continuation while the task is live.
 fn send_prompt_result(
     result_tx: &mpsc::UnboundedSender<PromptResult>,
     turn_id: &str,
@@ -2415,6 +2463,7 @@ pub async fn run_prompt_task(
     ctx: Arc<PromptContext>,
     result_tx: mpsc::UnboundedSender<PromptResult>,
     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
+    mut steer_rx: Option<mpsc::Receiver<SteerRequest>>,
     turn_id: String,
 ) {
     agent.acp.set_tool_idle_timeout(ctx.tool_idle_timeout);
@@ -3363,11 +3412,12 @@ pub async fn run_prompt_task(
             );
             let init_result = agent
                 .acp
-                .session_prompt_with_idle_timeout(
+                .session_prompt_blocks_with_idle_timeout_and_invocation(
                     &session_id,
-                    &init_msg,
+                    &[&init_msg],
                     ctx.idle_timeout,
                     ctx.max_turn_duration,
+                    Some(&turn_id),
                 )
                 .await;
 
@@ -3496,6 +3546,14 @@ pub async fn run_prompt_task(
                 }
             }
         }
+    }
+
+    // The selected-run receiver is needed by the actual prompt, not by the
+    // optional session bootstrap above. Deferring installation keeps a new
+    // session's initial_message from consuming the only receiver and leaving
+    // Activity Steer disconnected from the main run.
+    if let Some(receiver) = steer_rx.take() {
+        agent.acp.install_steer_rx(receiver);
     }
 
     // When the batch is a single slash-command message (e.g. "@Eva /goal …"),
@@ -3690,20 +3748,22 @@ pub async fn run_prompt_task(
             // Heartbeat / non-cancellable path.
             tokio::select! {
                 biased;
-                result = run_logical_prompt(
+                result = run_logical_prompt_with_invocation(
                     &mut agent.acp, &session_id, &prompt_blocks,
                     ctx.idle_timeout, ctx.max_turn_duration,
                     matches!(source, PromptSource::Channel(_)), &deciding_continuation,
+                    Some(&turn_id),
                 ) => result,
             }
         }
         Some(rx) => {
             tokio::select! {
                 biased;
-                result = run_logical_prompt(
+                result = run_logical_prompt_with_invocation(
                     &mut agent.acp, &session_id, &prompt_blocks,
                     ctx.idle_timeout, ctx.max_turn_duration,
                     matches!(source, PromptSource::Channel(_)), &deciding_continuation,
+                    Some(&turn_id),
                 ) => result,
                 mode = rx => {
                     let control_signal = mode.unwrap_or(ControlSignal::Cancel);
@@ -9652,6 +9712,7 @@ done"#
                 Arc::clone(&ctx),
                 result_tx.clone(),
                 None,
+                None,
                 format!("turn-{turn}"),
             )
             .await;
@@ -9774,6 +9835,7 @@ done"#
                 None,
                 Arc::clone(&ctx),
                 result_tx.clone(),
+                None,
                 None,
                 format!("turn-{turn}"),
             )
@@ -9957,6 +10019,7 @@ done"#
                 Arc::clone(&ctx),
                 result_tx.clone(),
                 None,
+                None,
                 turn_id.into(),
             )
             .await;
@@ -10120,6 +10183,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             None,
             Arc::new(ctx),
             result_tx,
+            None,
             None,
             "next-turn".into(),
         )
@@ -11491,10 +11555,9 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     // any early-return arm (e.g. session-create failure). The receiver must be
     // cleared and the next `install_steer_rx` must not panic.
     //
-    // Test 2 (post-read-loop path): receiver is already `None` (the read loop
-    // already consumed it via `take()`). `send_prompt_result` is idempotent —
-    // `steer_rx` stays `None` and the next `install_steer_rx` still does not
-    // panic.
+    // Test 2 (post-task path): receiver starts as `None` because no receiver
+    // was installed. `send_prompt_result` is idempotent — `steer_rx` stays
+    // `None` and the next `install_steer_rx` still does not panic.
 
     /// After an early-return path (receiver installed but read loop never ran),
     /// the returned agent's `steer_rx` is `None` and a subsequent
@@ -11573,11 +11636,11 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // Reaching here without a panic is the test.
     }
 
-    /// After a successful prompt (read loop already consumed `steer_rx` via
-    /// `take()`), `send_prompt_result` is a no-op — `steer_rx` stays `None`
-    /// and the next `install_steer_rx` does not panic.
+    /// After a task with no installed receiver, `send_prompt_result` is a
+    /// no-op — `steer_rx` stays `None` and the next `install_steer_rx` does
+    /// not panic.
     #[tokio::test]
-    async fn test_send_prompt_result_is_noop_when_steer_rx_already_consumed() {
+    async fn test_send_prompt_result_is_noop_when_steer_rx_already_clear() {
         let acp = AcpClient::spawn(
             "bash",
             &["-c".to_string(), "sleep 10".to_string()],
@@ -11602,8 +11665,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             load_session_supported: false,
         };
 
-        // Simulate a completed turn: `steer_rx` was consumed by the read loop
-        // (`take()` was called), so it is already `None` when the turn ends.
+        // Simulate a completed task with no steer channel, so the field is
+        // already `None` when the task ends.
         assert!(
             agent.acp.steer_rx_is_none(),
             "precondition: steer_rx starts as None"
@@ -13918,6 +13981,7 @@ done"#
             None,
             Arc::new(ctx),
             result_tx,
+            None,
             None,
             "indeterminate-project-turn".into(),
         )

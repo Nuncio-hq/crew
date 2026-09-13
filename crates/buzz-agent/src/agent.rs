@@ -166,6 +166,9 @@ pub struct RunCtx<'a> {
     /// model sees them on its next request, without restarting the turn. Fed by
     /// the `_goose/unstable/session/steer` handler.
     pub steer: &'a mut mpsc::UnboundedReceiver<Vec<ContentBlock>>,
+    /// Exact selected-invocation steer queue. Requests are committed only by
+    /// this run at the round boundary and carry their own bounded deadline.
+    pub strict_steer: &'a mut mpsc::Receiver<crate::strict_steer::Request>,
     pub history: &'a mut Vec<HistoryItem>,
     pub original_task: &'a mut Option<String>,
     pub handoff_count: &'a mut usize,
@@ -380,6 +383,7 @@ impl RunCtx<'_> {
             // round. They land as user turns so the model incorporates them on
             // its next request — the turn continues, it is not restarted. Drain
             // non-blocking; an empty queue is the common case.
+            self.drain_strict_steers();
             self.drain_steers();
             match self.maybe_handoff(&mut handoff_attempts).await {
                 HandoffOutcome::Cancelled => return Ok(StopReason::Cancelled),
@@ -814,6 +818,40 @@ impl RunCtx<'_> {
                     tracing::warn!("dropping unrenderable steer message: {e}");
                 }
             }
+        }
+    }
+
+    /// Append every currently available strict steer at this invocation's
+    /// round boundary. Cancellation and deadline checks happen before the
+    /// append. The shared claim arbitrates against the ACP waiter's deadline,
+    /// so an expired request can never be appended after the caller was told
+    /// that it expired.
+    fn drain_strict_steers(&mut self) {
+        while let Ok(request) = self.strict_steer.try_recv() {
+            let requested = if *self.cancel.borrow() {
+                crate::strict_steer::Outcome::StaleTarget
+            } else if tokio::time::Instant::now() >= request.deadline {
+                crate::strict_steer::Outcome::Expired
+            } else {
+                crate::strict_steer::Outcome::Appended
+            };
+            let outcome = request.claim.settle(requested);
+            if outcome == crate::strict_steer::Outcome::Appended {
+                self.history.push(HistoryItem::User(request.text));
+            }
+            let _ = request.completion.send(outcome);
+        }
+    }
+
+    /// Settle all requests that remained queued when this invocation returned.
+    /// Called after admission is closed, so no request can cross into a
+    /// successor invocation.
+    pub fn finish_strict_steers(&mut self) {
+        while let Ok(request) = self.strict_steer.try_recv() {
+            let outcome = request
+                .claim
+                .settle(crate::strict_steer::Outcome::StaleTarget);
+            let _ = request.completion.send(outcome);
         }
     }
 

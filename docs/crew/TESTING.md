@@ -1109,8 +1109,10 @@ callbacks, resolved-request replay, immediate ownership revocation and concurren
 question completion. `userInputAnswerGate.test.mjs` proves bounded admission has
 a visible error and recovers after authoritative reconciliation. These are scoped
 UI publication checks; the existing elicitation durable-claim tests establish the
-separate native claim contract. Selected-run controls additionally use the composed Activity tests below. Strict
-Steer and native workflow evidence remain required before #354 is complete.
+separate native claim contract. Selected-run controls additionally use the
+composed Activity tests below. Strict Steer uses the native `buzz-agent` and
+`buzz-acp` production seams described below; installed workflow evidence remains
+required before #354 is complete.
 
 The first #354 slice adds production-bound `threadToolPaneSelection`,
 `threadToolPaneInvalidation`, `threadToolPanePresentation`,
@@ -1157,3 +1159,13 @@ selected control and outcome helper with external store/native boundaries mocked
 It requires explicit choice, exact native token/target publication, no successor
 retarget, and fail-closed native owner mismatch. Node pass counts and falsifiable
 baseline evidence belong in the task; these mocks do not exercise native IPC.
+
+`crates/buzz-agent/tests/crew/strict_steer.rs` drives the real adapter subprocess
+loop with the fake provider. It covers round-boundary append, bounded duplicate
+admission, stale completion after the run ends, and a replacement invocation
+that cannot receive the prior request. The module's unit tests cover UUID and
+text validation, pending versus terminal deduplication, and first-wins expiry
+claims. `buzz-acp`'s registered strict transport tests cover capability-gated
+wire selection, exact request/turn echo validation, terminal outcomes, and the
+no-fallback path. Run the focused native filters before the full CI gate; these
+production-bound tests do not replace installed Activity acceptance.

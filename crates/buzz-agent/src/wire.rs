@@ -70,6 +70,34 @@ pub struct SessionNewParams {
 pub struct SessionPromptParams {
     pub session_id: String,
     pub prompt: Vec<ContentBlock>,
+    /// Crew's selected-run identity metadata. Unknown metadata remains
+    /// optional so ordinary ACP callers retain the existing prompt shape.
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<SessionPromptMeta>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPromptMeta {
+    #[serde(default)]
+    pub crew: Option<CrewPromptMeta>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrewPromptMeta {
+    #[serde(default)]
+    pub invocation_id: Option<String>,
+}
+
+/// Params for Crew's exact selected-invocation steering extension.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrictSessionSteerParams {
+    pub session_id: String,
+    pub expected_turn_id: String,
+    pub request_id: String,
+    pub prompt: Vec<ContentBlock>,
 }
 
 #[derive(Debug, Deserialize)]

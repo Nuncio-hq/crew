@@ -100,6 +100,7 @@ async fn busy_shared_checkout_returns_batch_for_requeue() {
         Arc::clone(&ctx),
         result_tx.clone(),
         None,
+        None,
         "turn-busy".into(),
     )
     .await;
