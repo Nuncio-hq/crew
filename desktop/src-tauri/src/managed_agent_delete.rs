@@ -983,4 +983,4 @@ pub(crate) async fn recover<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(),
 mod tests;
 
 #[cfg(all(test, unix))]
-pub(crate) use tests::{receipt_child_command, OwnedReceiptChild};
+pub(crate) use tests::{assert_live_receipt_valid, receipt_child_command, OwnedReceiptChild};
