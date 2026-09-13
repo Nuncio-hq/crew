@@ -10,6 +10,7 @@ mod llm;
 mod mcp;
 pub mod model_capabilities;
 mod permission;
+mod strict_steer;
 pub mod types;
 mod wire;
 
@@ -50,8 +51,8 @@ use crate::mcp::McpRegistry;
 use crate::types::{ContentBlock, HistoryItem};
 use crate::wire::{
     classify, goose_session_update, Inbound, InitializeParams, SessionCancelParams,
-    SessionNewParams, SessionPromptParams, SessionSetModelParams, SessionSteerParams, WireMsg,
-    WireSender, INVALID_PARAMS, METHOD_NOT_FOUND, PARSE_ERROR,
+    SessionNewParams, SessionPromptParams, SessionSetModelParams, SessionSteerParams,
+    StrictSessionSteerParams, WireMsg, WireSender, INVALID_PARAMS, METHOD_NOT_FOUND, PARSE_ERROR,
 };
 
 struct App {
@@ -95,6 +96,9 @@ struct Session {
     /// drains queued steers at round boundaries. `None` when no prompt is in
     /// flight.
     steer_tx: Option<mpsc::UnboundedSender<Vec<ContentBlock>>>,
+    /// Exact selected-invocation steering state, separate from the ordinary
+    /// goose queue so a request cannot fall through to a successor turn.
+    strict_steer: strict_steer::State,
     original_task: Option<String>,
     handoff_count: usize,
     /// Cache-summed input tokens the provider reported for this session's most
@@ -326,6 +330,9 @@ async fn handle_request(
         "_goose/unstable/session/steer" => {
             steer_session(app, id, params, wire_tx).await;
         }
+        "_session/steering" => {
+            strict_steer_session(app, id, params, wire_tx).await;
+        }
         _ => {
             wire::send(
                 wire_tx,
@@ -374,6 +381,12 @@ async fn initialize(app: &Arc<App>, id: Value, params: Value, wire_tx: &WireSend
                     "loadSession": false,
                     "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false },
                     "mcpCapabilities": { "http": false, "sse": false },
+                },
+                "_meta": {
+                    "steering": {
+                        "supported": true,
+                        "strictTurnTarget": true,
+                    }
                 },
                 "agentInfo": { "name": "buzz-agent", "version": env!("CARGO_PKG_VERSION") },
             }),
@@ -565,6 +578,7 @@ async fn session_new(app: &Arc<App>, id: Value, params: Value, wire_tx: &WireSen
             busy: false,
             active_run_id: None,
             steer_tx: None,
+            strict_steer: strict_steer::State::default(),
             original_task: None,
             handoff_count: 0,
             last_request_input_tokens: None,
@@ -740,6 +754,130 @@ async fn steer_session(app: &Arc<App>, id: Value, params: Value, wire_tx: &WireS
     .await;
 }
 
+fn strict_steer_result(request_id: &str, turn_id: &str, outcome: strict_steer::Outcome) -> Value {
+    json!({
+        "requestId": request_id,
+        "turnId": turn_id,
+        "outcome": outcome.as_str(),
+    })
+}
+
+/// Handle Crew's exact selected-invocation steering extension.
+///
+/// Admission is synchronous under the existing session mutex. The response
+/// for an accepted request is completed by a short-lived waiter, so the ACP
+/// read loop remains free to admit a duplicate or process the prompt's next
+/// provider response.
+async fn strict_steer_session(app: &Arc<App>, id: Value, params: Value, wire_tx: &WireSender) {
+    let p: StrictSessionSteerParams = match decode(params, "_session/steering") {
+        Ok(p) => p,
+        Err(m) => return reject(wire_tx, id, INVALID_PARAMS, &m).await,
+    };
+    if !strict_steer::is_uuid(&p.expected_turn_id) {
+        return reject(
+            wire_tx,
+            id,
+            INVALID_PARAMS,
+            "steer: expectedTurnId must be a UUID",
+        )
+        .await;
+    }
+    if !strict_steer::is_uuid(&p.request_id) {
+        return reject(
+            wire_tx,
+            id,
+            INVALID_PARAMS,
+            "steer: requestId must be a UUID",
+        )
+        .await;
+    }
+    let text = match strict_steer::prompt_text(&p.prompt) {
+        Ok(text) => text,
+        Err(message) => return reject(wire_tx, id, INVALID_PARAMS, message).await,
+    };
+    let request_id = p.request_id.clone();
+    let turn_id = p.expected_turn_id.clone();
+    let (ack_rx, immediate, accepted_claim) = {
+        let mut sessions = app.sessions.lock().await;
+        let Some(session) = sessions.get_mut(&p.session_id) else {
+            drop(sessions);
+            return reject(wire_tx, id, INVALID_PARAMS, "steer: unknown session").await;
+        };
+        match session
+            .strict_steer
+            .reserve(&p.expected_turn_id, &p.request_id, &text)
+        {
+            strict_steer::Admission::Accepted { sender, claim } => {
+                let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                let request = strict_steer::Request {
+                    request_id: p.request_id.clone(),
+                    turn_id: p.expected_turn_id.clone(),
+                    text: text.clone(),
+                    deadline: tokio::time::Instant::now() + strict_steer::REQUEST_DEADLINE,
+                    claim: claim.clone(),
+                    completion: ack_tx,
+                };
+                match sender.try_send(request) {
+                    Ok(()) => (Some(ack_rx), None, Some(claim)),
+                    Err(_) => {
+                        session
+                            .strict_steer
+                            .rollback(&p.request_id, &p.expected_turn_id, &text);
+                        (None, Some(strict_steer::Outcome::Busy), None)
+                    }
+                }
+            }
+            strict_steer::Admission::PendingDuplicate => {
+                (None, Some(strict_steer::Outcome::Busy), None)
+            }
+            strict_steer::Admission::TerminalDuplicate(outcome) => (None, Some(outcome), None),
+            strict_steer::Admission::ConflictingRequest | strict_steer::Admission::CapacityFull => {
+                (None, Some(strict_steer::Outcome::Rejected), None)
+            }
+            strict_steer::Admission::StaleTarget => {
+                (None, Some(strict_steer::Outcome::StaleTarget), None)
+            }
+        }
+    };
+    if let Some(outcome) = immediate {
+        wire::send(
+            wire_tx,
+            wire::ok(id, strict_steer_result(&request_id, &turn_id, outcome)),
+        )
+        .await;
+        return;
+    }
+    let Some(ack_rx) = ack_rx else {
+        return;
+    };
+    let Some(claim) = accepted_claim else {
+        return;
+    };
+    let app = Arc::clone(app);
+    let wire_tx = wire_tx.clone();
+    let session_id = p.session_id.clone();
+    tokio::spawn(async move {
+        let requested_outcome = tokio::select! {
+            biased;
+            result = ack_rx => result.unwrap_or(strict_steer::Outcome::StaleTarget),
+            _ = tokio::time::sleep(strict_steer::REQUEST_DEADLINE) => {
+                strict_steer::Outcome::Expired
+            }
+        };
+        let outcome = claim.settle(requested_outcome);
+        if let Some(session) = app.sessions.lock().await.get_mut(&session_id) {
+            session
+                .strict_steer
+                .finish_for(&turn_id, &request_id, outcome);
+        }
+        wire::send(
+            &wire_tx,
+            wire::ok(id, strict_steer_result(&request_id, &turn_id, outcome)),
+        )
+        .await;
+    });
+}
+
 fn spawn_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender) {
     tokio::spawn(async move { run_prompt(app, id, params, wire_tx).await });
 }
@@ -749,6 +887,22 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
         Ok(p) => p,
         Err(m) => return reject(&wire_tx, id, INVALID_PARAMS, &m).await,
     };
+    let invocation_id = p
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.crew.as_ref())
+        .and_then(|crew| crew.invocation_id.clone());
+    if let Some(invocation_id) = invocation_id.as_deref() {
+        if !strict_steer::is_uuid(invocation_id) {
+            return reject(
+                &wire_tx,
+                id,
+                INVALID_PARAMS,
+                "session/prompt: _meta.crew.invocationId must be a UUID",
+            )
+            .await;
+        }
+    }
     let (
         sid,
         mcp,
@@ -763,8 +917,9 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
         effective_model_override,
         run_id,
         mut steer_rx,
+        mut strict_steer_rx,
         usage_baseline,
-    ) = match acquire_session(&app, &p.session_id).await {
+    ) = match acquire_session(&app, &p.session_id, invocation_id).await {
         Ok(v) => v,
         Err(reason) => {
             return reject(
@@ -818,6 +973,7 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
         wire: &wire_tx,
         cancel: &mut cancel_rx,
         steer: &mut steer_rx,
+        strict_steer: &mut strict_steer_rx,
         history: &mut history,
         original_task: &mut original_task,
         handoff_count: &mut handoff_count,
@@ -833,6 +989,13 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
         usage_baseline,
     };
     let result = ctx.run(p.prompt).await;
+    // Close admission before draining the receiver. This leaves every request
+    // already in the queue with a terminal stale result while preventing a
+    // late request from being attached to a successor invocation.
+    if let Some(s) = app.sessions.lock().await.get_mut(&sid) {
+        s.strict_steer.close();
+    }
+    ctx.finish_strict_steers();
     if let Some(s) = app.sessions.lock().await.get_mut(&sid) {
         s.busy = false;
         // Clear run state so a late steer can't queue into a finished turn.
@@ -937,6 +1100,7 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
 async fn acquire_session(
     app: &Arc<App>,
     session_id: &str,
+    invocation_id: Option<String>,
 ) -> Result<
     (
         String,
@@ -952,6 +1116,7 @@ async fn acquire_session(
         Option<String>,
         String,
         mpsc::UnboundedReceiver<Vec<ContentBlock>>,
+        mpsc::Receiver<strict_steer::Request>,
         crate::types::SessionUsageBaseline,
     ),
     &'static str,
@@ -980,6 +1145,7 @@ async fn acquire_session(
     s.active_run_id = Some(run_id.clone());
     let (steer_tx, steer_rx) = mpsc::unbounded_channel();
     s.steer_tx = Some(steer_tx);
+    let strict_steer_rx = s.strict_steer.start(invocation_id);
     let effective_model = s.effective_model.clone();
     Ok((
         s.id.clone(),
@@ -995,6 +1161,7 @@ async fn acquire_session(
         effective_model,
         run_id,
         steer_rx,
+        strict_steer_rx,
         // Snapshot rather than a handle: the run loop reports cumulative usage
         // after every LLM round, and taking the sessions lock on each of those
         // would serialise concurrent sessions behind one another's provider

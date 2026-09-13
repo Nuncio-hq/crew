@@ -80,6 +80,7 @@ async fn rejected_receipt_cannot_panic_or_requeue_completed_agent_work() {
             Arc::new(ctx),
             tx,
             None,
+            None,
             "completed-before-receipt".into(),
         ));
         let result = tokio::time::timeout(Duration::from_secs(8), async {

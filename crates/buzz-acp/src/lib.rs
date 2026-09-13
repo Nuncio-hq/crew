@@ -1144,6 +1144,9 @@ async fn handle_relay_observer_control_event(
         Some("cancel_turn") => {
             handle_cancel_turn_control(&payload, pool, queue, rest_client, observer);
         }
+        Some("steer_turn") => {
+            handle_steer_turn_control(&payload, pool, observer);
+        }
         Some("retry_turn") => {
             retry_turn::handle_retry_turn_control(
                 &payload,
@@ -4142,6 +4145,7 @@ fn try_native_steer(
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<pool::SteerAck>();
     let request = pool::SteerRequest {
         prompt_blocks: vec![body],
+        strict_target: None,
         ack_tx,
     };
 
@@ -4406,7 +4410,6 @@ fn dispatch_pending(
         // `ExpectedRunIdMissing` (→ queue, degraded to
         // `MultipleEventHandling::Queue`) when it has neither.
         let (tx, rx) = tokio::sync::mpsc::channel::<pool::SteerRequest>(1);
-        agent.acp.install_steer_rx(rx);
         let steer_tx = Some(tx);
 
         // Prompt text is now built inside run_prompt_task (needs async for
@@ -4423,6 +4426,7 @@ fn dispatch_pending(
                 ctx_clone,
                 result_tx,
                 Some(control_rx),
+                Some(rx),
                 task_turn_id,
             )
             .await;
@@ -5258,6 +5262,7 @@ fn dispatch_heartbeat(
             Some(prompt_text),
             ctx_clone,
             result_tx,
+            None,
             None,
             task_turn_id,
         )

@@ -1,6 +1,7 @@
 export type ControlResultFrame = {
   type:
     | "cancel_turn"
+    | "steer_turn"
     | "switch_model"
     | "retry_turn"
     | "guided_handover"
@@ -12,6 +13,7 @@ export type ControlResultFrame = {
   /** Channel identity from the observer envelope. */
   channelId?: string | null;
   conversationId?: string | null;
+  sessionId?: string | null;
   turnId?: string | null;
   dispatchedCount?: number;
   withheldCount?: number;

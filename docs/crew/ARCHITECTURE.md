@@ -682,18 +682,18 @@ duplicate answers and fences completion by relay, viewer, channel and ownership
 generation. Publication failure keeps the request available with its error;
 success waits for the existing durable resolution/claim semantics. Native
 `QuestionRuntime` remains the authority for answer-versus-cancel claims. The
-source-stage selected-run Stop UI is described below. Strict Steer remains
-unimplemented: the existing ordinary-message `_session/steering` transport can
-start a new turn and cannot promise rejection of a stale selected run.
+source-stage selected-run Stop and Steer controls are described below. Strict
+Steer uses an additive `_session/steering` contract; it never falls back to
+ordinary steering or starts a successor turn when the selected run is stale.
 
 The #354 first slice implements the presentation in those seams: explicit Tools
 opens Context, Activity reads the existing exact-conversation observer archive/live
 merge, and Agent plans renders the unchanged D-056 projection in its own tab.
 Recap remains visibly Off/unavailable. Historical Activity remains read-only;
-the second slice adds explicitly selected current-run Stop and the scoped
-Need-you publication foundation. Strict Steer and additional workspace
-instruments remain unavailable. A retained plan without retained observer events displays unavailable
-transcript history rather than fabricated activity.
+the second slice adds explicitly selected current-run Stop and Steer plus the
+scoped Need-you publication foundation. A retained plan without retained
+observer events displays unavailable transcript history rather than fabricated
+activity.
 
 Selection is an in-memory LRU of at most 128 canonical relay/viewer/channel/root
 keys. Navigation closes the presentation; explicit return restores only selection.
@@ -737,7 +737,17 @@ identity as unavailable rather than targeting its successor. Stop requires the
 same current channel/conversation/session/turn and target ownership at click;
 ordinary ownership refetches or unrelated membership changes preserve pending
 claims. Revocation retires them. Results correlate agent, turn and request ID,
-and stale view completion cannot settle a newer request. Only a confirmed
-`not_attempted` publication unlocks retry; an unknown send remains unconfirmed.
-The transcript remains mounted alongside these controls. This source composition
-has Node proof; native batch, full CI, review and staging acceptance remain gates.
+and stale view completion cannot settle a newer request. Steer carries the same
+captured scope together with the exact session, turn, request UUID and text
+prompt. The native adapter routes it only to the matching task and advertises
+the strict capability before the client selects that transport. `buzz-agent`
+admits at most eight queued requests, caps text at 16 KiB, deduplicates 128
+request IDs, and appends only at its round boundary. A shared terminal claim
+arbitrates bounded expiry against that append, so an expired request cannot be
+appended later. The receiver remains attached across an optional plan
+continuation and is cleared when the task returns to the pool. Strict outcomes
+are `appended`, `stale_target`, `rejected`, `busy`, and `expired`; an uncertain
+publication remains unconfirmed and is never replayed automatically. Only a
+confirmed `not_attempted` publication unlocks retry. The transcript remains
+mounted alongside these controls. This source composition has Node proof;
+native batch, full CI, review and staging acceptance remain gates.
