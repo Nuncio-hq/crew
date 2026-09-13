@@ -1269,9 +1269,11 @@ impl AcpClient {
     /// Install a per-task steer request channel for non-cancelling mid-turn
     /// delivery.
     ///
-    /// Called by the dispatch path immediately before the first
-    /// [`session_prompt_with_idle_timeout`] for all prompt tasks. The receiver
-    /// remains available for the optional continuation of that logical turn.
+    /// Called by the dispatch path immediately before the actual prompt read
+    /// loop for all prompt tasks. A session bootstrap prompt, when present,
+    /// is intentionally completed first so it cannot consume this channel.
+    /// The receiver remains available for the optional continuation of that
+    /// logical turn.
     /// The matching `Sender` is stored in `TaskMeta.steer_tx` for the
     /// main loop's mode-gate fork to drive.
     ///
