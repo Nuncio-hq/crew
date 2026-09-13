@@ -31,7 +31,26 @@ registerHooks({
       return {
         format: "module",
         shortCircuit: true,
-        source: "export const WikiSourceFiles = () => null;\n",
+        source: `
+          export const WikiSourceFiles = ({
+            operationScope,
+            owner,
+            pageEvent,
+            repoD,
+          }) =>
+            globalThis.React.createElement(
+              "output",
+              {
+                "data-community": operationScope?.scope?.community ?? "",
+                "data-coordinate":
+                  pageEvent?.tags?.find((tag) => tag[0] === "a")?.[1] ?? "",
+                "data-owner": owner ?? "",
+                "data-repo-d": repoD ?? "",
+                "data-testid": "wiki-source-identity",
+              },
+              "source",
+            );
+        `,
       };
     }
     if (url === "crew-wiki-navigation-stub:navigation") {
@@ -82,6 +101,7 @@ const { act, cleanup, fireEvent, render, screen, waitFor } = await import(
   "@testing-library/react"
 );
 const React = await import("react");
+globalThis.React = React;
 const { QueryClient, QueryClientProvider } = await import(
   "@tanstack/react-query"
 );
@@ -120,6 +140,42 @@ function page(id, slug, title, content) {
 
 const intro = page("1".repeat(64), "intro", "Introduction", "Intro body");
 const runtime = page("2".repeat(64), "runtime", "Runtime", "Runtime body");
+const verifiedSnapshot = {
+  state: "complete",
+  head: {
+    ...intro.event,
+    id: "3".repeat(64),
+    tags: [
+      ["d", `${REPO_D}/_toc`],
+      ["a", COORDINATE],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", SNAPSHOT],
+    ],
+  },
+  manifest: {
+    ...intro.event,
+    id: "4".repeat(64),
+    content: JSON.stringify([
+      1,
+      SNAPSHOT,
+      OWNER,
+      REPO_D,
+      `git:${"c".repeat(40)}`,
+      null,
+      [],
+      [],
+      [],
+    ]),
+    tags: [
+      ["d", `${REPO_D}/manifest`],
+      ["a", COORDINATE],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", SNAPSHOT],
+    ],
+  },
+  pages: [intro.event, runtime.event],
+  repoState: null,
+};
 const toc = {
   event: intro.event,
   owner: OWNER,
@@ -155,6 +211,7 @@ function viewProps(overrides = {}) {
   return {
     admin: false,
     askScope: "repo",
+    isCompany: false,
     door: "project",
     navigationProjectId: PROJECT_ID,
     operationScope: scope,
@@ -381,5 +438,72 @@ test("Wiki does not reuse a replacement event that keeps the saved page slug", a
     await act(async () => mounted.view.unmount());
     mounted.client.clear();
     mounted.client.unmount();
+  }
+});
+
+test("Wiki keeps repository identity when its name is Company Wiki", async () => {
+  const calls = [];
+  const bridge = {
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "owner_operation_scope") return scope;
+      if (command === "wiki_search") {
+        return {
+          token: scope,
+          value: { events: [], truncated: false },
+        };
+      }
+      throw new Error(`Unexpected Tauri command: ${command}`);
+    },
+    transformCallback: () => 1,
+  };
+  globalThis.__TAURI_INTERNALS__ = bridge;
+  dom.window.__TAURI_INTERNALS__ = bridge;
+  writeWikiNavigationState(identity(), {
+    pageId: runtime.event.id,
+    pageSlug: runtime.slug,
+    scrollTop: 137,
+  });
+  const mounted = mount({
+    isCompany: false,
+    repoName: "Company Wiki",
+    snapshot: verifiedSnapshot,
+  });
+  try {
+    await waitFor(() => screen.getByText("Runtime body"));
+    assert.deepEqual(readWikiNavigationState(identity()), {
+      pageId: runtime.event.id,
+      pageSlug: runtime.slug,
+      scrollTop: 137,
+    });
+    const source = screen.getByTestId("wiki-source-identity");
+    assert.equal(source.getAttribute("data-owner"), OWNER);
+    assert.equal(source.getAttribute("data-repo-d"), REPO_D);
+    assert.equal(source.getAttribute("data-coordinate"), COORDINATE);
+    assert.equal(source.getAttribute("data-community"), COMMUNITY);
+
+    fireEvent.change(screen.getByTestId("wiki-page-search"), {
+      target: { value: "Intro" },
+    });
+    await waitFor(() => {
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_search"),
+        "repository body search must reach the native search seam",
+      );
+    });
+    const search = calls.find(({ command }) => command === "wiki_search");
+    assert.deepEqual(search?.args, {
+      expected: scope,
+      coordinate: COORDINATE,
+      snapshotId: SNAPSHOT,
+      pageIds: [intro.event.id, runtime.event.id],
+      query: "Intro",
+    });
+  } finally {
+    await act(async () => mounted.view.unmount());
+    mounted.client.clear();
+    mounted.client.unmount();
+    delete globalThis.__TAURI_INTERNALS__;
+    delete dom.window.__TAURI_INTERNALS__;
   }
 });

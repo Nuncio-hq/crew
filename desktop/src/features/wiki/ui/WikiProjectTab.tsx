@@ -98,6 +98,7 @@ export function WikiProjectTab({
       askScope="repo"
       channelId={project.channelId ?? null}
       door="project"
+      isCompany={false}
       owner={project.owner}
       navigationProjectId={projectId}
       page={pages[0] ?? null}
