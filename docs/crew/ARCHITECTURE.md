@@ -485,11 +485,11 @@ transaction. Only direct predecessors of unresolved successors are pinned;
 older ancestors follow normal retention. The exact relay refusal, fresh
 dependency checks and locked relay CAS establish the outcome. A local check
 before sending cannot revoke work already admitted by the relay. This requires
-journal schema v3: the v1-to-v2 managed-agent claim migration and the
-v2-to-v3 Wiki successor migration are both atomic and idempotent. Older
-binaries fail closed, so recovery preserves the v3 data and uses a verified
-compatible build rather than restoring a stale v1 database. See [the recovery
-runbook](TESTING.md#wiki-journal-v3-recovery) and
+journal schema v4: the v1-to-v2 managed-agent claim migration, the v2-to-v3
+Wiki successor migration, and the v3-to-v4 coordinator/child claim-index
+rebuild are all atomic and idempotent. Older binaries fail closed, so recovery
+preserves the v4 data and uses a verified compatible build rather than
+restoring a stale v1 database. See [the recovery runbook](TESTING.md#wiki-journal-v4-recovery) and
 [D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
 #363 owns the installed-runtime generation seam and immutable Git/folder

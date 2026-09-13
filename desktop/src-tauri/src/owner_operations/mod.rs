@@ -228,11 +228,20 @@ pub struct OperationStore {
     limits: Limits,
 }
 
+/// Namespace shared by the persona cascade coordinator and its deterministic
+/// operation/resource IDs. Keeping it in the owner-operation module gives the
+/// storage validator and the native coordinator one source of truth.
+pub(crate) const PERSONA_CASCADE_NAMESPACE: uuid::Uuid =
+    uuid::uuid!("34d6e7bb-4c17-5c64-8f0a-8e7e3c22d1d4");
+
 mod managed_delete_claim;
 mod mutations;
 mod storage;
 
-pub(crate) use managed_delete_claim::validate_record as validate_managed_agent_delete_record;
+pub(crate) use managed_delete_claim::{
+    persona_cascade_coordinator_resource_key,
+    validate_record as validate_managed_agent_delete_record,
+};
 
 #[cfg(all(test, unix))]
 mod tests;

@@ -2633,6 +2633,76 @@ test("personas referenced by teams cannot be deleted", async ({ page }) => {
   );
 });
 
+test("deleting a persona removes its linked managed instances and runtimes", async ({
+  page,
+}) => {
+  const personaId = "custom:cascade-delete-seam";
+  const firstPubkey = "cd".repeat(32);
+  const secondPubkey = "ce".repeat(32);
+  await installMockBridge(page, {
+    personas: [
+      {
+        id: personaId,
+        displayName: "Cascade Seam",
+        systemPrompt: "Used to verify persona deletion ownership.",
+      },
+    ],
+    managedAgents: [
+      {
+        pubkey: firstPubkey,
+        name: "Cascade Seam",
+        personaId,
+        status: "running",
+      },
+      {
+        pubkey: secondPubkey,
+        name: "Cascade Seam",
+        personaId,
+        status: "stopped",
+      },
+    ],
+    managedAgentRuntimes: [
+      {
+        pubkey: firstPubkey,
+        relayUrl: "ws://localhost:3000",
+        lifecycle: "ready",
+      },
+      {
+        pubkey: secondPubkey,
+        relayUrl: "ws://localhost:3000",
+        lifecycle: "stopped",
+      },
+    ],
+  });
+
+  await invokeTauri(page, "delete_persona", { id: personaId });
+
+  const personas = await invokeTauri<Array<{ id: string }>>(
+    page,
+    "list_personas",
+  );
+  expect(personas.some((persona) => persona.id === personaId)).toBe(false);
+  const agents = await invokeTauri<Array<{ pubkey: string }>>(
+    page,
+    "list_managed_agents",
+  );
+  expect(
+    agents.some(
+      (agent) => agent.pubkey === firstPubkey || agent.pubkey === secondPubkey,
+    ),
+  ).toBe(false);
+  const runtimes = await invokeTauri<Array<{ pubkey: string }>>(
+    page,
+    "list_managed_agent_runtimes",
+  );
+  expect(
+    runtimes.some(
+      (runtime) =>
+        runtime.pubkey === firstPubkey || runtime.pubkey === secondPubkey,
+    ),
+  ).toBe(false);
+});
+
 test("start pill morphs into the running dot without remounting the avatar", async ({
   page,
 }) => {
