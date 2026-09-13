@@ -289,9 +289,21 @@ fn load_agent_store<R: tauri::Runtime>(
 pub fn load_managed_agents<R: tauri::Runtime>(
     app: &AppHandle<R>,
 ) -> Result<Vec<ManagedAgentRecord>, String> {
+    let mut records = load_managed_agent_metadata(app)?;
+    hydrate_keys(&mut records);
+    Ok(records)
+}
+
+/// Load keyed agent records without consulting the keyring.
+///
+/// Metadata readers use this path for rendering, status, and eligibility
+/// decisions that do not require a signing key. Callers that will start or
+/// deploy an agent must hydrate only the selected records before using them.
+pub(crate) fn load_managed_agent_metadata<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<ManagedAgentRecord>, String> {
     let mut records = load_agent_store(app)?;
     records.retain(|record| !record.pubkey.is_empty());
-    hydrate_keys(&mut records);
     Ok(records)
 }
 
@@ -340,6 +352,17 @@ fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
     hydrate_keys_with(store, records);
 }
 
+/// Hydrate only records selected by the caller's runtime policy.
+pub(crate) fn hydrate_selected_managed_agent_keys(
+    records: &mut [ManagedAgentRecord],
+    should_hydrate: impl Fn(&ManagedAgentRecord) -> bool,
+) {
+    let Some(store) = agent_secret_store() else {
+        return;
+    };
+    hydrate_selected_keys_with(store, records, should_hydrate);
+}
+
 /// Testable core of [`hydrate_keys`], generic over the [`KeyStore`] seam.
 ///
 /// A keyring LOAD error (`Err`) is an OUTAGE — distinct from `Ok(None)`
@@ -382,6 +405,19 @@ fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) 
             // then strips it from JSON. Outcome is intentionally ignored:
             // on failure the key simply stays inline until a later boot.
             let _ = migrate_inline_key(store, record);
+        }
+    }
+}
+
+/// Testable core for [`hydrate_selected_managed_agent_keys`].
+fn hydrate_selected_keys_with(
+    store: &impl KeyStore,
+    records: &mut [ManagedAgentRecord],
+    should_hydrate: impl Fn(&ManagedAgentRecord) -> bool,
+) {
+    for record in records.iter_mut() {
+        if should_hydrate(record) {
+            hydrate_keys_with(store, std::slice::from_mut(record));
         }
     }
 }

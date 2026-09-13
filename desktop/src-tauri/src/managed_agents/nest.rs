@@ -7,7 +7,7 @@
 //! Static template content in AGENTS.md (above the managed-section markers)
 //! and SKILL.md is refreshed when the embedded template version changes.
 
-use super::{load_managed_agents, load_personas, AgentDefinition, ManagedAgentRecord};
+use super::{load_managed_agent_metadata, load_personas, AgentDefinition, ManagedAgentRecord};
 #[cfg(test)]
 use super::{BackendKind, RespondTo};
 use crate::app_state::AppState;
@@ -782,7 +782,7 @@ pub async fn regenerate_nest_context<R: tauri::Runtime>(
     }
 
     let personas = load_personas(app)?;
-    let agents = load_managed_agents(app)?;
+    let agents = load_managed_agent_metadata(app)?;
     let state = app.state::<AppState>();
     // Capture the relay target once, before any network work, so this
     // generation's rendered footer, NIP-11 signer, and snapshot query all
