@@ -394,6 +394,13 @@ test-unit:
         # because nothing in CI runs `cargo test --workspace` — workspace
         # membership alone buys clippy/check, not a single executed test.
         cargo nextest run -p buzz-backend-kubernetes
+        # The real MCP cancellation regression must not silently skip because
+        # its sibling executable is absent. macOS also exercises the bundled
+        # retained-directory Source dispatcher, which has no Linux equivalent.
+        cargo build -p buzz-dev-mcp
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            cargo nextest run -p buzz-dev-mcp --test crew_wiki_source_dispatch
+        fi
         # buzz-agent: two infra-free concerns run together by executing the
         # whole crate (lib + integration tests), because nothing in CI runs
         # `cargo test --workspace`, so without this stanza neither the crate's

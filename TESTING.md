@@ -7,6 +7,12 @@ just test-unit          # unit tests — no infrastructure needed
 just test               # unit + integration (starts Docker if needed)
 ```
 
+`just test-unit` builds `buzz-dev-mcp` before the real MCP shell-cancellation
+regression, so a missing sibling executable cannot silently skip that check.
+On macOS it also runs the two bundled Wiki Source dispatcher tests against the
+retained-directory helper. The cargo-test fallback runs the same focused checks;
+Linux runs do not establish macOS Source behavior.
+
 `just test` runs unit tests plus integration tests against Postgres and Redis
 (started automatically if not already running). Neither task runs the E2E suites in
 `buzz-test-client` — those are marked `#[ignore]` and require a running relay:
