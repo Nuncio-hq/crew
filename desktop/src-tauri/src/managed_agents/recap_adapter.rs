@@ -15,6 +15,7 @@ use std::process::Command;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use url::Url;
 
 use super::recap_capability::RecapToolProbeEvidence;
 
@@ -119,6 +120,7 @@ pub(crate) struct RecapLaunchPlan {
     profile_identity: Option<super::recap_capability::RecapProfileIdentity>,
     profile_destination: Option<PathBuf>,
     profile_destination_identity: Option<super::recap_capability::RecapProfileIdentity>,
+    profile_destination_digest: Option<String>,
     usage_file: Option<PathBuf>,
     /// On macOS this is a fixed process-fork denial policy. The policy is
     /// passed to `/usr/bin/sandbox-exec`; the installed runtime and all of its
@@ -175,7 +177,7 @@ impl RecapLaunchPlan {
                             profile_identity(destination).ok().as_ref()
                                 == self.profile_destination_identity.as_ref()
                                 && profile_tree_digest(destination).ok().as_deref()
-                                    == Some(expected.as_str())
+                                    == self.profile_destination_digest.as_deref()
                         })
             }
             _ => false,
@@ -352,6 +354,7 @@ pub(crate) fn claude_recap_plan(
         profile_identity: None,
         profile_destination: None,
         profile_destination_identity: None,
+        profile_destination_digest: None,
         usage_file: None,
         sandbox_profile: None,
     })
@@ -369,6 +372,7 @@ pub(crate) fn hermes_recap_plan(
     model: &str,
     profile: &Path,
     input: &[u8],
+    gateway: &super::recap_hermes_gateway::HermesGatewayConnection,
 ) -> Result<RecapLaunchPlan, RecapRunFailure> {
     if input.len() > RECAP_INPUT_LIMIT {
         return Err(RecapRunFailure::InputLimit);
@@ -396,7 +400,10 @@ pub(crate) fn hermes_recap_plan(
     {
         return Err(RecapRunFailure::ProfileUnavailable);
     }
+    super::recap_hermes_gateway::write_locked_profile(&destination, gateway, model)
+        .map_err(|_| RecapRunFailure::StateIsolation)?;
     let destination_identity = profile_identity(&destination)?;
+    let destination_digest = profile_tree_digest(&destination)?;
 
     let usage_file = root.join("usage.json");
     prepare_usage_file(&usage_file)?;
@@ -423,7 +430,7 @@ pub(crate) fn hermes_recap_plan(
     // root at the disposable copy before its pre-argparse profile selector
     // runs; the source profile is never mounted or mutated in place.
     env.insert("HERMES_HOME".into(), root.join("hermes").into_os_string());
-    let sandbox_profile = macos_containment_profile(executable)?;
+    let sandbox_profile = macos_containment_profile(executable, root, &gateway.base_url)?;
     Ok(RecapLaunchPlan {
         kind: RecapLaunchKind::Hermes,
         executable: executable.to_owned(),
@@ -436,6 +443,7 @@ pub(crate) fn hermes_recap_plan(
         profile_identity: Some(source_identity),
         profile_destination: Some(destination),
         profile_destination_identity: Some(destination_identity),
+        profile_destination_digest: Some(destination_digest),
         usage_file: Some(usage_file),
         sandbox_profile,
     })
@@ -501,33 +509,89 @@ fn isolated_env<const N: usize>(
     env
 }
 
-fn macos_containment_profile(executable: &Path) -> Result<Option<String>, RecapRunFailure> {
+fn macos_containment_profile(
+    executable: &Path,
+    root: &Path,
+    gateway_base_url: &str,
+) -> Result<Option<String>, RecapRunFailure> {
     #[cfg(target_os = "macos")]
     {
         if !is_executable(Path::new("/usr/bin/sandbox-exec")) {
             return Err(RecapRunFailure::UnsupportedContainment);
         }
-        // `allow default` preserves the runtime's in-process provider HTTP
-        // path and dynamic libraries. The explicit process-fork denial is the
-        // containment boundary: MCP/terminal/plugin descendants cannot fork,
-        // call setsid, or escape the bounded owner. The runtime has no tools in
-        // this recipe, so file access outside its isolated HOME is unreachable
-        // from model output.
-        let _ = executable;
-        Ok(Some(
-            "(version 1)(allow default)(deny process-fork)".to_string(),
-        ))
+        let executable = executable
+            .canonicalize()
+            .map_err(|_| RecapRunFailure::UnsupportedContainment)?;
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or(RecapRunFailure::UnsupportedContainment)?;
+        let install = sandbox_install_root(&executable, &home)?;
+        let gateway =
+            Url::parse(gateway_base_url).map_err(|_| RecapRunFailure::UnsupportedContainment)?;
+        let port = gateway
+            .port()
+            .ok_or(RecapRunFailure::UnsupportedContainment)?;
+        if gateway.scheme() != "http"
+            || gateway.host_str() != Some("127.0.0.1")
+            || gateway.path() != "/"
+            || gateway.query().is_some()
+            || gateway.fragment().is_some()
+        {
+            return Err(RecapRunFailure::UnsupportedContainment);
+        }
+        let quote = |path: &Path| {
+            let value = path
+                .to_str()
+                .ok_or(RecapRunFailure::UnsupportedContainment)?;
+            if value.contains(['"', '\n', '\r']) {
+                return Err(RecapRunFailure::UnsupportedContainment);
+            }
+            Ok(value.to_owned())
+        };
+        let home = quote(&home)?;
+        let install = quote(&install)?;
+        let root = quote(root)?;
+        Ok(Some(format!(
+            r#"(version 1)
+(deny default)
+(allow process-exec)
+(deny process-fork)
+(allow file-read-metadata)
+(allow file-read-data (require-not (subpath "{home}")))
+(allow file-read-data (subpath "{install}") (subpath "{root}"))
+(allow file-write* (subpath "{root}") (literal "/dev/null"))
+(allow network-outbound (remote ip "localhost:{port}"))
+(allow sysctl-read)
+(allow mach-lookup
+  (global-name "com.apple.SystemConfiguration.configd")
+  (global-name "com.apple.system.logger"))"#
+        )))
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = executable;
+        let _ = (executable, root, gateway_base_url);
         Ok(None)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = executable;
+        let _ = (executable, root, gateway_base_url);
         Err(RecapRunFailure::UnsupportedContainment)
     }
+}
+
+fn sandbox_install_root(executable: &Path, home: &Path) -> Result<PathBuf, RecapRunFailure> {
+    let install = executable
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or(RecapRunFailure::UnsupportedContainment)?;
+    if home == install || home.starts_with(install) {
+        // A shallow launcher such as ~/.local/bin/hermes would otherwise make
+        // its derived install root the entire user home and undo the ambient-
+        // home read denial. Acceptance must resolve the concrete installation.
+        return Err(RecapRunFailure::UnsupportedContainment);
+    }
+    Ok(install.to_owned())
 }
 
 #[derive(Default)]

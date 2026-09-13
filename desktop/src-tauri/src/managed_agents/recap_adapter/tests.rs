@@ -22,6 +22,13 @@ fn final_output(model: &str) -> Vec<u8> {
     .unwrap()
 }
 
+fn gateway() -> crate::managed_agents::recap_hermes_gateway::HermesGatewayConnection {
+    crate::managed_agents::recap_hermes_gateway::HermesGatewayConnection {
+        base_url: "http://127.0.0.1:43123".into(),
+        token: "a".repeat(64),
+    }
+}
+
 #[test]
 fn final_json_yields_only_the_recap_text() {
     assert_eq!(
@@ -218,8 +225,15 @@ fn hermes_plan_copies_profile_and_requires_matching_usage_model() {
     let executable = fixture.path().join("hermes");
     std::fs::write(&executable, b"fixture").unwrap();
 
-    let plan =
-        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap();
+    let plan = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap();
     let usage = plan.usage_file.clone().unwrap();
     std::fs::write(&usage, r#"{"model":"hermes-low"}"#).unwrap();
     assert!(root.join("hermes/profiles/scout/config.yaml").is_file());
@@ -234,6 +248,97 @@ fn hermes_plan_copies_profile_and_requires_matching_usage_model() {
     assert_eq!(
         bound.parse_output(true, b"Hermes recap", b""),
         Err(RecapRunFailure::ModelRequestedOnly)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn hermes_plan_enforces_the_generated_deny_default_sandbox() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::Builder::new()
+        .prefix("crew-recap-sandbox-")
+        .tempdir_in("/private/tmp")
+        .unwrap();
+    let install = fixture.path().join("install");
+    let executable = install.join("bin/hermes");
+    let profile = fixture.path().join("profiles/scout");
+    let root = fixture.path().join("run");
+    let outside_write = fixture.path().join("outside-write");
+    let fork_write = root.join("fork-write");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    let home_fixture = tempfile::Builder::new()
+        .prefix(".crew-recap-sandbox-")
+        .tempdir_in(std::env::var_os("HOME").unwrap())
+        .unwrap();
+    let denied_read = home_fixture.path().join("ambient-secret");
+    std::fs::write(&denied_read, "must not be readable").unwrap();
+    let script = format!(
+        r#"#!/bin/sh
+if IFS= read -r _line < '{}'; then exit 31; fi
+if printf escaped > '{}'; then exit 32; fi
+printf confined > '{}/sandbox-ok'
+"#,
+        denied_read.display(),
+        outside_write.display(),
+        root.display(),
+    );
+    std::fs::write(&executable, script).unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let plan = bind_hermes_prompt(
+        hermes_recap_plan(
+            &executable,
+            &root,
+            "hermes-low",
+            &profile,
+            b"thread input",
+            &gateway(),
+        )
+        .unwrap(),
+        b"thread input",
+    )
+    .unwrap();
+    let output = plan.command().output().unwrap();
+    assert!(
+        output.status.success(),
+        "sandbox fixture failed: status={:?} stderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(root.join("sandbox-ok").is_file());
+    assert!(!outside_write.exists());
+
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\n(printf escaped > '{}') &\nwait\n",
+            fork_write.display()
+        ),
+    )
+    .unwrap();
+    let fork_output = plan.command().output().unwrap();
+    assert!(!fork_output.status.success());
+    assert!(!fork_write.exists());
+}
+
+#[test]
+fn shallow_hermes_launcher_cannot_expand_read_access_to_the_user_home() {
+    let home = Path::new("/Users/fixture");
+    assert_eq!(
+        sandbox_install_root(Path::new("/Users/fixture/.local/bin/hermes"), home),
+        Err(RecapRunFailure::UnsupportedContainment)
+    );
+    assert_eq!(
+        sandbox_install_root(
+            Path::new("/Users/fixture/.hermes/hermes-agent/venv/bin/hermes"),
+            home
+        ),
+        Ok(PathBuf::from("/Users/fixture/.hermes/hermes-agent"))
     );
 }
 
@@ -255,6 +360,7 @@ fn hermes_profile_copy_rejects_symlinked_entries() {
         "hermes-low",
         &profile,
         b"input",
+        &gateway(),
     )
     .unwrap_err();
     assert_eq!(error, RecapRunFailure::ProfileUnavailable);
@@ -277,8 +383,15 @@ fn hermes_plan_rechecks_profile_content_and_directory_identity() {
     let executable = fixture.path().join("hermes");
     std::fs::write(&executable, b"fixture").unwrap();
 
-    let plan =
-        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap();
+    let plan = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap();
     let admission = RecapAdmission {
         runtime_id: "hermes".into(),
         executable: RecapExecutableIdentity {
@@ -325,8 +438,15 @@ fn hermes_plan_requires_supported_process_containment() {
     let executable = fixture.path().join("hermes");
     std::fs::write(&executable, b"fixture").unwrap();
 
-    let error =
-        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap_err();
+    let error = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap_err();
     assert_eq!(error, RecapRunFailure::UnsupportedContainment);
 }
 
@@ -381,6 +501,7 @@ fn equal_profile_names_in_other_scopes_do_not_match_the_captured_profile() {
         "hermes-low",
         &profile_a,
         b"thread input",
+        &gateway(),
     )
     .unwrap();
     let plan_b = hermes_recap_plan(
@@ -389,6 +510,7 @@ fn equal_profile_names_in_other_scopes_do_not_match_the_captured_profile() {
         "hermes-low",
         &profile_b,
         b"thread input",
+        &gateway(),
     )
     .unwrap();
     assert_ne!(plan_a.profile_identity, plan_b.profile_identity);

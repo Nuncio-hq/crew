@@ -24,6 +24,7 @@ use super::recap_capability::{
     admit_runtime_ready, same_executable_proof, verify_executable, RecapAdmission, RecapFailure,
     RecapRuntimeContract, RecapRuntimeReadyProof, RecapSelection, RecapSelectionContract,
 };
+use super::recap_hermes_gateway::{HermesGatewayFailure, HermesOneShotGateway};
 use super::recap_ownership::VerifiedStagingOwnership;
 use super::recap_state::{recover_recap_runs, OwnedRecapRun, RecapStateFailure};
 use super::{
@@ -111,6 +112,7 @@ pub(crate) enum RecapServiceFailure {
     State(RecapStateFailure),
     Runner(BoundedFailure),
     Adapter(RecapRunFailure),
+    Gateway(HermesGatewayFailure),
     PlanMismatch,
     Cleanup(RecapStateFailure),
 }
@@ -352,6 +354,25 @@ fn error_code(error: RecapServiceFailure) -> &'static str {
         RecapServiceFailure::Adapter(RecapRunFailure::UnsupportedContainment) => {
             "unsupported_containment"
         }
+        RecapServiceFailure::Gateway(HermesGatewayFailure::CredentialUnavailable) => {
+            "auth_required"
+        }
+        RecapServiceFailure::Gateway(HermesGatewayFailure::InvalidCredential) => {
+            "invalid_auth_binding"
+        }
+        RecapServiceFailure::Gateway(HermesGatewayFailure::Bind) => "gateway_bind",
+        RecapServiceFailure::Gateway(HermesGatewayFailure::InvalidRequest) => {
+            "gateway_invalid_request"
+        }
+        RecapServiceFailure::Gateway(HermesGatewayFailure::Upstream) => "gateway_upstream",
+        RecapServiceFailure::Gateway(HermesGatewayFailure::ResponseLimit) => "output_limit",
+        RecapServiceFailure::Gateway(HermesGatewayFailure::EffectiveModelMismatch) => {
+            "model_mismatch"
+        }
+        RecapServiceFailure::Gateway(HermesGatewayFailure::ToolResponse) => {
+            "unsupported_tool_isolation"
+        }
+        RecapServiceFailure::Gateway(HermesGatewayFailure::Incomplete) => "gateway_incomplete",
         RecapServiceFailure::PlanMismatch => "plan_mismatch",
         RecapServiceFailure::Cleanup(_) => "cleanup_required",
     }
@@ -514,6 +535,7 @@ pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
     let run = OwnedRecapRun::create(&scope.recap_base, now_seconds())
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
     let input = request.input.into_bytes();
+    let mut hermes_gateway = None;
     let plan = match match contract.selection {
         RecapSelectionContract::ExplicitModel => claude_recap_plan(
             &admission.executable.resolved_path,
@@ -529,14 +551,31 @@ pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
                 )
                 .map_err(|error| error_code(error).to_string());
             };
-            hermes_recap_plan(
+            let auth = proof.auth_binding_for_service();
+            let gateway = match HermesOneShotGateway::start(
+                &auth.service,
+                &auth.reference,
+                &admission.selection.model,
+            ) {
+                Ok(gateway) => gateway,
+                Err(error) => {
+                    return abort_before_start(run, RecapServiceFailure::Gateway(error))
+                        .map_err(|error| error_code(error).to_string())
+                }
+            };
+            let plan = hermes_recap_plan(
                 &admission.executable.resolved_path,
                 run.path(),
                 &admission.selection.model,
                 profile,
                 &input,
+                gateway.connection(),
             )
-            .and_then(|plan| bind_hermes_prompt(plan, &input))
+            .and_then(|plan| bind_hermes_prompt(plan, &input));
+            if plan.is_ok() {
+                hermes_gateway = Some(gateway);
+            }
+            plan
         }
     } {
         Ok(plan) => plan,
@@ -579,7 +618,7 @@ pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
         drop(identity_guard);
         drop(launch_workspace_guard.take());
     };
-    execute_admitted_recap_with_release(
+    let execution = execute_admitted_recap_with_release(
         admission,
         run,
         plan,
@@ -587,8 +626,16 @@ pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
         RECAP_TIMEOUT,
         cancelled.as_ref(),
         release_launch_lease,
-    )
-    .map_err(|error| error_code(error).to_string())
+    );
+    match (execution, hermes_gateway) {
+        (Ok(output), Some(gateway)) => {
+            gateway
+                .finish()
+                .map_err(|error| error_code(RecapServiceFailure::Gateway(error)).to_string())?;
+            Ok(output)
+        }
+        (result, _) => result.map_err(|error| error_code(error).to_string()),
+    }
 }
 
 #[cfg(test)]
