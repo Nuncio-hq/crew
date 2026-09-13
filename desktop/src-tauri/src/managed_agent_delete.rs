@@ -836,6 +836,9 @@ async fn enqueue_tombstone_for_scope<R: tauri::Runtime>(
         return Err(crate::app_state::owner_scope::OWNER_SCOPE_STALE.into());
     }
     let base_dir = managed_agents_base_dir(app)?;
+    // Recovery may precede retention hydration on a fresh installation.
+    std::fs::create_dir_all(base_dir.join("retention"))
+        .map_err(|error| format!("failed to create retention scope directory: {error}"))?;
     let db_path = crate::managed_agents::retention::scoped_retention_db_path(
         &base_dir,
         // Retention files are keyed by the normalized WebSocket relay URL,

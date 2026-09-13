@@ -9,6 +9,7 @@ use crate::managed_agents::ManagedAgentRuntimeReceipt;
 use tauri::AppHandle;
 
 const MAX_RUNTIME_RECEIPT_BYTES: u64 = 16 * 1024;
+const MAX_RUNTIME_RECEIPT_ENTRIES: usize = 4096;
 
 use super::{
     append_log_marker, current_instance_id, now_iso, process_belongs_to_us,
@@ -317,7 +318,15 @@ fn read_agent_runtime_receipts_for_pubkey<R: tauri::Runtime>(
         Err(_) => return Err("managed-agent runtime receipts are unavailable".into()),
     };
     let mut paths = Vec::new();
-    for entry in entries {
+    for (index, entry) in entries.enumerate() {
+        // Count every directory entry, including unrelated extensions, before
+        // filtering. An incomplete scan must not authorize any termination.
+        if index >= MAX_RUNTIME_RECEIPT_ENTRIES {
+            return Err(
+                "managed-agent runtime receipt scan exceeded its entry limit; deletion remains pending"
+                    .into(),
+            );
+        }
         let entry = entry.map_err(|_| "managed-agent runtime receipts are unavailable")?;
         let path = entry.path();
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {

@@ -335,6 +335,9 @@ async fn finalize_persona_delete<R: tauri::Runtime>(
     }
 
     let base_dir = managed_agents_base_dir(app)?;
+    // Recovery may precede retention hydration on a fresh installation.
+    std::fs::create_dir_all(base_dir.join("retention"))
+        .map_err(|error| format!("failed to create retention scope directory: {error}"))?;
     let db_path = crate::managed_agents::retention::scoped_retention_db_path(
         &base_dir,
         &captured.relay_url,
