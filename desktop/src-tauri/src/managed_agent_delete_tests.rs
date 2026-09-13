@@ -255,7 +255,7 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
     managed_agents::save_managed_agents(app.handle(), std::slice::from_ref(&record))
         .expect("persist direct-delete record");
 
-    let mut child = OwnedReceiptChild::spawn(&identifier);
+    let child = OwnedReceiptChild::spawn(&identifier);
     let receipt_key = ManagedAgentRuntimeKey::new(pubkey.clone(), &record.relay_url)
         .expect("fixture runtime key");
     let receipt = ManagedAgentRuntimeReceipt {
@@ -422,13 +422,16 @@ fn production_live_receipt_failure_persists_failed_delete_and_fresh_restart_reco
                 .all(|(_, receipt)| receipt.key.pubkey != pubkey),
             "fresh recovery must retire the consumed runtime receipt"
         );
-        assert!(
-            std::fs::symlink_metadata(&receipt_path).is_err(),
-            "fresh recovery must remove the receipt path"
+        assert_eq!(
+            std::fs::symlink_metadata(&receipt_path)
+                .expect_err("fresh recovery must remove the receipt path")
+                .kind(),
+            std::io::ErrorKind::NotFound
         );
-        assert!(
-            receipt_target.exists(),
-            "receipt cleanup must not follow the failed symlink target"
+        assert_eq!(
+            std::fs::read(&receipt_target).expect("failed symlink target must remain readable"),
+            receipt_bytes,
+            "receipt cleanup must not change the failed symlink target"
         );
     });
 }
