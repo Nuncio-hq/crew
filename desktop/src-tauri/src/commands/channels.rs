@@ -19,6 +19,8 @@ use crate::{
 // lives in the `fetch` submodule to keep this file under the per-file line cap.
 mod fetch;
 use fetch::{compute_channels_hash, fetch_channels, DirectoryScope};
+mod membership;
+pub(crate) use membership::channel_membership_snapshot;
 
 const STARTER_CHANNEL_NAMESPACE: uuid::Uuid = uuid::uuid!("3ce33bea-8f09-5f1b-9c85-8a7d2659e6b0");
 
@@ -162,15 +164,7 @@ pub async fn get_channel_members(
     )
     .await?;
 
-    let event = events
-        .first()
-        .ok_or_else(|| "channel members not found".to_string())?;
-    if event.kind.as_u16() != 39002
-        || !event.pubkey.to_hex().eq_ignore_ascii_case(&relay_pubkey)
-        || event.verify().is_err()
-    {
-        return Err("channel membership snapshot is not relay-signed".into());
-    }
+    let event = channel_membership_snapshot(&events, &relay_pubkey, &channel_id)?;
     let mut response = nostr_convert::channel_members_from_event(event)?;
 
     // Batch-fetch kind:0 profiles to populate display names, capped so the

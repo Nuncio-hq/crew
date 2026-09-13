@@ -425,7 +425,9 @@ pub async fn list_relay_agents(state: State<'_, AppState>) -> Result<Vec<RelayAg
 /// retain eligibility with a non-bot cosmetic role, matching the full
 /// directory path. This helper reads only the owner-signed identity coordinate
 /// and relay membership; it does not hydrate runtime kind:0 or kind:10100
-/// records. Runtime, provider, and key authorization remain separate checks at
+/// records for stopped bots. Selected non-bot members may use the existing
+/// signed legacy or NIP-OA profile identity as a bounded fallback. Runtime,
+/// provider, and key authorization remain separate checks at
 /// their respective execution seams.
 pub async fn revalidate_channel_bot_members(
     requested_pubkeys: &[String],
@@ -474,20 +476,85 @@ pub async fn revalidate_channel_bot_members(
     )
     .await
     .map_err(|error| format!("relay agent channel-membership query failed: {error}"))?;
-    let membership = nostr_convert::member_agent_channel_ids_from_events(
+    let current = crate::commands::channels::channel_membership_snapshot(
         &membership_events,
+        &relay_pubkey,
+        channel_id,
+    )?;
+    let roster = nostr_convert::channel_members_from_event(current)?;
+    if !roster
+        .members
+        .iter()
+        .any(|member| member.pubkey.eq_ignore_ascii_case(&viewer_pubkey))
+    {
+        return Err("viewer is no longer a current channel member".into());
+    }
+    let members: std::collections::HashSet<_> = roster
+        .members
+        .iter()
+        .filter_map(|member| nostr::PublicKey::from_hex(&member.pubkey).ok())
+        .map(|key| key.to_hex())
+        .collect();
+    let membership = nostr_convert::member_agent_channel_ids_from_events(
+        std::slice::from_ref(current),
         &relay_pubkey,
         &known_agent_pubkeys,
     );
-
-    Ok(requested
-        .into_iter()
-        .filter(|pubkey| {
-            membership
-                .get(pubkey)
-                .is_some_and(|channels| channels.iter().any(|id| id == channel_id))
-        })
-        .collect())
+    let mut accepted: std::collections::HashSet<_> = requested
+        .iter()
+        .filter(|pubkey| membership.contains_key(*pubkey))
+        .cloned()
+        .collect();
+    let missing: std::collections::HashSet<_> = requested
+        .difference(&accepted)
+        .filter(|pubkey| members.contains(*pubkey))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        // Cosmetic non-bot roles also exist on legacy and other-owner agents.
+        // Only those selected members need identity enrichment; a stopped bot
+        // never waits for the global runtime directory to hydrate.
+        let identities = query_all_relay_pages(
+            state,
+            serde_json::json!({"kinds": [0, 10100], "authors": missing}),
+        )
+        .await
+        .map_err(|error| format!("selected agent identity query failed: {error}"))?;
+        let mut latest = std::collections::HashMap::<(String, u16), nostr::Event>::new();
+        for event in identities {
+            let pubkey = event.pubkey.to_hex();
+            if !missing.contains(&pubkey)
+                || !matches!(event.kind.as_u16(), 0 | 10100)
+                || event.verify().is_err()
+            {
+                continue;
+            }
+            let key = (pubkey, event.kind.as_u16());
+            if latest.get(&key).is_none_or(|previous| {
+                event.created_at > previous.created_at
+                    || (event.created_at == previous.created_at && event.id < previous.id)
+            }) {
+                latest.insert(key, event);
+            }
+        }
+        let identities: Vec<_> = latest.into_values().collect();
+        accepted.extend(
+            identities
+                .iter()
+                .filter(|event| nostr_convert::profile_has_valid_oa_owner(event))
+                .map(|event| event.pubkey.to_hex()),
+        );
+        let legacy: Vec<_> = identities
+            .into_iter()
+            .filter(|event| event.kind.as_u16() == 10100)
+            .collect();
+        accepted.extend(
+            nostr_convert::relay_agents_from_directory_events(&legacy, &[], &[])
+                .into_iter()
+                .map(|agent| agent.pubkey),
+        );
+    }
+    Ok(accepted)
 }
 
 /// Revalidate only the selected relay agents in the target channel.

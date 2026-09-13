@@ -122,7 +122,7 @@ impl NativeBackend {
                 crate::commands::revalidate_channel_bot_members(
                     &requested,
                     &payload.channel_id,
-                    self.app.state::<AppState>(),
+                    &self.app.state::<AppState>(),
                 ),
             )
             .await
