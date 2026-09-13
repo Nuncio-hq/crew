@@ -119,19 +119,15 @@ impl NativeBackend {
         if !requested.is_empty() {
             let agents = tokio::time::timeout(
                 Duration::from_secs(10),
-                crate::commands::revalidate_relay_agents(
-                    requested.clone(),
-                    Some(payload.channel_id.clone()),
+                crate::commands::revalidate_channel_bot_members(
+                    &requested,
+                    &payload.channel_id,
                     self.app.state::<AppState>(),
                 ),
             )
             .await
             .map_err(|_| "agent validation timed out")??;
-            let known: BTreeSet<_> = agents
-                .into_iter()
-                .filter(|agent| agent.channel_ids.contains(&payload.channel_id))
-                .map(|agent| agent.pubkey)
-                .collect();
+            let known: BTreeSet<_> = agents.into_iter().collect();
             if requested.iter().any(|key| !known.contains(key)) {
                 return Err("selected agent is no longer a current channel member".into());
             }

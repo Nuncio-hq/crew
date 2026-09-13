@@ -58,20 +58,16 @@ pub(crate) async fn save(
     backend.check_scope().await?;
     let agents = tokio::time::timeout(
         Duration::from_secs(10),
-        crate::commands::revalidate_relay_agents(
-            requested,
-            Some(channel_id.clone()),
+        crate::commands::revalidate_channel_bot_members(
+            &requested,
+            &channel_id,
             app.state::<AppState>(),
         ),
     )
     .await
     .map_err(|_| "agent validation timed out")??;
     backend.check_scope().await?;
-    let known: BTreeSet<String> = agents
-        .into_iter()
-        .filter(|agent| agent.channel_ids.contains(&channel_id))
-        .map(|agent| agent.pubkey)
-        .collect();
+    let known: BTreeSet<String> = agents.into_iter().collect();
     let prepared = prepare::prepare(
         Input {
             keys: &backend.captured.keys,
