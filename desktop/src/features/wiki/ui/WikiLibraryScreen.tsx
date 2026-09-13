@@ -116,6 +116,7 @@ export function WikiLibraryScreen() {
           eventsQuery.companyQuery.isPending || eventsQuery.scopeQuery.isPending
         }
         door="library"
+        isCompany
         navigationProjectId="company"
         onBack={() => setSelected(null)}
         onRetryCompany={() => void eventsQuery.companyQuery.refetch()}
@@ -183,6 +184,7 @@ export function WikiLibraryScreen() {
         askScope="repo"
         channelId={repo?.channelId ?? null}
         door="library"
+        isCompany={false}
         onBack={() => setSelected(null)}
         onOpenProject={() => {
           if (repo) void goProject(repo.id);
