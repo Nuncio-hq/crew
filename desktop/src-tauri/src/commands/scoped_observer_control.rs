@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use super::owner_operation_transport::{OperationTransportError, OwnerOperationTransport};
 use crate::app_state::owner_scope::{assert_current, capture, OwnerScopeToken};
 
-/// Only exact-turn Stop is admitted by this initial scoped command.
+/// Exact-turn controls admitted through the captured-owner transport.
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum ScopedObserverControl {
@@ -16,6 +16,15 @@ pub(crate) enum ScopedObserverControl {
         conversation_id: uuid::Uuid,
         turn_id: String,
         request_id: uuid::Uuid,
+    },
+    #[serde(rename_all = "camelCase")]
+    SteerTurn {
+        channel_id: uuid::Uuid,
+        conversation_id: uuid::Uuid,
+        session_id: String,
+        turn_id: String,
+        request_id: uuid::Uuid,
+        prompt: String,
     },
 }
 
@@ -76,9 +85,30 @@ async fn prepare_control<R: Runtime>(
     payload: ScopedObserverControl,
     expected_scope: OwnerScopeToken,
 ) -> Result<PreparedControl, String> {
-    let ScopedObserverControl::CancelTurn { ref turn_id, .. } = payload;
+    let (turn_id, steer_session, steer_prompt) = match &payload {
+        ScopedObserverControl::CancelTurn { turn_id, .. } => (turn_id, None, None),
+        ScopedObserverControl::SteerTurn {
+            session_id,
+            turn_id,
+            prompt,
+            ..
+        } => (turn_id, Some(session_id), Some(prompt)),
+    };
     if turn_id.trim().is_empty() || turn_id.len() > 128 {
         return Err("selected turn identity is missing or invalid".into());
+    }
+    if let Some(session_id) = steer_session {
+        if session_id.trim().is_empty() || session_id.len() > 128 {
+            return Err("selected session identity is missing or invalid".into());
+        }
+    }
+    if let Some(prompt) = steer_prompt {
+        if prompt.trim().is_empty() {
+            return Err("steer prompt must not be empty".into());
+        }
+        if prompt.len() > 16 * 1024 {
+            return Err("steer prompt exceeds 16 KiB".into());
+        }
     }
     let agent = PublicKey::from_hex(agent_pubkey.trim())
         .map_err(|error| format!("invalid agent pubkey: {error}"))?;
