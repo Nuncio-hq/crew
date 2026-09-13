@@ -128,7 +128,7 @@ impl OwnedReceiptChild {
         use std::os::unix::process::CommandExt;
         let mut command = std::process::Command::new("/bin/sleep");
         command
-            .arg("5")
+            .arg("30")
             .env("BUZZ_MANAGED_AGENT", instance_id)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
