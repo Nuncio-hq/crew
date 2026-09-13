@@ -335,16 +335,10 @@ pub(crate) fn backup_invalid_store(path: &Path) {
     }
 }
 
-/// Fill in each record's in-memory `private_key_nsec` from the keyring, and
-/// opportunistically re-migrate any key that is still inline.
-///
-/// - Empty key → fetch it from the keyring (the normal keyring-backed case).
-/// - Non-empty key → the JSON carried it inline because the keyring was
-///   unreachable at its last save. Re-migrate it now ([`migrate_inline_key`]):
-///   if the keyring is reachable this boot, write-verify-strip so the next save
-///   writes clean JSON and plaintext stops lingering on disk; if still
-///   unreachable, leave it inline. This makes the strip deterministic on the
-///   next reachable boot rather than waiting for a non-deterministic save.
+/// Fill empty `private_key_nsec` values from the keyring. Re-migrate inline
+/// residue through [`migrate_inline_key`] while retaining the in-memory key.
+/// Saves strip inline keys only after verifying the keyring copy; an outage
+/// leaves them intact so a later boot can retry migration.
 fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
     let Some(store) = agent_secret_store() else {
         return;
@@ -365,12 +359,9 @@ pub(crate) fn hydrate_selected_managed_agent_keys(
 
 /// Testable core of [`hydrate_keys`], generic over the [`KeyStore`] seam.
 ///
-/// A keyring LOAD error (`Err`) is an OUTAGE — distinct from `Ok(None)`
-/// (genuinely absent). On an outage the key is left empty and the record is
-/// surfaced as unavailable rather than silently swallowed: callers must refuse
-/// to spawn an agent whose key could not be read (see the empty-key bail in
-/// `spawn_agent_child`). Empty here never means "fine" — it means "no usable
-/// key this boot."
+/// A LOAD error is an outage, distinct from `Ok(None)` (absent). Both leave the
+/// key empty and report why it is unavailable; `spawn_agent_child` must refuse
+/// that record until it has a usable key.
 fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) {
     for record in records.iter_mut() {
         // A key-less definition (no pubkey yet — unified agent model) has no
