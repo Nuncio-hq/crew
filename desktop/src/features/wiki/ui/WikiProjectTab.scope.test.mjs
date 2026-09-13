@@ -11,6 +11,9 @@ registerHooks({
     if (specifier === "@/features/wiki/ui/WikiSourceFiles") {
       return { shortCircuit: true, url: "crew-wiki-scope-stub:source" };
     }
+    if (specifier === "@/app/navigation/useAppNavigation") {
+      return { shortCircuit: true, url: "crew-wiki-scope-stub:navigation" };
+    }
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
@@ -26,6 +29,14 @@ registerHooks({
         format: "module",
         shortCircuit: true,
         source: "export const WikiSourceFiles = () => null;\n",
+      };
+    }
+    if (url === "crew-wiki-scope-stub:navigation") {
+      return {
+        format: "module",
+        shortCircuit: true,
+        source:
+          "export const useAppNavigation = () => ({ goProject: () => {} });\n",
       };
     }
     return nextLoad(url, context);
@@ -110,6 +121,80 @@ function missingSnapshot() {
   };
 }
 
+const SNAPSHOT_ID = "1".repeat(64);
+const COMMIT = "c".repeat(40);
+
+function event(id, content, tags) {
+  return {
+    id,
+    pubkey: OWNER,
+    kind: 30623,
+    content,
+    created_at: 10,
+    sig: "s".repeat(128),
+    tags,
+  };
+}
+
+function completeSnapshot() {
+  const head = event(
+    "2".repeat(64),
+    JSON.stringify({
+      sections: [
+        {
+          id: "overview",
+          title: "Overview",
+          pages: [{ slug: "intro", title: "Introduction" }],
+        },
+      ],
+    }),
+    [
+      ["d", `${REPO_D}/_toc`],
+      ["a", COORDINATE],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", SNAPSHOT_ID],
+      ["commit", COMMIT],
+      ["branch", "main"],
+    ],
+  );
+  const page = event("3".repeat(64), "Accepted Wiki article body", [
+    ["d", `${REPO_D}/intro`],
+    ["a", COORDINATE],
+    ["wiki-version", "1"],
+    ["wiki-snapshot", SNAPSHOT_ID],
+    ["title", "Introduction"],
+    ["section", "overview"],
+    ["commit", COMMIT],
+    ["language", "en"],
+  ]);
+  const manifest = event(
+    "4".repeat(64),
+    JSON.stringify([
+      1,
+      SNAPSHOT_ID,
+      OWNER,
+      REPO_D,
+      `git:${COMMIT}`,
+      null,
+      [],
+      [],
+    ]),
+    [
+      ["d", `${REPO_D}/manifest`],
+      ["a", COORDINATE],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", SNAPSHOT_ID],
+    ],
+  );
+  return {
+    state: "complete",
+    head,
+    manifest,
+    pages: [page],
+    repoState: null,
+  };
+}
+
 let mode;
 let calls;
 let releaseScope;
@@ -145,7 +230,13 @@ function installBridge() {
         if (mode.snapshot === "error") {
           throw new Error("repository read unavailable");
         }
-        return { token: scope, value: missingSnapshot() };
+        return {
+          token: scope,
+          value:
+            mode.snapshot === "complete"
+              ? completeSnapshot()
+              : missingSnapshot(),
+        };
       }
       if (command === "wiki_publication_list") {
         return { token: scope, value: [] };
@@ -337,6 +428,40 @@ test("Project Wiki keeps an accepted repository read when the company read fails
     await waitFor(() => screen.getByText("Never generated"));
     assert.equal(screen.queryByTestId("wiki-read-loading"), null);
     assert.equal(screen.queryByTestId("wiki-read-unavailable"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Project Wiki keeps accepted article content through company failure, then revokes it on scope loss", async () => {
+  mode.snapshot = "complete";
+  relayClient.fetchEvents = async () => {
+    throw new Error("company Wiki unavailable");
+  };
+  const mounted = mount();
+  try {
+    await waitFor(() => screen.getByText("Accepted Wiki article body"));
+    assert.equal(screen.queryByTestId("wiki-read-loading"), null);
+    assert.equal(screen.queryByTestId("wiki-read-unavailable"), null);
+    assert.notEqual(
+      screen.getByTestId("wiki-freshness").textContent,
+      "Never generated",
+    );
+
+    mode.scope = "error";
+    await act(async () => {
+      await mounted.client.invalidateQueries({
+        queryKey: ["crew-wiki-events", "scope"],
+        exact: true,
+      });
+    });
+    await waitFor(() => screen.getByTestId("wiki-read-unavailable"));
+    assert.equal(screen.queryByText("Accepted Wiki article body"), null);
+    assert.equal(screen.queryByText("Never generated"), null);
+    assert.match(
+      screen.getByTestId("wiki-read-unavailable").textContent ?? "",
+      /owner scope unavailable/,
+    );
   } finally {
     mounted.dispose();
   }
