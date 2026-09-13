@@ -66,9 +66,122 @@ async function openSourceWithKeyboard(page: Page) {
   return sourceButton;
 }
 
+async function openSeededProjectOverview(page: Page) {
+  await openSeededRepoWiki(page);
+  await page.getByRole("button", { name: "Open project" }).click();
+  const overview = page.getByTestId("project-overview");
+  await expect(overview).toBeVisible();
+  return overview;
+}
+
+async function openSeededProjectDetail(page: Page) {
+  const overview = await openSeededProjectOverview(page);
+  await overview
+    .locator("article")
+    .filter({ has: page.getByRole("heading", { name: "buzz", exact: true }) })
+    .getByRole("button", { name: "Open workspace details" })
+    .click();
+  await expect(page.getByTestId("project-wiki-tab")).toBeVisible();
+}
+
+async function assertProjectWikiOwnsScroll(page: Page) {
+  const projectDetailScroll = page.getByTestId("project-detail-scroll");
+  const wikiScroll = page.getByTestId("wiki-page-scroll");
+  const geometry = await page.evaluate(() => {
+    const outer = document.querySelector<HTMLElement>(
+      '[data-testid="project-detail-scroll"]',
+    );
+    const wiki = document.querySelector<HTMLElement>(
+      '[data-testid="wiki-page-scroll"]',
+    );
+    if (!outer || !wiki) {
+      throw new Error("Project Wiki scroll geometry targets are missing");
+    }
+    const outerRect = outer.getBoundingClientRect();
+    const wikiRect = wiki.getBoundingClientRect();
+    return {
+      outerClientHeight: outer.clientHeight,
+      outerScrollHeight: outer.scrollHeight,
+      outerTop: outerRect.top,
+      outerBottom: outerRect.bottom,
+      wikiClientHeight: wiki.clientHeight,
+      wikiScrollHeight: wiki.scrollHeight,
+      wikiTop: wikiRect.top,
+      wikiBottom: wikiRect.bottom,
+    };
+  });
+  expect(geometry.wikiClientHeight).toBeGreaterThan(0);
+  expect(geometry.wikiScrollHeight).toBeGreaterThan(geometry.wikiClientHeight);
+  expect(geometry.wikiTop).toBeGreaterThanOrEqual(geometry.outerTop - 1);
+  expect(geometry.wikiBottom).toBeLessThanOrEqual(geometry.outerBottom + 1);
+  expect(geometry.outerScrollHeight).toBeLessThanOrEqual(
+    geometry.outerClientHeight + 1,
+  );
+
+  await projectDetailScroll.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const targetScroll = Math.min(
+    120,
+    geometry.wikiScrollHeight - geometry.wikiClientHeight,
+  );
+  await wikiScroll.evaluate((element, value) => {
+    element.scrollTop = value;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  }, targetScroll);
+  await expect
+    .poll(() => wikiScroll.evaluate((element) => element.scrollTop))
+    .toBe(targetScroll);
+  await expect
+    .poll(() => projectDetailScroll.evaluate((element) => element.scrollTop))
+    .toBe(0);
+}
+
 test.describe("Wiki corrective navigation (#364)", () => {
   test.describe("1130x1089", () => {
     test.use({ viewport: { width: 1130, height: 1089 } });
+
+    test("opens a direct Wiki tab and keeps the primary reading surface mounted", async ({
+      page,
+    }) => {
+      const overview = await openSeededProjectOverview(page);
+      await overview.getByRole("button", { name: "Open Wiki" }).click();
+      await expect(page).toHaveURL(/tab=wiki/);
+      await expect(page.getByTestId("wiki-project-tab")).toBeVisible();
+      await expect(page.getByTestId("wiki-markdown")).toContainText(
+        "verified snapshot",
+      );
+      await expect(
+        page
+          .getByTestId("project-outcome-page")
+          .getByTestId("project-ship-log"),
+      ).toBeHidden();
+      await assertProjectWikiOwnsScroll(page);
+
+      await page.getByRole("tab", { name: "Overview", exact: true }).click();
+      await expect(
+        page.getByRole("tab", { name: "Overview", exact: true }),
+      ).toHaveAttribute("data-state", "active");
+      await page.getByTestId("project-wiki-tab").click();
+      await expect(page.getByTestId("wiki-project-tab")).toBeVisible();
+      await expect(page.getByTestId("wiki-markdown")).toContainText(
+        "verified snapshot",
+      );
+    });
+
+    test("keeps repository selection usable alongside the Wiki primary surface", async ({
+      page,
+    }) => {
+      await openSeededProjectDetail(page);
+      const picker = page.getByTestId("project-repository-picker");
+      await picker.click();
+      await page.getByTestId("project-repository-relay-tools").click();
+      await expect(picker).toContainText("relay-tools");
+      await page.getByTestId("project-wiki-tab").click();
+      await expect(page.getByTestId("wiki-project-tab")).toBeVisible();
+      await page.getByRole("tab", { name: "Overview", exact: true }).click();
+      await expect(page.getByTestId("project-repository-header")).toBeVisible();
+    });
 
     test("reads, searches, opens exact source, and restores scroll after back", async ({
       page,
@@ -245,6 +358,30 @@ test.describe("Wiki corrective navigation (#364)", () => {
 
   test.describe("800x700", () => {
     test.use({ viewport: { width: 800, height: 700 } });
+
+    test("keeps the compact Wiki tab in the primary reading surface", async ({
+      page,
+    }) => {
+      await openSeededProjectDetail(page);
+      await page.getByTestId("project-wiki-tab").click();
+      await expect(page.getByTestId("wiki-project-tab")).toBeVisible();
+      await expect(page.getByTestId("wiki-markdown")).toContainText(
+        "verified snapshot",
+      );
+      await expect(
+        page
+          .getByTestId("project-outcome-page")
+          .getByTestId("project-ship-log"),
+      ).toBeHidden();
+      await assertProjectWikiOwnsScroll(page);
+
+      await page.getByRole("tab", { name: "Overview", exact: true }).click();
+      await expect(
+        page.getByRole("tab", { name: "Overview", exact: true }),
+      ).toHaveAttribute("data-state", "active");
+      await page.getByTestId("project-wiki-tab").click();
+      await expect(page.getByTestId("wiki-project-tab")).toBeVisible();
+    });
 
     test("keeps the compact reading surface keyboard reachable", async ({
       page,

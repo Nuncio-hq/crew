@@ -550,7 +550,7 @@ export function WikiPageView({
           toc={toc}
         />
       ) : null}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <TopChromeInsetHeader
           className={cn("border-b border-border", door === "project" && "z-20")}
           data-office-surface={OFFICE_SURFACE.headerBar}
