@@ -2201,16 +2201,13 @@ it. This is not an everlasting fence after a later generic deletion. Recovery
 must prove both orderings and that a conflict cannot strand a permanent claim.
 
 **Recovery schema compatibility.** The owner-operations journal reaches schema
-v4 through three atomic, idempotent migrations: v1-to-v2 adds the managed-agent
-deletion claim, v2-to-v3 adds the Wiki successor relation, and v3-to-v4
-rebuilds the managed-agent claim indexes so a coordinator and its first child
-can share the child's resource key while direct claims remain exclusive. All
-three preserve every existing scoped payload, revision and unresolved claim.
-Older binaries refuse v4 rather than ignoring its retention pins or
-managed-delete invariant. Reverting only the binary is therefore not a safe
-rollback after migration. Stop publication, preserve the complete v4 journal
-and any SQLite sidecar, and recover with a verified v4-capable build or forward
-fix. Restoring a stale v1
+v3 through two atomic, idempotent migrations: v1-to-v2 adds the managed-agent
+deletion claim, and v2-to-v3 adds the Wiki successor relation. Both preserve
+every existing scoped payload, revision and unresolved claim. Older binaries
+refuse v3 rather than ignoring its retention pins or managed-delete invariant.
+Reverting only the binary is therefore not a safe rollback after migration.
+Stop publication, preserve the complete v3 journal and any SQLite sidecar, and
+recover with a verified v3-capable build or forward fix. Restoring a stale v1
 backup that discards later operations is not permitted. A downgrade requires a
 separate verified conversion; none is part of this change. Migration failure,
 older-reader refusal and executable forward recovery remain release acceptance
@@ -2294,3 +2291,27 @@ or another origin. This is origin-scoped discovery under the configured
 transport's existing trust model, not additional cryptographic authentication
 or a new key-pinning interface. Other relay-self consumers keep their existing
 behavior.
+
+
+## D-079 clarification — Persona cascades and journal schema v4
+
+- **Status:** Accepted implementation clarification for #353; installed recovery acceptance remains open.
+- **Date:** 2026-09-13
+- **Supersedes:** The schema-v3 compatibility paragraph in D-079, for new builds using schema v4.
+
+The existing persona-card Delete operation coordinates its linked managed
+instances through the same durable deletion lifecycle as direct instance
+Delete. A parent operation records the complete bounded target set; each
+child is bound to that parent and its exact agent key. Failed child stops or
+cleanup retain retryable state and prevent removal of the persona definition.
+No new agent registry or relay event kind is introduced.
+
+The owner-operations journal adds an atomic, idempotent v3-to-v4 migration
+that rebuilds managed-agent claim indexes. A coordinator and its first child
+may share the child's resource key; unrelated direct claims remain exclusive.
+Existing scoped payloads, revisions, Wiki successor relations, and unresolved
+claims are preserved. Older binaries refuse v4. Binary rollback alone is
+unsupported: preserve the entire v4 journal and SQLite sidecars, then use a
+verified compatible build or forward fix. Do not restore an older snapshot
+over later operations. The [recovery runbook](TESTING.md#wiki-journal-v4-recovery)
+owns the current procedure and its installed acceptance gates.

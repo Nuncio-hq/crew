@@ -407,6 +407,19 @@ deployed-remote guard and the existing Bestie assignment journal remain active.
 The identity tombstone/archive is retained for historical display and active
 pickers; it does not replace relay-authoritative channel cleanup.
 
+Persona-card Delete reaches the existing `delete_persona` command. Its durable
+parent captures the complete bounded target set before removing any instance;
+each linked child uses the same instance deletion coordinator and cleanup
+obligations. The persona definition is removed only after its children settle.
+Failed stops, key cleanup, or tombstones retain parent/child progress for a
+fresh process to retry. Restart recovery validates persisted process receipts
+before stopping an untracked child; unsafe target receipts keep deletion
+pending. Nested coordinator futures are boxed to avoid exhausting a worker's
+stack. Direct instance deletion retains its persona definition; persona-card
+deletion explicitly removes that definition. Both retain message history,
+runtime installations, worktrees, and role definitions. Hermes profile archival
+remains a separate explicit choice in the existing confirmation.
+
 The Agents directory reuses the existing persona and managed-instance queries. Each query failure exposes its own Retry action, retaining any cached cards while the failed query recovers. Instance Delete confirmation names the agent and is keyed by its public key: replacing the selected instance dismisses the confirmation, including same-name replacements. Renaming the same identity preserves its target. Cancel performs no removal. Relay-only rows use the existing policy-filtered relay query, exclude local instance keys and archived identities, and open the exact public-key profile without local management controls. Unknown local inventory blocks relay-only classification and offers Retry. Directory/profile Start and Restart, and profile Message, capture the community and signer for existing native scope assertions; component lifetime and target checks discard stale completions. Message pending state belongs to its captured scope, so changing scope permits a new operation and a retired completion cannot clear its pending state. These directory controls do not establish successful native process termination or canvas cleanup; those require separate runtime evidence.
 
 Agent plans should reuse `declaredPlanSnapshot.ts` and `declaredPlanProjection.ts`, including ACP `sessionUpdate:plan`, structured todo fallbacks, complete snapshot replacement, explicit empty clears and retired-session filtering. Partition by agent pubkey and conversation; preserve owner-only observer access and last-known/disconnected/unknown states. Do not infer plan completion from process liveness or merge multiple agents' plans into a new authoritative task store. Runtime-matrix unit fixtures prove parser behavior, not live adapter emission. The new tab currently uses authored snapshots only.
