@@ -85,16 +85,18 @@ async function openEditor(page: Page) {
           crew_parse_error: null,
         };
       }
-      if (cmd === "list_relay_agents")
-        return [one, two].map((pubkey, i) => ({
-          pubkey,
-          name: i ? "Morgan" : "Alex",
-          agent_type: "codex",
-          channel_ids: ["9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50"],
-          channels: ["general"],
-          capabilities: [],
-          status: "online",
-        }));
+      // Stopped channel agents remain selectable without a runtime projection.
+      if (cmd === "list_relay_agents") return [];
+      if (cmd === "get_channel_members")
+        return {
+          channel_id: "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+          members: [one, two].map((pubkey, i) => ({
+            pubkey,
+            display_name: i ? "Morgan" : "Alex",
+            role: "bot",
+            is_agent: true,
+          })),
+        };
       if (cmd === "list_channel_crew_operations") return { token, value: [] };
       if (cmd === "save_channel_crew_config") {
         win.roleFixture.saved.push(args);

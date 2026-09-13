@@ -43,9 +43,10 @@ Crew Dark, text-only zoom, the 1000-line ratchet, and composer-revision mention
 flow are shipped. Agent membership is unknown unless runtime nonce, transport,
 and community scope match.
 Project Wiki Read, bounded full-body Search, and revision-bound Source view are
-shipped in [#397](https://github.com/Nuncio-hq/crew/pull/397). Native generation/
-publication, Ask/History, and installed staging acceptance remain separate
-gates (#362/#363/#364/#366/#367); completing the staging environment (#348)
+shipped in [#397](https://github.com/Nuncio-hq/crew/pull/397). Coherent publication
+and recovery (#362) now have native staging evidence. Generation, Source,
+Ask/History, and installed release acceptance remain separate
+gates (#363/#364/#366/#367/#357); completing the staging environment (#348)
 does not complete those feature acceptance checks.
 The reader remembers page and scroll position only within the captured
 owner/community, Project, repository, and door. Source controls require a

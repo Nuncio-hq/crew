@@ -337,7 +337,12 @@ recovery. This integration contract does not prove the full deletion workflow.
 The #350 Manage roles dialog is reached through the existing channel Canvas
 section. It loads current canvas and member data between native scope captures,
 keeps role/contact edits in temporary form state, and fences queued results on
-scope changes. It retains the draft on conflict or partial delivery, exposes
+scope changes. Role candidates come from the relay-signed channel roster, so
+stopped bot members do not depend on runtime directory hydration. Submit checks
+the exact current channel and viewer membership again. Selected non-bot members
+also require a verified managed identity, signed legacy agent record, or NIP-OA
+profile; runtime and provider permissions are checked separately at execution.
+It retains the draft on conflict or partial delivery, exposes
 read-only status checks and explicit manual retry, and requires explicit draft
 replacement after reviewing a newer canvas. Replacing a superseded draft first
 removes that exact reconciled journal row through the owner-operation revision
@@ -525,7 +530,15 @@ citations both open a dismissible verified-source pane; the pane hides the
 table of contents, returns focus to its activating control, and is scoped to
 the exact owner, repository, path, and line range recorded on the page.
 Native reads still require the selected root and live snapshot checks, and real
-cross-client acceptance remains a separate gate. #365
+cross-client acceptance remains a separate gate. Repository announcements bind
+their identity through signed kind 30617, author, and `d`; they need no self-`a`
+tag. Wiki heads and manifests still require their exact repository `a` tag.
+On macOS, an exact repository
+read passes the retained root descriptor to the trusted `buzz-dev-mcp` /
+`crew-wiki` multicall helper over stdin; the helper validates the directory,
+changes directory by descriptor, and execs only the bounded read allowlist.
+Missing helper support leaves folder reads available while Git revision reads
+are unavailable. Linux retains its descriptor-bound `/dev/fd` path. #365
 proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
 and ACL-safe origin links. These are gates, not source-handoff implementations.

@@ -1,6 +1,6 @@
 use super::{unavailable, VerifiedSourceFile};
 use crate::source_folder_walk::{stamp, Root, MAX_DEPTH, MAX_PATH_BYTES};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::source_git_tree::{source_blob, GitReader};
 use crate::source_snapshot::{
     source_hash, valid_source_path, SourceReference, MAX_SOURCE_FILE_BYTES,
@@ -10,7 +10,8 @@ use rustix::fs::{openat, statat, AtFlags, FileType, Mode, OFlags};
 use std::io::Read;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-#[cfg(target_os = "linux")]
+use std::path::Path;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,8 +21,11 @@ pub(super) fn read(
     revision: &str,
     reference: &SourceReference,
     deadline: Instant,
+    helper: Option<&Path>,
 ) -> Result<VerifiedSourceFile, WikiError> {
     let (path, digest, size, start, end) = reference;
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = helper;
     if Instant::now() >= deadline
         || !valid_source_path(path)
         || path.len() > MAX_PATH_BYTES
@@ -32,16 +36,24 @@ pub(super) fn read(
     }
     root.verify_binding()?;
     let bytes = if let Some(commit) = revision.strip_prefix("git:") {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = commit;
             return Err(unavailable());
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let cwd_fd = rustix::io::dup(&*root.directory).map_err(|_| unavailable())?;
+            #[cfg(target_os = "linux")]
             let cwd = PathBuf::from(format!("/dev/fd/{}", cwd_fd.as_raw_fd()));
-            let mut reader = GitReader::with_directory_fd(&cwd, cwd_fd, deadline)?;
+            #[cfg(target_os = "macos")]
+            let cwd = PathBuf::from("/");
+            let mut reader = GitReader::with_directory_fd(
+                &cwd,
+                cwd_fd,
+                deadline,
+                helper.map(std::path::Path::to_path_buf),
+            )?;
             if reader.text(&["rev-parse", "--is-inside-work-tree"], 128)? != "true"
                 || !reader
                     .text(&["rev-parse", "--show-prefix"], MAX_PATH_BYTES)?
@@ -163,9 +175,13 @@ mod tests {
         // The replacement is deliberately not a repository. A path reopen fails this control.
         let cwd_fd = rustix::io::dup(&*root.directory).unwrap();
         let cwd = PathBuf::from(format!("/dev/fd/{}", cwd_fd.as_raw_fd()));
-        let mut reader =
-            GitReader::with_directory_fd(&cwd, cwd_fd, Instant::now() + Duration::from_secs(30))
-                .unwrap();
+        let mut reader = GitReader::with_directory_fd(
+            &cwd,
+            cwd_fd,
+            Instant::now() + Duration::from_secs(30),
+            None,
+        )
+        .unwrap();
         assert_eq!(
             reader
                 .text(&["rev-parse", "--is-inside-work-tree"], 128)
@@ -175,6 +191,82 @@ mod tests {
         assert!(
             root.verify_binding().is_err(),
             "public reads still reject the moved grant"
+        );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "crew-source-selected-macos-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "fixture Git failed: {output:?}");
+    }
+
+    #[test]
+    fn production_git_runner_uses_the_retained_fd_after_path_replacement() {
+        let fixture = Fixture::new();
+        let selected = fixture.0.join("selected");
+        std::fs::create_dir(&selected).unwrap();
+        git(&selected, &["init", "--quiet"]);
+        let root = Root::open(&selected).unwrap();
+        let cwd_fd = rustix::io::dup(&*root.directory).unwrap();
+        let helper = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join("crew-wiki");
+        assert!(helper.is_file(), "crew-wiki helper binary must be built");
+        std::fs::rename(&selected, fixture.0.join("original")).unwrap();
+        std::fs::create_dir(&selected).unwrap();
+        let mut reader = GitReader::with_directory_fd(
+            Path::new("/"),
+            cwd_fd,
+            std::time::Instant::now() + Duration::from_secs(30),
+            Some(helper),
+        )
+        .unwrap();
+        assert_eq!(
+            reader
+                .text(&["rev-parse", "--is-inside-work-tree"], 128)
+                .unwrap(),
+            "true"
+        );
+        assert!(
+            root.verify_binding().is_err(),
+            "moved native root is rejected"
         );
     }
 }

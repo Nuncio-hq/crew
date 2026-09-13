@@ -118,6 +118,17 @@ run_unit_tests() {
   run_test_step "buzz-backend-kubernetes tests" \
     cargo test -p buzz-backend-kubernetes -- --nocapture
 
+  # Supply the actual MCP executable for cancellation coverage and mirror the
+  # macOS Source dispatcher checks in just test-unit.
+  run_test_step "buzz-dev-mcp cancellation fixture" \
+    cargo build -p buzz-dev-mcp
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    run_test_step "macOS Wiki Source dispatcher tests" \
+      cargo test -p buzz-dev-mcp --test crew_wiki_source_dispatch -- --nocapture
+  fi
+  run_test_step "buzz-agent MCP cancellation regression" \
+    cargo test -p buzz-agent --test regressions cancel_kills_inflight_tool_via_mcp_notification -- --exact --nocapture
+
   # buzz-agent model-capabilities corpus: the Rust half of the cross-language
   # drift guard. model_capabilities.rs embeds scripts/model-capabilities.json +
   # scripts/normative-corpus.json via include_str! and replays the full locked

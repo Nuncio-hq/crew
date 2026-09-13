@@ -22,6 +22,8 @@ pub(crate) struct GitReader<'a> {
     blob_reads: usize,
     #[cfg(unix)]
     cwd_fd: Option<OwnedFd>,
+    #[cfg(unix)]
+    helper: Option<std::path::PathBuf>,
 }
 impl<'a> GitReader<'a> {
     pub(crate) fn new(root: &'a Path) -> Self {
@@ -35,23 +37,30 @@ impl<'a> GitReader<'a> {
             blob_reads: 0,
             #[cfg(unix)]
             cwd_fd: None,
+            #[cfg(unix)]
+            helper: None,
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn with_directory_fd(
         root: &'a Path,
         cwd_fd: OwnedFd,
         deadline: Instant,
+        helper: Option<std::path::PathBuf>,
     ) -> Result<Self, WikiError> {
-        use rustix::io::{fcntl_setfd, FdFlags};
-        fcntl_setfd(&cwd_fd, FdFlags::empty()).map_err(|_| invalid())?;
+        #[cfg(target_os = "linux")]
+        {
+            use rustix::io::{fcntl_setfd, FdFlags};
+            fcntl_setfd(&cwd_fd, FdFlags::empty()).map_err(|_| invalid())?;
+        }
         Ok(Self {
             root,
             deadline,
             commands: 0,
             blob_reads: 0,
             cwd_fd: Some(cwd_fd),
+            helper,
         })
     }
     pub(crate) fn run(&mut self, args: &[&str], limit: usize) -> Result<GitOutput, WikiError> {
@@ -66,6 +75,7 @@ impl<'a> GitReader<'a> {
                 args,
                 limit,
                 self.deadline,
+                self.helper.as_deref(),
             );
         }
         source_git_command::run(self.root, args, limit, self.deadline)
@@ -103,7 +113,7 @@ pub(crate) struct TreeEntry {
 }
 
 /// Resolve only the authenticated path through verified raw objects.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn source_blob(
     reader: &mut GitReader<'_>,
     commit: &str,

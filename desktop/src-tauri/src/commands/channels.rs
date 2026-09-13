@@ -19,6 +19,8 @@ use crate::{
 // lives in the `fetch` submodule to keep this file under the per-file line cap.
 mod fetch;
 use fetch::{compute_channels_hash, fetch_channels, DirectoryScope};
+mod membership;
+pub(crate) use membership::channel_membership_snapshot;
 
 const STARTER_CHANNEL_NAMESPACE: uuid::Uuid = uuid::uuid!("3ce33bea-8f09-5f1b-9c85-8a7d2659e6b0");
 
@@ -148,21 +150,22 @@ pub async fn get_channel_members(
     channel_id: String,
     state: State<'_, AppState>,
 ) -> Result<ChannelMembersResponse, String> {
+    let relay_pubkey = crate::commands::fetch_relay_self(&state)
+        .await?
+        .ok_or_else(|| "channel membership authority is unavailable".to_string())?;
     let events = query_relay(
         &state,
         &[serde_json::json!({
             "kinds": [39002],
+            "authors": [&relay_pubkey],
             "#d": [channel_id],
             "limit": 1
         })],
     )
     .await?;
 
-    let mut response = events
-        .first()
-        .map(nostr_convert::channel_members_from_event)
-        .transpose()?
-        .ok_or_else(|| "channel members not found".to_string())?;
+    let event = channel_membership_snapshot(&events, &relay_pubkey, &channel_id)?;
+    let mut response = nostr_convert::channel_members_from_event(event)?;
 
     // Batch-fetch kind:0 profiles to populate display names, capped so the
     // query cost is bounded on large rosters (see MEMBER_PROFILE_JOIN_LIMIT).

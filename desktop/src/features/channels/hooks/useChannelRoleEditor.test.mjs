@@ -31,6 +31,7 @@ async function mount({
   pendingEntries = null,
   store: suppliedStore = null,
   initialReadDeferred = false,
+  channelMembers = [],
 } = {}) {
   const { act, renderHook } = await import("@testing-library/react");
   const { useChannelRoleEditor } = await import("./useChannelRoleEditor.ts");
@@ -101,6 +102,8 @@ async function mount({
           crew_parse_error: null,
         };
       }
+      if (command === "get_channel_members")
+        return { members: channelMembers, next_cursor: null };
       if (command === "list_relay_agents") return [];
       if (command === "list_channel_crew_operations")
         return {
@@ -161,6 +164,56 @@ async function mount({
     reply: (outcome) => ({ token, value: { ...progress, outcome } }),
   };
 }
+
+test("role loading keeps signed bot roster when the global directory is empty", async () => {
+  const agent = "b".repeat(64);
+  const unnamed = "c".repeat(64);
+  const known = "e".repeat(64);
+  const h = await mount({
+    pending: false,
+    channelMembers: [
+      {
+        pubkey: agent,
+        role: "bot",
+        is_agent: true,
+        joined_at: "2026-09-13T00:00:00Z",
+        display_name: "Fizz",
+      },
+      {
+        pubkey: unnamed,
+        role: "bot",
+        is_agent: true,
+        joined_at: "2026-09-13T00:00:00Z",
+        display_name: null,
+      },
+      {
+        pubkey: known,
+        role: "member",
+        is_agent: true,
+        joined_at: "2026-09-13T00:00:00Z",
+        display_name: "Known Agent",
+      },
+      {
+        pubkey: "d".repeat(64),
+        role: "member",
+        is_agent: false,
+        joined_at: "2026-09-13T00:00:00Z",
+        display_name: "Human member",
+      },
+    ],
+  });
+  try {
+    assert.deepEqual(h.result.current.snapshot.members, [
+      { pubkey: agent, name: "Fizz" },
+      { pubkey: unnamed, name: "cccccccc…cccc" },
+      { pubkey: known, name: "Known Agent" },
+    ]);
+    assert.ok(h.calls.includes("get_channel_members"));
+    assert.equal(h.calls.includes("list_relay_agents"), false);
+  } finally {
+    h.unmount();
+  }
+});
 
 test("initial loading is fenced when the dialog is dismissed before reads settle", async () => {
   const h = await mount({ pending: false, initialReadDeferred: true });

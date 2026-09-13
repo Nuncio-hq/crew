@@ -195,6 +195,310 @@ async fn remote_owned_discovery_and_membership_do_not_require_local_records() {
 }
 
 #[tokio::test]
+async fn stopped_bot_membership_is_eligible_without_directory_projection() {
+    let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
+    crate::relay_admission::reset_rate_limit_gate();
+    let relay = Keys::generate();
+    let viewer = Keys::generate();
+    let bot = Keys::generate();
+    let viewer_owned = Keys::generate();
+    let legacy = Keys::generate();
+    let other_owner = Keys::generate();
+    let oa_agent = Keys::generate();
+    let forged = Keys::generate();
+    let unsigned = Keys::generate();
+    let relay_key = relay.public_key().to_hex();
+    let viewer_key = viewer.public_key().to_hex();
+    let bot_key = bot.public_key().to_hex();
+    let viewer_owned_key = viewer_owned.public_key().to_hex();
+    let legacy_key = legacy.public_key().to_hex();
+    let oa_agent_key = oa_agent.public_key().to_hex();
+    let forged_key = forged.public_key().to_hex();
+    let unsigned_key = unsigned.public_key().to_hex();
+
+    let current = EventBuilder::new(Kind::Custom(39002), "")
+        .tags([
+            Tag::parse(["d", "general"]).unwrap(),
+            Tag::parse(["p", &viewer_key, "", "member"]).unwrap(),
+            Tag::parse(["p", &bot_key, "", "bot"]).unwrap(),
+            Tag::parse(["p", &viewer_owned_key, "", "member"]).unwrap(),
+            Tag::parse(["p", &legacy_key, "", "member"]).unwrap(),
+            Tag::parse(["p", &oa_agent_key, "", "member"]).unwrap(),
+            Tag::parse(["p", &forged_key, "", "member"]).unwrap(),
+            Tag::parse(["p", &unsigned_key, "", "member"]).unwrap(),
+        ])
+        .sign_with_keys(&relay)
+        .unwrap();
+    let viewer_owned_policy = EventBuilder::new(
+        Kind::Custom(30177),
+        r#"{"name":"Viewer Agent","parallelism":1,"respond_to":"owner-only"}"#,
+    )
+    .tags([Tag::parse(["d", &viewer_owned_key]).unwrap()])
+    .sign_with_keys(&viewer)
+    .unwrap();
+    let legacy_identity = EventBuilder::new(
+        Kind::Custom(10100),
+        r#"{"name":"Legacy Agent","respond_to":"owner-only"}"#,
+    )
+    .sign_with_keys(&legacy)
+    .unwrap();
+    let oa_auth =
+        buzz_sdk_pkg::nip_oa::compute_auth_tag(&other_owner, &oa_agent.public_key(), "").unwrap();
+    let oa_auth: Vec<String> = serde_json::from_str(&oa_auth).unwrap();
+    let oa_profile = EventBuilder::new(Kind::Metadata, r#"{"display_name":"Other Owner Agent"}"#)
+        .tags([Tag::parse(oa_auth).unwrap()])
+        .sign_with_keys(&oa_agent)
+        .unwrap();
+    let forged_identity_source = EventBuilder::new(
+        Kind::Custom(10100),
+        r#"{"name":"Forged Agent","respond_to":"owner-only"}"#,
+    )
+    .sign_with_keys(&Keys::generate())
+    .unwrap();
+    let mut forged_identity_value = serde_json::to_value(&forged_identity_source).unwrap();
+    forged_identity_value["pubkey"] = serde_json::json!(forged_key);
+    let forged_identity: nostr::Event = serde_json::from_value(forged_identity_value).unwrap();
+    let unsigned_identity_source = EventBuilder::new(
+        Kind::Custom(10100),
+        r#"{"name":"Unsigned Agent","respond_to":"owner-only"}"#,
+    )
+    .sign_with_keys(&unsigned)
+    .unwrap();
+    let mut unsigned_identity_value = serde_json::to_value(&unsigned_identity_source).unwrap();
+    unsigned_identity_value["sig"] = serde_json::json!("0".repeat(128));
+    let unsigned_identity: nostr::Event = serde_json::from_value(unsigned_identity_value).unwrap();
+    let viewer_absent = EventBuilder::new(Kind::Custom(39002), "")
+        .tags([
+            Tag::parse(["d", "viewer-absent"]).unwrap(),
+            Tag::parse(["p", &bot_key, "", "bot"]).unwrap(),
+        ])
+        .sign_with_keys(&relay)
+        .unwrap();
+    let duplicate_d = EventBuilder::new(Kind::Custom(39002), "")
+        .tags([
+            Tag::parse(["d", "duplicate-d"]).unwrap(),
+            Tag::parse(["d", "duplicate-d"]).unwrap(),
+            Tag::parse(["p", &viewer_key, "", "member"]).unwrap(),
+            Tag::parse(["p", &bot_key, "", "bot"]).unwrap(),
+        ])
+        .sign_with_keys(&relay)
+        .unwrap();
+    let departed_before = EventBuilder::new(Kind::Custom(39002), "")
+        .tags([
+            Tag::parse(["d", "departed"]).unwrap(),
+            Tag::parse(["p", &bot_key, "", "bot"]).unwrap(),
+        ])
+        .custom_created_at(nostr::Timestamp::from(1))
+        .sign_with_keys(&relay)
+        .unwrap();
+    let departed_after = EventBuilder::new(Kind::Custom(39002), "")
+        .tags([
+            Tag::parse(["d", "departed"]).unwrap(),
+            Tag::parse(["p", &viewer_key, "", "member"]).unwrap(),
+        ])
+        .custom_created_at(nostr::Timestamp::from(2))
+        .sign_with_keys(&relay)
+        .unwrap();
+    // The mock records every request and enforces kind/author/d filters. It
+    // deliberately ignores #p when selecting a response so the client-side
+    // viewer-membership check is exercised against an untrusted relay result.
+    let events = Arc::new(Mutex::new(vec![
+        current,
+        viewer_owned_policy,
+        legacy_identity,
+        oa_profile,
+        forged_identity,
+        unsigned_identity,
+        viewer_absent,
+        duplicate_d,
+        departed_before,
+        departed_after,
+    ]));
+    let query_events = events.clone();
+    let queries = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let query_log = queries.clone();
+    let relay_http_key = relay_key.clone();
+    let router = Router::new()
+        .route(
+            "/",
+            get(move || {
+                let relay_key = relay_http_key.clone();
+                async move { Json(serde_json::json!({"self": relay_key})) }
+            }),
+        )
+        .route(
+            "/query",
+            post(move |Json(filters): Json<Vec<serde_json::Value>>| {
+                let events = query_events.clone();
+                let queries = query_log.clone();
+                async move {
+                    queries.lock().unwrap().extend(filters.clone());
+                    let events = events.lock().unwrap();
+                    let result: Vec<_> = events
+                        .iter()
+                        .filter(|event| {
+                            filters.iter().any(|filter| {
+                                filter["kinds"].as_array().is_some_and(|kinds| {
+                                    kinds.contains(&serde_json::json!(event.kind.as_u16()))
+                                }) && filter.get("authors").is_none_or(|authors| {
+                                    authors.as_array().is_some_and(|authors| {
+                                        authors.contains(&serde_json::json!(event.pubkey.to_hex()))
+                                    })
+                                }) && filter.get("#d").is_none_or(|values| {
+                                    values.as_array().is_some_and(|values| {
+                                        event.tags.iter().any(|tag| {
+                                            let values_for_tag = tag.as_slice();
+                                            values_for_tag.first().map(String::as_str) == Some("d")
+                                                && values_for_tag.get(1).is_some_and(|value| {
+                                                    values.contains(&serde_json::json!(value))
+                                                })
+                                        })
+                                    })
+                                })
+                            })
+                        })
+                        .cloned()
+                        .collect();
+                    Json(result)
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let state = crate::app_state::build_app_state();
+    *state.keys.lock().unwrap() = viewer;
+    *state.relay_url_override.lock().unwrap() = Some(format!("ws://{address}"));
+
+    let forged_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&forged_key), "general", &state)
+            .await
+            .unwrap();
+    assert!(forged_result.is_empty(), "forged identity must be rejected");
+
+    let unsigned_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&unsigned_key), "general", &state)
+            .await
+            .unwrap();
+    assert!(
+        unsigned_result.is_empty(),
+        "unsigned identity must be rejected"
+    );
+
+    let absent_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&bot_key), "viewer-absent", &state)
+            .await;
+    assert!(
+        absent_result.is_err(),
+        "a viewer absent from the signed roster must be rejected"
+    );
+
+    let duplicate_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&bot_key), "duplicate-d", &state).await;
+    assert!(
+        duplicate_result.is_err(),
+        "a duplicate channel d tag must be rejected"
+    );
+
+    let departed_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&bot_key), "departed", &state)
+            .await
+            .unwrap();
+    assert!(
+        departed_result.is_empty(),
+        "a newer relay membership snapshot must revoke the agent"
+    );
+
+    let stopped_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&bot_key), "general", &state)
+            .await
+            .unwrap();
+    assert_eq!(
+        stopped_result,
+        std::collections::HashSet::from([bot_key.clone()]),
+        "a signed bot member must not require a runtime directory projection"
+    );
+
+    let viewer_owned_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&viewer_owned_key), "general", &state)
+            .await
+            .unwrap();
+    assert_eq!(
+        viewer_owned_result,
+        std::collections::HashSet::from([viewer_owned_key.clone()]),
+        "a viewer-owned identity may use a cosmetic non-bot role"
+    );
+
+    let legacy_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&legacy_key), "general", &state)
+            .await
+            .unwrap();
+    assert_eq!(
+        legacy_result,
+        std::collections::HashSet::from([legacy_key.clone()]),
+        "a signed legacy agent identity may use a cosmetic non-bot role"
+    );
+
+    let oa_result =
+        revalidate_channel_bot_members(std::slice::from_ref(&oa_agent_key), "general", &state)
+            .await
+            .unwrap();
+    assert_eq!(
+        oa_result,
+        std::collections::HashSet::from([oa_agent_key.clone()]),
+        "a valid NIP-OA profile may use a cosmetic non-bot role"
+    );
+
+    let membership_filters: Vec<_> = queries
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|filter| filter["kinds"] == serde_json::json!([39002]))
+        .cloned()
+        .collect();
+    assert!(
+        !membership_filters.is_empty(),
+        "membership query was issued"
+    );
+    for filter in &membership_filters {
+        assert_eq!(filter["authors"], serde_json::json!([relay_key]));
+        assert_eq!(filter["#p"], serde_json::json!([viewer_key]));
+        assert_eq!(filter["#d"].as_array().map(Vec::len), Some(1));
+    }
+    for channel in ["general", "viewer-absent", "duplicate-d", "departed"] {
+        assert!(
+            membership_filters
+                .iter()
+                .any(|filter| filter["#d"] == serde_json::json!([channel])),
+            "membership query must carry exact target channel {channel}"
+        );
+    }
+    assert!(
+        queries.lock().unwrap().iter().any(|filter| {
+            filter["kinds"] == serde_json::json!([0, 10100])
+                && filter["authors"]
+                    .as_array()
+                    .is_some_and(|authors| authors.contains(&serde_json::json!(legacy_key)))
+        }),
+        "legacy fallback must query only selected identity authors"
+    );
+    assert!(
+        queries.lock().unwrap().iter().any(|filter| {
+            filter["kinds"] == serde_json::json!([0, 10100])
+                && filter["authors"]
+                    .as_array()
+                    .is_some_and(|authors| authors.contains(&serde_json::json!(oa_agent_key)))
+        }),
+        "NIP-OA fallback must query only selected identity authors"
+    );
+
+    server.abort();
+    crate::relay_admission::reset_rate_limit_gate();
+}
+
+#[tokio::test]
 async fn directory_deadline_cancels_delayed_policy_fanout_without_partial_success() {
     let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
     crate::relay_admission::reset_rate_limit_gate();

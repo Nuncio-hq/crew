@@ -2,10 +2,10 @@
 #![cfg(unix)]
 use crew_wiki::source_access::SelectedSourceRoot;
 use crew_wiki::source_snapshot::{source_hash, SourceReference};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::Path;
 use std::path::PathBuf;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -40,7 +40,7 @@ fn reference(content: &str) -> SourceReference {
         1,
     )
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn git(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .current_dir(root)
@@ -50,7 +50,7 @@ fn git(root: &Path, args: &[&str]) -> String {
     assert!(output.status.success(), "{output:?}");
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn commit(root: &Path) {
     git(root, &["add", "--all"]);
     git(
@@ -122,7 +122,7 @@ fn selected_root_replacement_cannot_reauthorize_new_directory() {
         .is_err());
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn git_source_uses_historical_objects_after_head_moves_and_disk_changes() {
     let fixture = Fixture::new();
@@ -135,7 +135,14 @@ fn git_source_uses_historical_objects_after_head_moves_and_disk_changes() {
     std::fs::write(fixture.0.join("source.rs"), "original\n").unwrap();
     commit(&fixture.0);
     let revision = format!("git:{}", git(&fixture.0, &["rev-parse", "HEAD"]));
+    #[cfg(target_os = "linux")]
     let root = SelectedSourceRoot::open_native_selection(&fixture.0).unwrap();
+    #[cfg(target_os = "macos")]
+    let root = SelectedSourceRoot::open_native_selection_with_helper(
+        &fixture.0,
+        Path::new(env!("CARGO_BIN_EXE_crew-wiki")),
+    )
+    .unwrap();
     std::fs::write(fixture.0.join("source.rs"), "future\n").unwrap();
     commit(&fixture.0);
     std::fs::remove_file(fixture.0.join("source.rs")).unwrap();
@@ -149,16 +156,28 @@ fn git_source_uses_historical_objects_after_head_moves_and_disk_changes() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn git_source_is_unavailable_when_retained_fd_cwd_is_unsupported() {
+fn git_source_rejects_a_moved_native_root_after_helper_read_is_bound() {
     let fixture = Fixture::new();
-    std::fs::write(fixture.0.join("source.rs"), "source\n").unwrap();
-    let root = SelectedSourceRoot::open_native_selection(&fixture.0).unwrap();
+    let selected = fixture.0.join("selected");
+    std::fs::create_dir(&selected).unwrap();
+    git(&selected, &["init", "--quiet"]);
+    git(&selected, &["config", "user.name", "Fixture"]);
+    git(
+        &selected,
+        &["config", "user.email", "fixture@example.invalid"],
+    );
+    std::fs::write(selected.join("source.rs"), "source\n").unwrap();
+    commit(&selected);
+    let revision = format!("git:{}", git(&selected, &["rev-parse", "HEAD"]));
+    let root = SelectedSourceRoot::open_native_selection_with_helper(
+        &selected,
+        Path::new(env!("CARGO_BIN_EXE_crew-wiki")),
+    )
+    .unwrap();
+    std::fs::rename(&selected, fixture.0.join("original")).unwrap();
+    std::fs::create_dir(&selected).unwrap();
     assert!(root
-        .read_verified_reference(
-            &format!("git:{}", "a".repeat(40)),
-            &reference("source\n"),
-            deadline(),
-        )
+        .read_verified_reference(&revision, &reference("source\n"), deadline(),)
         .is_err());
 }
 

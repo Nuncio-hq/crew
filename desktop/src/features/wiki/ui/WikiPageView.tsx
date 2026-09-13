@@ -45,6 +45,7 @@ export function WikiPageView({
   companyPending,
   companyPages,
   door,
+  isCompany,
   onBack,
   onOpenProject,
   onRetryCompany,
@@ -80,6 +81,7 @@ export function WikiPageView({
   companyPending?: boolean;
   companyPages?: CompanyWikiPage[];
   door: "library" | "project";
+  isCompany: boolean;
   onBack?: () => void;
   onOpenProject?: () => void;
   onRetryCompany?: () => void;
@@ -109,7 +111,6 @@ export function WikiPageView({
   recoveryPending?: boolean;
   regeneratePending?: boolean;
 }) {
-  const isCompany = repoName === "Company Wiki";
   const navigationIdentity =
     React.useMemo<WikiNavigationIdentity | null>(() => {
       if (!operationScope || !navigationProjectId) return null;
