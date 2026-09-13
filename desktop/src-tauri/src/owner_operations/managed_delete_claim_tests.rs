@@ -64,6 +64,57 @@ fn cascade_child_payload(parent_id: &str, persona_id: &str, pubkey: &str) -> ser
     })
 }
 
+fn cascade_batch(pubkey: &str, persona_id: &str) -> Vec<NewOperation> {
+    let parent_id = uuid::Uuid::new_v4().to_string();
+    let child_id = uuid::Uuid::new_v4().to_string();
+    let parent_payload = json!({
+        "version": 1,
+        "fence": cascade_fence(pubkey),
+        "channels": [],
+        "local_removed": false,
+        "key_removed": false,
+        "tombstone_enqueued": false,
+        "failures": 0,
+        "last_error": null,
+        "cascade": {
+            "persona": {
+                "id": persona_id,
+                "d_tag": persona_id,
+                "created_at": "created",
+                "updated_at": "updated"
+            },
+            "targets": [{
+                "operation_id": child_id,
+                "persona_id": persona_id,
+                "fence": cascade_fence(pubkey),
+                "channels": [],
+                "local_removed": false,
+                "key_removed": false,
+                "tombstone_enqueued": false,
+                "failures": 0,
+                "last_error": null,
+                "settled": false
+            }],
+            "coordinator_only": false,
+            "persona_removed": false
+        }
+    });
+    vec![
+        NewOperation {
+            id: parent_id.clone(),
+            kind: OperationKind::ManagedAgentDelete,
+            resource_key: pubkey.to_string(),
+            payload: parent_payload,
+        },
+        NewOperation {
+            id: child_id,
+            kind: OperationKind::ManagedAgentDelete,
+            resource_key: pubkey.to_string(),
+            payload: cascade_child_payload(&parent_id, persona_id, pubkey),
+        },
+    ]
+}
+
 #[test]
 fn unresolved_delete_claim_is_global_across_communities() {
     let (_dir, mut store) = fixture();
@@ -470,4 +521,67 @@ fn cascade_coordinator_cannot_claim_terminal_before_persona_removal() {
         ),
         Err(StoreError::Invalid)
     ));
+}
+
+#[test]
+fn managed_delete_batch_rejects_cross_scope_direct_claim_atomically() {
+    let (_dir, mut store) = fixture();
+    let pubkey = "1".repeat(64);
+    let direct_scope = scope('a', "https://one.example");
+    let cascade_scope = scope('b', "https://two.example");
+    store
+        .create(&direct_scope, request(&pubkey), 1)
+        .expect("reserve direct deletion");
+
+    assert_eq!(
+        store.create_managed_agent_delete_batch(
+            &cascade_scope,
+            cascade_batch(&pubkey, "persona-cross-scope"),
+            2,
+        ),
+        Err(StoreError::Busy)
+    );
+    assert!(
+        store
+            .list(&cascade_scope, None, 100)
+            .expect("list rejected scope")
+            .is_empty(),
+        "a cross-scope claim failure must not leave a coordinator or child row"
+    );
+    assert!(store.managed_agent_delete_is_pending(&pubkey).unwrap());
+}
+
+#[test]
+fn managed_delete_batch_rejects_cross_scope_cascade_overlap_atomically() {
+    let (_dir, mut store) = fixture();
+    let pubkey = "2".repeat(64);
+    let first_scope = scope('a', "https://one.example");
+    let second_scope = scope('b', "https://two.example");
+    let first = store
+        .create_managed_agent_delete_batch(&first_scope, cascade_batch(&pubkey, "persona-first"), 1)
+        .expect("reserve first cascade");
+    assert_eq!(first.len(), 2);
+
+    assert_eq!(
+        store.create_managed_agent_delete_batch(
+            &second_scope,
+            cascade_batch(&pubkey, "persona-second"),
+            2,
+        ),
+        Err(StoreError::Busy)
+    );
+    assert!(
+        store
+            .list(&second_scope, None, 100)
+            .expect("list rejected scope")
+            .is_empty(),
+        "a cross-scope overlap must not leave a partial second cascade"
+    );
+    assert_eq!(
+        store
+            .list(&first_scope, None, 100)
+            .expect("list committed scope")
+            .len(),
+        2
+    );
 }

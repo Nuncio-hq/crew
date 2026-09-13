@@ -1,11 +1,19 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use tauri::AppHandle;
 
+const MAX_RUNTIME_RECEIPT_BYTES: u64 = 16 * 1024;
+
 use super::{
     append_log_marker, current_instance_id, now_iso, process_belongs_to_us,
-    process_has_buzz_marker, process_is_running, terminate_process, ManagedAgentPairRuntime,
-    ManagedAgentRecord, ManagedAgentRuntimeKey,
+    process_has_buzz_marker, process_is_running, terminate_process, terminate_runtime_receipt_with,
+    valid_agent_runtime_receipt, ManagedAgentPairRuntime, ManagedAgentRecord,
+    ManagedAgentRuntimeKey, ManagedAgentRuntimeReceipt,
 };
 
 pub(crate) fn managed_agent_runtime_keys<T>(
@@ -125,7 +133,8 @@ fn stop_legacy_scalar_pid<R: tauri::Runtime>(
 /// through here so stopping an agent in one community never tears down its
 /// pairs in other communities. Clears the matching agent session cache
 /// (pair-scoped when a pair key resolves). When no pair is tracked for this
-/// workspace, only legacy scalar-PID cleanup runs.
+/// workspace, legacy scalar-PID cleanup is all that remains; agent-wide
+/// deletion uses [`stop_managed_agent_process`] to drain durable receipts.
 pub fn stop_managed_agent_workspace_pair(
     app: &AppHandle,
     record: &mut ManagedAgentRecord,
@@ -169,6 +178,7 @@ fn stop_managed_agent_process_with<R: tauri::Runtime, T: FnMut(u32) -> Result<()
 ) -> Result<(), String> {
     let keys = managed_agent_runtime_keys(runtimes, &record.pubkey);
     if keys.is_empty() {
+        stop_untracked_agent_receipts(app, &record.pubkey, &mut terminate)?;
         stop_legacy_scalar_pid(app, record)?;
         super::super::transport_status::clear_pubkey(app, &record.pubkey);
         return Ok(());
@@ -184,6 +194,12 @@ fn stop_managed_agent_process_with<R: tauri::Runtime, T: FnMut(u32) -> Result<()
     for key in keys {
         if let Err(error) = stop_managed_agent_pair(app, record, runtimes, &key, &mut terminate) {
             errors.push(format!("{}: {error}", key.relay_url));
+        }
+    }
+
+    if errors.is_empty() {
+        if let Err(error) = stop_untracked_agent_receipts(app, &record.pubkey, &mut terminate) {
+            errors.push(error);
         }
     }
 
@@ -228,17 +244,186 @@ pub fn stop_managed_agent_process<R: tauri::Runtime>(
     stop_managed_agent_process_with(app, record, runtimes, terminate_process)
 }
 
+/// Read pair receipts for one record, fail closed on any live receipt that
+/// cannot be proven to belong to this desktop instance, then stop the proven
+/// pairs. Startup deletion recovery runs before receipt hydration, so this is
+/// the receipt-aware stop seam used when the in-memory runtime map is empty.
+fn stop_untracked_agent_receipts<R: tauri::Runtime, T: FnMut(u32) -> Result<(), String>>(
+    app: &AppHandle<R>,
+    pubkey: &str,
+    terminate: &mut T,
+) -> Result<(), String> {
+    let instance_id = current_instance_id(app);
+    let receipts = read_agent_runtime_receipts_for_pubkey(app, pubkey)?;
+    let mut owned = Vec::new();
+    let mut stale = Vec::new();
+    for (path, receipt) in receipts {
+        if valid_agent_runtime_receipt(&path, &receipt, &instance_id) {
+            owned.push((path, receipt));
+        } else if process_is_running(receipt.pid) {
+            // A live process with an invalid or foreign receipt is not safe to
+            // signal. Keep the local record and durable delete operation so a
+            // later retry can recover after the owner proof is repaired.
+            return Err(
+                "managed-agent runtime receipt could not be validated; deletion remains pending"
+                    .into(),
+            );
+        } else {
+            stale.push(path);
+        }
+    }
+
+    // Preflight every receipt before stopping any pair. A later invalid live
+    // receipt must not turn a multi-pair delete into a partially untracked
+    // operation merely because an earlier pair was valid.
+    for (path, receipt) in owned {
+        terminate_runtime_receipt_with(
+            &path,
+            &receipt,
+            &mut *terminate,
+            process_is_running,
+            super::super::remove_agent_runtime_receipt_path,
+        )?;
+    }
+    for path in stale {
+        super::super::remove_agent_runtime_receipt_path(&path);
+    }
+    Ok(())
+}
+
+/// Strictly read receipts attributable to `pubkey`. The regular startup
+/// sweep intentionally ignores malformed JSON, but deletion must preserve a
+/// retry witness when a target-named receipt is unreadable.
+fn read_agent_runtime_receipts_for_pubkey<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    pubkey: &str,
+) -> Result<Vec<(PathBuf, ManagedAgentRuntimeReceipt)>, String> {
+    let dir = super::super::managed_agents_base_dir(app)?.join("agent-pids");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err("managed-agent runtime receipts are unavailable".into()),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|_| "managed-agent runtime receipts are unavailable")?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        paths.push((path, receipt_path_claims_pubkey(&path, pubkey)));
+    }
+    // Check target-named receipts first so a corrupt target cannot be hidden
+    // behind unrelated files in a large receipt directory.
+    paths.sort_by_key(|(_, claims_pubkey)| !*claims_pubkey);
+
+    let mut receipts = Vec::new();
+    for (path, path_claims_pubkey) in paths {
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) if path_claims_pubkey => {
+                return Err(
+                    "managed-agent runtime receipt is unreadable; deletion remains pending".into(),
+                );
+            }
+            Err(_) => continue,
+        };
+        if metadata.len() > MAX_RUNTIME_RECEIPT_BYTES {
+            if path_claims_pubkey {
+                return Err(
+                    "managed-agent runtime receipt is too large; deletion remains pending".into(),
+                );
+            }
+            continue;
+        }
+        let mut file = match fs::File::open(&path) {
+            Ok(file) => file,
+            Err(_) if path_claims_pubkey => {
+                return Err(
+                    "managed-agent runtime receipt is unreadable; deletion remains pending".into(),
+                );
+            }
+            Err(_) => continue,
+        };
+        let mut bytes = Vec::with_capacity(metadata.len() as usize);
+        if file
+            .by_ref()
+            .take(MAX_RUNTIME_RECEIPT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
+            if path_claims_pubkey {
+                return Err(
+                    "managed-agent runtime receipt is unreadable; deletion remains pending".into(),
+                );
+            }
+            continue;
+        }
+        if bytes.len() as u64 > MAX_RUNTIME_RECEIPT_BYTES {
+            if path_claims_pubkey {
+                return Err(
+                    "managed-agent runtime receipt is too large; deletion remains pending".into(),
+                );
+            }
+            continue;
+        }
+        let receipt = match serde_json::from_slice::<ManagedAgentRuntimeReceipt>(&bytes) {
+            Ok(receipt) => receipt,
+            Err(_) if path_claims_pubkey => {
+                return Err(
+                    "managed-agent runtime receipt is corrupt; deletion remains pending".into(),
+                );
+            }
+            Err(_) => continue,
+        };
+        if path_claims_pubkey || receipt.key.pubkey.eq_ignore_ascii_case(pubkey) {
+            receipts.push((path, receipt));
+        }
+    }
+    Ok(receipts)
+}
+
+fn receipt_path_claims_pubkey(path: &Path, pubkey: &str) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".json"))
+        .and_then(|stem| stem.split_once("__").map(|(candidate, _)| candidate))
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(pubkey))
+}
+
 #[cfg(all(test, unix))]
 mod stop_failure_tests {
     use super::*;
-    use crate::managed_agents::{ManagedAgentProcess, ManagedAgentRuntimeKey};
+    use crate::managed_agents::{
+        ManagedAgentProcess, ManagedAgentRuntimeKey, ManagedAgentRuntimeReceipt,
+    };
     use std::collections::HashMap;
     use std::process::{Command, Stdio};
+
+    struct HomeGuard {
+        home: Option<std::ffi::OsString>,
+        xdg_data_home: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match self.home.take() {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match self.xdg_data_home.take() {
+                Some(value) => std::env::set_var("XDG_DATA_HOME", value),
+                None => std::env::remove_var("XDG_DATA_HOME"),
+            }
+        }
+    }
 
     fn app() -> tauri::App<tauri::test::MockRuntime> {
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().identifier = "xyz.nuncio.crew.stop-red".into();
+        let state = crate::app_state::build_app_state();
         tauri::test::mock_builder()
+            .manage(state)
             .build(context)
             .expect("build the stop-failure fixture app")
     }
@@ -319,6 +504,208 @@ mod stop_failure_tests {
         assert_eq!(record.last_exit_code, Some(7));
         assert_eq!(record.last_error.as_deref(), Some("prior stop error"));
         assert_eq!(runtimes.len(), 1, "failed runtime remains stoppable");
+    }
+
+    #[test]
+    fn empty_runtime_map_stops_owned_pair_receipt_before_local_delete() {
+        use std::os::unix::process::CommandExt;
+
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("temporary app-data root");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home).expect("temporary home");
+        let _env_guard = HomeGuard {
+            home: std::env::var_os("HOME"),
+            xdg_data_home: std::env::var_os("XDG_DATA_HOME"),
+        };
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_DATA_HOME", &home);
+
+        let first_app = app();
+        let pubkey = "b".repeat(64);
+        let key = ManagedAgentRuntimeKey::new(pubkey.clone(), "ws://localhost:3000")
+            .expect("fixture pair key");
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "while :; do sleep 1; done"])
+            .env("BUZZ_MANAGED_AGENT", first_app.config().identifier.clone())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0);
+        let child = command.spawn().expect("spawn live receipt fixture");
+        let pid = child.id();
+        let reaper = std::thread::spawn(move || child.wait().expect("reap receipt fixture"));
+        let receipt = ManagedAgentRuntimeReceipt {
+            key,
+            pid,
+            desktop_instance_id: first_app.config().identifier.clone(),
+            started_at: "now".into(),
+        };
+        crate::managed_agents::write_agent_runtime_receipt(&first_app.handle(), &receipt)
+            .expect("write pair receipt");
+        // Startup recovery runs before runtime receipt hydration. Rebuild the
+        // app state so the production stop seam is exercised with an empty
+        // in-memory runtime map after the prior desktop instance is gone.
+        drop(first_app);
+        let app = app();
+        assert!(app
+            .state::<crate::app_state::AppState>()
+            .managed_agent_processes
+            .lock()
+            .expect("lock fresh runtime map")
+            .is_empty());
+
+        let mut record = crate::managed_agents::runtime::test_fixtures::fixture(
+            crate::managed_agents::RespondTo::OwnerOnly,
+            Vec::new(),
+            None,
+        );
+        record.pubkey = pubkey.clone();
+        record.runtime_pid = Some(pid);
+        record.relay_url = "ws://localhost:3000".into();
+        let mut runtimes = HashMap::new();
+
+        stop_managed_agent_process(&app.handle(), &mut record, &mut runtimes)
+            .expect("receipt-owned pair must be stopped before deletion");
+        reaper.join().expect("receipt fixture reaper");
+
+        assert_eq!(record.runtime_pid, None);
+        assert!(
+            crate::managed_agents::read_all_agent_runtime_receipts(&app.handle())
+                .into_iter()
+                .all(|(_, receipt)| receipt.key.pubkey != pubkey),
+            "stopped pair receipt must be removed only after the child exits"
+        );
+    }
+
+    #[test]
+    fn empty_runtime_map_refuses_live_foreign_receipt() {
+        use std::os::unix::process::CommandExt;
+
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("temporary app-data root");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home).expect("temporary home");
+        let _env_guard = HomeGuard {
+            home: std::env::var_os("HOME"),
+            xdg_data_home: std::env::var_os("XDG_DATA_HOME"),
+        };
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_DATA_HOME", &home);
+
+        let app = app();
+        let pubkey = "c".repeat(64);
+        let key = ManagedAgentRuntimeKey::new(pubkey.clone(), "ws://localhost:3000")
+            .expect("fixture pair key");
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "while :; do sleep 1; done"])
+            .env("BUZZ_MANAGED_AGENT", app.config().identifier.clone())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0);
+        let child = command.spawn().expect("spawn live receipt fixture");
+        let pid = child.id();
+        let reaper = std::thread::spawn(move || child.wait().expect("reap receipt fixture"));
+        let receipt = ManagedAgentRuntimeReceipt {
+            key,
+            pid,
+            desktop_instance_id: "foreign-desktop".into(),
+            started_at: "now".into(),
+        };
+        crate::managed_agents::write_agent_runtime_receipt(&app.handle(), &receipt)
+            .expect("write foreign receipt");
+
+        let mut record = crate::managed_agents::runtime::test_fixtures::fixture(
+            crate::managed_agents::RespondTo::OwnerOnly,
+            Vec::new(),
+            None,
+        );
+        record.pubkey = pubkey.clone();
+        record.runtime_pid = Some(pid);
+        let mut runtimes = HashMap::new();
+
+        let error = stop_managed_agent_process(&app.handle(), &mut record, &mut runtimes)
+            .expect_err("foreign live receipt must fail closed");
+        assert!(error.contains("receipt"));
+        assert_eq!(record.runtime_pid, Some(pid));
+        assert!(
+            crate::managed_agents::read_all_agent_runtime_receipts(&app.handle())
+                .into_iter()
+                .any(|(_, candidate)| candidate.key.pubkey == pubkey),
+            "the foreign live receipt remains as a recovery witness"
+        );
+
+        terminate_process(pid).expect("clean up foreign receipt fixture");
+        reaper.join().expect("foreign receipt fixture reaper");
+    }
+
+    #[test]
+    fn target_named_corrupt_receipt_keeps_delete_pending() {
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("temporary app-data root");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home).expect("temporary home");
+        let _env_guard = HomeGuard {
+            home: std::env::var_os("HOME"),
+            xdg_data_home: std::env::var_os("XDG_DATA_HOME"),
+        };
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_DATA_HOME", &home);
+
+        let app = app();
+        let pubkey = "d".repeat(64);
+        let dir = crate::managed_agents::managed_agents_base_dir(&app.handle())
+            .expect("resolve managed-agent data directory")
+            .join("agent-pids");
+        std::fs::create_dir_all(&dir).expect("create receipt directory");
+        std::fs::write(dir.join(format!("{pubkey}__corrupt.json")), b"{")
+            .expect("write corrupt target receipt");
+
+        let mut terminate = |_pid: u32| Ok::<(), String>(());
+        let error = stop_untracked_agent_receipts(&app.handle(), &pubkey, &mut terminate)
+            .expect_err("corrupt target receipt must keep deletion pending");
+        assert!(error.contains("corrupt"));
+    }
+
+    #[test]
+    fn target_named_oversized_receipt_is_bounded_and_keeps_delete_pending() {
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("temporary app-data root");
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(&home).expect("temporary home");
+        let _env_guard = HomeGuard {
+            home: std::env::var_os("HOME"),
+            xdg_data_home: std::env::var_os("XDG_DATA_HOME"),
+        };
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_DATA_HOME", &home);
+
+        let app = app();
+        let pubkey = "e".repeat(64);
+        let key = ManagedAgentRuntimeKey::new(pubkey.clone(), "ws://localhost:3000")
+            .expect("fixture pair key");
+        let receipt = ManagedAgentRuntimeReceipt {
+            key,
+            pid: 999_999_999,
+            desktop_instance_id: app.config().identifier.clone(),
+            started_at: "x".repeat(MAX_RUNTIME_RECEIPT_BYTES as usize),
+        };
+        let dir = crate::managed_agents::managed_agents_base_dir(&app.handle())
+            .expect("resolve managed-agent data directory")
+            .join("agent-pids");
+        std::fs::create_dir_all(&dir).expect("create receipt directory");
+        let path = dir.join(format!("{pubkey}__oversized.json"));
+        let payload = serde_json::to_vec(&receipt).expect("serialize oversized receipt");
+        assert!(payload.len() as u64 > MAX_RUNTIME_RECEIPT_BYTES);
+        std::fs::write(path, payload).expect("write oversized target receipt");
+
+        let mut terminate = |_pid: u32| Ok::<(), String>(());
+        let error = stop_untracked_agent_receipts(&app.handle(), &pubkey, &mut terminate)
+            .expect_err("oversized target receipt must keep deletion pending");
+        assert!(error.contains("too large"));
     }
 }
 

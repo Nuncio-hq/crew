@@ -42,41 +42,7 @@ pub(crate) fn retain_managed_agent_pending(
     }
 }
 
-/// Purge a deleted agent's pending row and enqueue a NIP-09 tombstone, both
-/// inside the `managed_agents_store_lock`-held delete body and NEVER across an
-/// `.await`.
-///
-/// Mirrors `commands::personas::tombstone_persona_pending`: the agent row at
-/// `(30177, owner, agent_pubkey)` is purged first so an unpublished edit can
-/// never resurrect it after the tombstone publishes, then the kind:5 tombstone
-/// is retained at its own `(5, owner, agent_pubkey)` coordinate with
-/// `pending_sync = 1`. The `d_tag` is the agent's pubkey. Best-effort: a
-/// failure is logged and swallowed so a retention hiccup never blocks the
-/// disk-authoritative delete.
-pub(crate) fn tombstone_managed_agent_pending(
-    app: &AppHandle,
-    state: &AppState,
-    agent_pubkey: &str,
-) {
-    let result = try_tombstone_managed_agent_pending(app, state, agent_pubkey);
-    if let Err(e) = result {
-        eprintln!("buzz-desktop: agent-tombstone: {e}");
-    }
-}
-
-/// Fallible tombstone seam for deletion coordinators that retain their own
-/// retry journal. The legacy wrapper above intentionally remains best-effort
-/// for callers whose existing contracts are not journaled.
-pub(crate) fn try_tombstone_managed_agent_pending(
-    app: &AppHandle,
-    state: &AppState,
-    agent_pubkey: &str,
-) -> Result<(), String> {
-    let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-    tombstone_managed_agent_at(&scope.db_path, &scope.owner_keys, agent_pubkey)
-}
-
-/// Scope-free core of [`tombstone_managed_agent_pending`], so the atomic
+/// Scope-free tombstone core for deletion coordinators, so the atomic
 /// purge-and-enqueue and its future-dated-head domination can be asserted
 /// directly against a retention database (mirrors
 /// `personas::tombstone_persona_at`).

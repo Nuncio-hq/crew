@@ -780,3 +780,7 @@ pub(crate) async fn delete_persona(app: AppHandle, persona_id: String) -> Result
     try_regenerate_nest(&app);
     Ok(())
 }
+
+#[cfg(all(test, unix))]
+#[path = "managed_agent_persona_delete_tests.rs"]
+mod tests;

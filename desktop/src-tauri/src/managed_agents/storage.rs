@@ -648,14 +648,6 @@ pub(crate) fn try_delete_agent_key(pubkey: &str) -> Result<(), String> {
     }
 }
 
-/// Remove an agent's key from the keyring (best-effort). Called when an agent
-/// is deleted so its secret does not linger in the OS store.
-pub fn delete_agent_key(pubkey: &str) {
-    if let Err(e) = try_delete_agent_key(pubkey) {
-        eprintln!("buzz-desktop: failed to delete agent {pubkey} key from keyring: {e}");
-    }
-}
-
 /// Atomic, symlink-preserving JSON write.
 /// Resolves symlinks so the tmp+rename happens at the real target path,
 /// preserving any symlink at `path`.
@@ -863,8 +855,8 @@ fn agent_pids_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Stri
 /// Persist a pair-scoped runtime receipt atomically. Callers must register the
 /// process in memory in the same runtime transition; on write failure they must
 /// terminate the child before releasing that transition.
-pub fn write_agent_runtime_receipt(
-    app: &AppHandle,
+pub fn write_agent_runtime_receipt<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     receipt: &ManagedAgentRuntimeReceipt,
 ) -> Result<(), String> {
     let path = agent_pids_dir(app)?.join(format!("{}.json", receipt.key.runtime_id()));
@@ -886,8 +878,8 @@ pub fn remove_agent_runtime_receipt_path(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
-pub fn read_all_agent_runtime_receipts(
-    app: &AppHandle,
+pub fn read_all_agent_runtime_receipts<R: tauri::Runtime>(
+    app: &AppHandle<R>,
 ) -> Vec<(PathBuf, ManagedAgentRuntimeReceipt)> {
     let Ok(dir) = agent_pids_dir(app) else {
         return Vec::new();
