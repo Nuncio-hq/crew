@@ -413,8 +413,11 @@ each linked child uses the same instance deletion coordinator and cleanup
 obligations. The persona definition is removed only after its children settle.
 Failed stops, key cleanup, or tombstones retain parent/child progress for a
 fresh process to retry. Restart recovery validates persisted process receipts
-before stopping an untracked child; unsafe target receipts keep deletion
-pending. Nested coordinator futures are boxed to avoid exhausting a worker's
+before stopping an untracked child; unsafe target receipts or a directory scan
+exceeding 4,096 entries keep deletion pending without terminating a child.
+Recovery initializes its captured retention directory before enqueuing
+tombstones, including before normal retention hydration has run. Nested
+coordinator futures are boxed to avoid exhausting a worker's
 stack. Direct instance deletion retains its persona definition; persona-card
 deletion explicitly removes that definition. Both retain message history,
 runtime installations, worktrees, and role definitions. Hermes profile archival
