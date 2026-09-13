@@ -63,18 +63,31 @@ fn persona() -> AgentDefinition {
     }
 }
 
-fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
+fn mock_app_with(
+    identifier: String,
+    keys: Option<nostr::Keys>,
+) -> tauri::App<tauri::test::MockRuntime> {
     let state = build_app_state();
+    if let Some(keys) = keys {
+        *state.keys.lock().unwrap() = keys;
+    }
     *state.relay_url_override.lock().unwrap() = Some(RELAY.into());
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().identifier = format!(
-        "xyz.nuncio.crew.persona-delete-seam-{}",
-        uuid::Uuid::new_v4().simple()
-    );
+    context.config_mut().identifier = identifier;
     tauri::test::mock_builder()
         .manage(state)
         .build(context)
         .expect("build the production coordinator fixture app")
+}
+
+fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
+    mock_app_with(
+        format!(
+            "xyz.nuncio.crew.persona-delete-seam-{}",
+            uuid::Uuid::new_v4().simple()
+        ),
+        None,
+    )
 }
 
 #[test]
@@ -96,10 +109,12 @@ fn production_zero_target_cascade_retries_after_tombstone_failure() {
         .expect("persist persona fixture");
 
     tauri::async_runtime::block_on(async {
-        let token = capture(app.handle().clone())
+        let captured = capture(app.handle().clone())
             .await
-            .expect("capture owner/workspace scope")
-            .token;
+            .expect("capture owner/workspace scope");
+        let token = captured.token;
+        let owner_keys = captured.keys;
+        let app_identifier = app.config().identifier.clone();
         let operation = begin_persona_cascade(app.handle(), token.clone(), &persona.id)
             .await
             .expect("reserve the production coordinator");
@@ -149,7 +164,21 @@ fn production_zero_target_cascade_retries_after_tombstone_failure() {
 
         std::fs::remove_file(&retention_path).expect("remove injected retention failure");
         std::fs::create_dir_all(&retention_path).expect("restore retention directory");
-        resume_persona_cascade(app.handle().clone(), token.clone(), failed, true)
+
+        // Retry through a newly constructed AppState. A same-process retry can
+        // accidentally succeed from hydrated runtime/store state that is not
+        // available after the crash boundary this journal is meant to cover.
+        drop(app);
+        let app = mock_app_with(app_identifier, Some(owner_keys));
+        let restarted_token = capture(app.handle().clone())
+            .await
+            .expect("capture owner/workspace scope after restart")
+            .token;
+        assert_eq!(
+            restarted_token, token,
+            "restart must preserve the scope fence"
+        );
+        resume_persona_cascade(app.handle().clone(), restarted_token.clone(), failed, true)
             .await
             .expect("manual retry must finish the durable coordinator");
 
@@ -176,16 +205,17 @@ fn production_zero_target_cascade_retries_after_tombstone_failure() {
         drop(journal);
 
         let db_path = managed_agents::retention::scoped_retention_db_path(
-            &base_dir,
+            &managed_agents::managed_agents_base_dir(app.handle())
+                .expect("resolve restarted managed-agent data directory"),
             RELAY,
-            &token.scope.owner,
+            &restarted_token.scope.owner,
         );
         let connection = managed_agents::retention::open_retention_db(&db_path)
             .expect("open the recovered retention scope");
         let tombstone = managed_agents::retention::get_retained_event(
             &connection,
             5,
-            &token.scope.owner,
+            &restarted_token.scope.owner,
             &managed_agents::retention::tombstone_retention_d_tag(KIND_PERSONA, &persona.id),
         )
         .expect("read the persona tombstone witness")
