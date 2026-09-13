@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::managed_agents::ManagedAgentRuntimeReceipt;
 use tauri::AppHandle;
 
 const MAX_RUNTIME_RECEIPT_BYTES: u64 = 16 * 1024;
@@ -13,7 +14,7 @@ use super::{
     append_log_marker, current_instance_id, now_iso, process_belongs_to_us,
     process_has_buzz_marker, process_is_running, terminate_process, terminate_runtime_receipt_with,
     valid_agent_runtime_receipt, ManagedAgentPairRuntime, ManagedAgentRecord,
-    ManagedAgentRuntimeKey, ManagedAgentRuntimeReceipt,
+    ManagedAgentRuntimeKey,
 };
 
 pub(crate) fn managed_agent_runtime_keys<T>(
@@ -477,6 +478,7 @@ mod stop_failure_tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    use tauri::Manager;
 
     struct HomeGuard {
         home: Option<std::ffi::OsString>,

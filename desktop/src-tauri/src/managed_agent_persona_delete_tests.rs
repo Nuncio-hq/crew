@@ -14,7 +14,6 @@ use crate::{
 };
 use buzz_core_pkg::kind::KIND_PERSONA;
 use std::collections::BTreeMap;
-use tauri::Manager;
 
 const RELAY: &str = "wss://persona-delete-seam.example";
 

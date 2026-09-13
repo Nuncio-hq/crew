@@ -200,8 +200,8 @@ fn validate_delete_target(
     Ok(())
 }
 
-async fn discover_channels(
-    app: &AppHandle,
+async fn discover_channels<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     pubkey: &str,
 ) -> Result<Vec<String>, String> {
@@ -315,7 +315,10 @@ async fn discover_channels(
 /// journal, regardless of the currently selected owner/community scope.
 /// Startup and manual starts use this global fence so a workspace switch
 /// cannot resurrect an instance whose local deletion is still in flight.
-pub(crate) fn has_pending_any_scope(app: &AppHandle, pubkey: &str) -> Result<bool, String> {
+pub(crate) fn has_pending_any_scope<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    pubkey: &str,
+) -> Result<bool, String> {
     let store = open_journal_store(app)?;
     pending_in_store(&store, pubkey)
 }
@@ -323,7 +326,9 @@ pub(crate) fn has_pending_any_scope(app: &AppHandle, pubkey: &str) -> Result<boo
 /// Open the native journal before taking managed-agent runtime locks. Callers
 /// that need an atomic spawn/delete fence keep this connection and perform the
 /// read or create after acquiring the transition/store locks.
-pub(crate) fn open_journal_store(app: &AppHandle) -> Result<OperationStore, String> {
+pub(crate) fn open_journal_store<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<OperationStore, String> {
     let path = crate::commands::journal_path(app)?;
     OperationStore::open(&path, Limits::default()).map_err(|error| error.to_string())
 }
@@ -334,8 +339,8 @@ pub(crate) fn pending_in_store(store: &OperationStore, pubkey: &str) -> Result<b
         .map_err(|error| error.to_string())
 }
 
-async fn existing_operation(
-    app: &AppHandle,
+async fn existing_operation<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     pubkey: &str,
 ) -> Result<Option<Operation>, String> {
@@ -365,8 +370,8 @@ async fn existing_operation(
     Err("managed-agent deletion recovery scan exceeded its bound".into())
 }
 
-async fn persist(
-    app: &AppHandle,
+async fn persist<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     operation: &Operation,
     payload: &Payload,
@@ -390,8 +395,8 @@ async fn persist(
     Ok(result.value)
 }
 
-async fn fail(
-    app: &AppHandle,
+async fn fail<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     operation: &Operation,
     payload: &mut Payload,
@@ -470,8 +475,8 @@ fn local_commit<R: tauri::Runtime>(
     Ok((true, false))
 }
 
-async fn resume(
-    app: AppHandle,
+async fn resume<R: tauri::Runtime>(
+    app: AppHandle<R>,
     token: OwnerScopeToken,
     mut operation: Operation,
     manual: bool,
@@ -699,8 +704,8 @@ fn create_native_claim(
         .map_err(|error| error.to_string())
 }
 
-async fn begin(
-    app: &AppHandle,
+async fn begin<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: OwnerScopeToken,
     record: ManagedAgentRecord,
     force_remote_delete: bool,
@@ -784,8 +789,8 @@ async fn begin(
 }
 
 /// Delete one exact managed instance through the durable removal coordinator.
-pub(crate) async fn delete(
-    app: AppHandle,
+pub(crate) async fn delete<R: tauri::Runtime>(
+    app: AppHandle<R>,
     pubkey: String,
     force_remote_delete: bool,
 ) -> Result<(), String> {
@@ -804,12 +809,15 @@ pub(crate) async fn delete(
 
 /// Delete one persona and its exact linked managed-agent records through the
 /// durable cascade coordinator.
-pub(crate) async fn delete_persona(app: AppHandle, persona_id: String) -> Result<(), String> {
+pub(crate) async fn delete_persona<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    persona_id: String,
+) -> Result<(), String> {
     managed_agent_persona_delete::delete_persona(app, persona_id).await
 }
 
-async fn enqueue_tombstone_for_scope(
-    app: &AppHandle,
+async fn enqueue_tombstone_for_scope<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     operation: &Operation,
     pubkey: &str,
@@ -837,7 +845,10 @@ async fn enqueue_tombstone_for_scope(
 
 /// Replay one unresolved deletion by its durable operation ID. This is the
 /// explicit manual retry affordance after startup recovery reports a failure.
-pub(crate) async fn retry(app: AppHandle, operation_id: String) -> Result<(), String> {
+pub(crate) async fn retry<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    operation_id: String,
+) -> Result<(), String> {
     let token = capture(app.clone()).await?.token;
     let operation = load_any_scope_operation(&app, &operation_id).await?;
     assert_current(app.clone(), &token).await?;
@@ -851,7 +862,9 @@ pub(crate) async fn retry(app: AppHandle, operation_id: String) -> Result<(), St
 /// List unresolved managed-agent deletions across every local scope. The
 /// journal returns redacted summaries; loading a payload still requires the
 /// active scope to match the operation's captured owner/community.
-pub(crate) async fn list(app: AppHandle) -> Result<Vec<ManagedAgentDeletionSummary>, String> {
+pub(crate) async fn list<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<Vec<ManagedAgentDeletionSummary>, String> {
     let path = crate::commands::journal_path(&app)?;
     tokio::task::spawn_blocking(move || {
         let store =
@@ -865,7 +878,10 @@ pub(crate) async fn list(app: AppHandle) -> Result<Vec<ManagedAgentDeletionSumma
 }
 
 /// Load one deletion record for a native status/review surface.
-pub(crate) async fn status(app: AppHandle, operation_id: String) -> Result<Operation, String> {
+pub(crate) async fn status<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    operation_id: String,
+) -> Result<Operation, String> {
     let token = capture(app.clone()).await?.token;
     let operation = load_any_scope_operation(&app, &operation_id).await?;
     assert_current(app.clone(), &token).await?;
@@ -889,8 +905,8 @@ fn ensure_active_scope(token: &OwnerScopeToken, operation: &Operation) -> Result
     Ok(())
 }
 
-async fn load_any_scope_operation(
-    app: &AppHandle,
+async fn load_any_scope_operation<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     operation_id: &str,
 ) -> Result<Operation, String> {
     let path = crate::commands::journal_path(app)?;
@@ -909,7 +925,7 @@ async fn load_any_scope_operation(
 /// Replay unresolved deletion records after the active owner/workspace is
 /// restored. One bounded pass is intentional; the channel worker owns its own
 /// backoff, and a later workspace apply retries this outer record.
-pub(crate) async fn recover(app: &AppHandle) -> Result<(), String> {
+pub(crate) async fn recover<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let token = capture(app.clone()).await?.token;
     let mut after: Option<String> = None;
     let mut pending = Vec::new();

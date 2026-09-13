@@ -158,8 +158,8 @@ fn native_now() -> Result<i64, String> {
     i64::try_from(seconds).map_err(|_| "system clock unavailable".to_string())
 }
 
-fn persona_snapshot(
-    app: &AppHandle,
+fn persona_snapshot<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     persona_id: &str,
 ) -> Result<(AgentDefinition, Vec<ManagedAgentRecord>), String> {
     let state = app.state::<AppState>();
@@ -191,8 +191,8 @@ fn persona_snapshot(
     Ok((persona, targets))
 }
 
-fn revalidate_persona_targets_locked(
-    app: &AppHandle,
+fn revalidate_persona_targets_locked<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     persona_fence: &PersonaFence,
     expected_targets: &[ManagedAgentRecord],
 ) -> Result<(AgentDefinition, Vec<ManagedAgentRecord>), String> {
@@ -241,8 +241,8 @@ fn revalidate_persona_targets_locked(
     Ok((persona, records))
 }
 
-fn revalidate_persona_targets(
-    app: &AppHandle,
+fn revalidate_persona_targets<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     persona_fence: &PersonaFence,
     expected_targets: &[ManagedAgentRecord],
 ) -> Result<(AgentDefinition, Vec<ManagedAgentRecord>), String> {
@@ -258,8 +258,8 @@ fn revalidate_persona_targets(
     revalidate_persona_targets_locked(app, persona_fence, expected_targets)
 }
 
-async fn finalize_persona_delete(
-    app: &AppHandle,
+async fn finalize_persona_delete<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     persona: &PersonaFence,
     targets: &[CascadeTarget],
@@ -344,8 +344,8 @@ async fn finalize_persona_delete(
     assert_current(app.clone(), token).await
 }
 
-pub(super) async fn resume_persona_cascade(
-    app: AppHandle,
+pub(super) async fn resume_persona_cascade<R: tauri::Runtime>(
+    app: AppHandle<R>,
     token: OwnerScopeToken,
     mut operation: Operation,
     manual: bool,
@@ -527,8 +527,8 @@ pub(super) async fn resume_persona_cascade(
     Ok(())
 }
 
-fn load_scope_operation(
-    app: &AppHandle,
+fn load_scope_operation<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     operation_id: &str,
 ) -> Result<Option<Operation>, String> {
@@ -555,8 +555,8 @@ fn child_operation(parent_id: &str, target: &CascadeTarget) -> Result<NewOperati
     })
 }
 
-fn create_cascade_child(
-    app: &AppHandle,
+fn create_cascade_child<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: &OwnerScopeToken,
     parent_id: &str,
     target: &CascadeTarget,
@@ -650,8 +650,8 @@ fn build_persona_cascade_payload(
     Ok((parent, children))
 }
 
-async fn begin_persona_cascade(
-    app: &AppHandle,
+async fn begin_persona_cascade<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     token: OwnerScopeToken,
     persona_id: &str,
 ) -> Result<Operation, String> {
@@ -773,7 +773,10 @@ async fn begin_persona_cascade(
 /// durable coordinator.  The one-shot persona command keeps its existing
 /// visible behavior, while every linked instance now gets the same journaled
 /// stop, key, tombstone, and canvas cleanup as direct deletion.
-pub(crate) async fn delete_persona(app: AppHandle, persona_id: String) -> Result<(), String> {
+pub(crate) async fn delete_persona<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    persona_id: String,
+) -> Result<(), String> {
     let token = capture(app.clone()).await?.token;
     let operation = begin_persona_cascade(&app, token.clone(), &persona_id).await?;
     resume(app.clone(), token, operation, true).await?;
