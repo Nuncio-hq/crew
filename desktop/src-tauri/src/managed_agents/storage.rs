@@ -32,12 +32,6 @@ fn agent_secret_store() -> Option<&'static SecretStore> {
     }
 }
 
-#[cfg(test)]
-#[path = "key_delete_test_support.rs"]
-mod key_delete_test_support;
-#[cfg(test)]
-pub(crate) use key_delete_test_support::install_test_agent_key_delete;
-
 pub fn managed_agents_base_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let app_data_dir = app
         .path()
@@ -647,7 +641,7 @@ fn copy_agent_keys_between_stores(pubkeys: &[String], src: &impl KeyStore, dst: 
 /// failures rather than swallowing them.
 pub(crate) fn try_delete_agent_key(pubkey: &str) -> Result<(), String> {
     #[cfg(test)]
-    if let Some(result) = key_delete_test_support::test_agent_key_delete(pubkey) {
+    if let Some(result) = super::key_delete_test_support::test_agent_key_delete(pubkey) {
         return result;
     }
     if let Some(store) = agent_secret_store() {
