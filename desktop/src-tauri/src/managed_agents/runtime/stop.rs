@@ -551,11 +551,15 @@ mod stop_failure_tests {
         pid: u32,
         exited: Arc<AtomicBool>,
         reaper: Option<std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>>,
+        _ready_dir: tempfile::TempDir,
     }
 
     impl OwnedReceiptChild {
         fn spawn(instance_id: &str) -> Self {
-            let mut command = crate::managed_agent_delete::receipt_child_command(instance_id);
+            let ready_dir = tempfile::tempdir().expect("temporary receipt readiness directory");
+            let ready_path = ready_dir.path().join("ready");
+            let mut command =
+                crate::managed_agent_delete::receipt_child_command(instance_id, &ready_path);
             let mut child = command.spawn().expect("spawn finite receipt fixture");
             let pid = child.id();
             let exited = Arc::new(AtomicBool::new(false));
@@ -565,24 +569,42 @@ mod stop_failure_tests {
                 reaper_exited.store(true, Ordering::SeqCst);
                 result
             });
-            Self {
+            let child = Self {
                 pid,
                 exited,
                 reaper: Some(reaper),
-            }
+                _ready_dir: ready_dir,
+            };
+            child.wait_until_ready(&ready_path);
+            child
         }
 
         fn pid(&self) -> u32 {
             self.pid
         }
 
-        fn join(mut self) {
+        fn wait_until_ready(&self, ready_path: &std::path::Path) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !ready_path.is_file() {
+                assert!(
+                    !self.exited.load(Ordering::SeqCst),
+                    "receipt fixture exited before signaling readiness"
+                );
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "receipt fixture did not signal readiness before the deadline"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+
+        fn join(mut self) -> std::process::ExitStatus {
             self.reaper
                 .take()
                 .expect("receipt fixture reaper")
                 .join()
                 .expect("receipt fixture reaper thread")
-                .expect("receipt fixture wait");
+                .expect("receipt fixture wait")
         }
     }
 
@@ -694,7 +716,12 @@ mod stop_failure_tests {
 
         stop_managed_agent_process(&app.handle(), &mut record, &mut runtimes)
             .expect("receipt-owned pair must be stopped before deletion");
-        child.join();
+        use std::os::unix::process::ExitStatusExt;
+        let exit_status = child.join();
+        assert!(
+            exit_status.signal().is_some(),
+            "receipt-owned stop must terminate the live child"
+        );
 
         assert_eq!(record.runtime_pid, None);
         assert!(

@@ -100,6 +100,7 @@ struct OwnedReceiptChild {
     pid: u32,
     exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
     reaper: Option<std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>>,
+    _ready_dir: tempfile::TempDir,
 }
 
 #[cfg(unix)]
@@ -125,7 +126,9 @@ impl Drop for HomeGuard {
 #[cfg(unix)]
 impl OwnedReceiptChild {
     fn spawn(instance_id: &str) -> Self {
-        let mut command = receipt_child_command(instance_id);
+        let ready_dir = tempfile::tempdir().expect("temporary receipt readiness directory");
+        let ready_path = ready_dir.path().join("ready");
+        let mut command = receipt_child_command(instance_id, &ready_path);
         let mut child = command.spawn().expect("spawn live receipt fixture");
         let pid = child.id();
         let exited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -135,15 +138,36 @@ impl OwnedReceiptChild {
             reaper_exited.store(true, std::sync::atomic::Ordering::SeqCst);
             result
         });
-        Self {
+        let child = Self {
             pid,
             exited,
             reaper: Some(reaper),
-        }
+            _ready_dir: ready_dir,
+        };
+        child.wait_until_ready(&ready_path);
+        child
     }
 
     fn pid(&self) -> u32 {
         self.pid
+    }
+
+    fn wait_until_ready(&self, ready_path: &std::path::Path) {
+        use std::sync::atomic::Ordering;
+        use std::time::{Duration, Instant};
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready_path.is_file() {
+            assert!(
+                !self.exited.load(Ordering::SeqCst),
+                "live receipt fixture exited before signaling readiness"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "live receipt fixture did not signal readiness before the deadline"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     fn join(mut self) -> std::process::ExitStatus {
@@ -159,18 +183,26 @@ impl OwnedReceiptChild {
 /// Use our test executable: macOS omits the environment of `/bin/sleep` from
 /// KERN_PROCARGS2, preventing the real ownership matcher from seeing its marker.
 #[cfg(unix)]
-pub(crate) fn receipt_child_command(instance_id: &str) -> std::process::Command {
+pub(crate) fn receipt_child_command(
+    instance_id: &str,
+    ready_path: &std::path::Path,
+) -> std::process::Command {
     use std::os::unix::process::CommandExt;
+    let child_test_name = format!(
+        "{}::owned_receipt_child_process",
+        module_path!()
+            .split("::")
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join("::")
+    );
     let mut command = std::process::Command::new(
         std::env::current_exe().expect("locate the owned receipt fixture executable"),
     );
     command
-        .args([
-            "--exact",
-            concat!(module_path!(), "::owned_receipt_child_process"),
-            "--ignored",
-        ])
+        .args(["--exact", child_test_name.as_str(), "--ignored"])
         .env("BUZZ_MANAGED_AGENT", instance_id)
+        .env("BUZZ_RECEIPT_CHILD_READY", ready_path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -183,6 +215,9 @@ pub(crate) fn receipt_child_command(instance_id: &str) -> std::process::Command 
 #[ignore = "finite subprocess fixture, launched explicitly by receipt recovery tests"]
 fn owned_receipt_child_process() {
     assert!(std::env::var("BUZZ_MANAGED_AGENT").is_ok());
+    let ready_path =
+        std::env::var_os("BUZZ_RECEIPT_CHILD_READY").expect("receipt child readiness path");
+    std::fs::write(ready_path, b"ready").expect("signal receipt child readiness");
     std::thread::sleep(std::time::Duration::from_secs(30));
 }
 
