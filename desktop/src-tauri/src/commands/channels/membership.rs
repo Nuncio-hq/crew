@@ -59,8 +59,12 @@ mod tests {
         let relay = Keys::generate();
         let signer = relay.public_key().to_hex();
         let valid = snapshot(&relay, vec![vec!["d", "channel"]], 1);
-        assert!(channel_membership_snapshot(&[valid.clone()], &signer, "channel").is_ok());
-        assert!(channel_membership_snapshot(&[valid.clone()], &signer, "other").is_err());
+        assert!(
+            channel_membership_snapshot(std::slice::from_ref(&valid), &signer, "channel").is_ok()
+        );
+        assert!(
+            channel_membership_snapshot(std::slice::from_ref(&valid), &signer, "other").is_err()
+        );
         let foreign = snapshot(&Keys::generate(), vec![vec!["d", "channel"]], 2);
         assert!(channel_membership_snapshot(&[foreign], &signer, "channel").is_err());
         let mut tampered = valid.clone();
