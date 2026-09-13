@@ -14,6 +14,7 @@ import {
 } from "@/features/wiki/lib/wikiEvents";
 import type { OwnerOperationScope } from "@/shared/api/ownerOperations";
 import type { RelayEvent } from "@/shared/api/types";
+import type { WikiRepositoryReadStatus } from "@/shared/api/wikiSnapshot";
 import { WikiRuntimeSettingsControl } from "@/features/wiki/ui/WikiRuntimeSettingsControl";
 import { MAX_WIKI_SEARCH_QUERY_CHARS } from "@/shared/api/wikiSearch";
 
@@ -29,6 +30,9 @@ export function WikiHeaderControls({
   search,
   showCadence,
   repoState,
+  readError,
+  readPending,
+  readStatus,
   recoveryJob,
   onRecoveryRetry,
   onRecoveryReconcile,
@@ -48,6 +52,9 @@ export function WikiHeaderControls({
   search?: string;
   showCadence: boolean;
   repoState?: RelayEvent;
+  readError?: Error | null;
+  readPending?: boolean;
+  readStatus?: WikiRepositoryReadStatus;
   recoveryJob?: WikiJobState;
   onRecoveryRetry?: () => void;
   onRecoveryReconcile?: () => void;
@@ -89,13 +96,21 @@ export function WikiHeaderControls({
         className={freshness === "stale" ? "text-attention" : undefined}
         data-testid="wiki-freshness"
       >
-        {freshness === "stale"
-          ? `Stale · Last updated ${toc ? formatAge(toc.generatedAt) : ""}`
-          : freshness === "unknown"
-            ? "Freshness unavailable"
-            : toc
-              ? `Last updated ${formatAge(toc.generatedAt)}`
-              : "Never generated"}
+        {readPending
+          ? "Loading Wiki…"
+          : readError
+            ? "Wiki read unavailable"
+            : freshness === "stale"
+              ? `Stale · Last updated ${toc ? formatAge(toc.generatedAt) : ""}`
+              : freshness === "unknown"
+                ? "Freshness unavailable"
+                : toc
+                  ? `Last updated ${formatAge(toc.generatedAt)}`
+                  : readStatus?.unavailable
+                    ? "Wiki read unavailable"
+                    : readStatus?.state === "missing"
+                      ? "Never generated"
+                      : "Freshness unavailable"}
       </span>
       <span>⑂ {toc?.branch || "main"}</span>
       {canGenerate ? (

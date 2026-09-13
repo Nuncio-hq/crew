@@ -25,12 +25,15 @@ import { ProjectOutcomeThreadPanel } from "./ProjectOutcomeThreadPanel";
 
 export function ProjectOutcomeDetail({
   children,
+  contentOnly = false,
   openPlumbing = false,
   project,
   profiles,
   pullRequests,
 }: {
   children: React.ReactNode;
+  /** Let the child workspace occupy the primary reading surface. */
+  contentOnly?: boolean;
   openPlumbing?: boolean;
   project: Project;
   profiles?: UserProfileLookup;
@@ -99,9 +102,23 @@ export function ProjectOutcomeDetail({
   const crew = partitionProjectCrew(contributors, upstreamPubkeys);
 
   return (
-    <div className="flex min-w-0 gap-4" data-testid="project-outcome-page">
-      <div className="min-w-0 flex-1 space-y-4">
-        <section className="rounded-xl border border-border/60 bg-muted/10 p-4">
+    <div
+      className={cn("flex min-w-0 gap-4", contentOnly && "min-h-0 flex-1")}
+      data-testid="project-outcome-page"
+    >
+      <div
+        className={cn(
+          "min-w-0 flex-1",
+          contentOnly && "flex min-h-0 flex-col",
+          !contentOnly && "space-y-4",
+        )}
+      >
+        <section
+          className={cn(
+            "rounded-xl border border-border/60 bg-muted/10 p-4",
+            contentOnly && "hidden",
+          )}
+        >
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-border/60 bg-muted/40">
               <FolderGit2 className="h-5 w-5 text-muted-foreground" />
@@ -118,7 +135,10 @@ export function ProjectOutcomeDetail({
         </section>
 
         <section
-          className="rounded-xl border border-border/60"
+          className={cn(
+            "rounded-xl border border-border/60",
+            contentOnly && "hidden",
+          )}
           data-testid="project-ship-log"
         >
           <div className="flex items-center gap-2 border-b border-border/50 px-4 py-3">
@@ -156,7 +176,10 @@ export function ProjectOutcomeDetail({
         </section>
 
         <section
-          className="rounded-xl border border-border/60"
+          className={cn(
+            "rounded-xl border border-border/60",
+            contentOnly && "hidden",
+          )}
           data-testid="project-in-flight"
         >
           <div className="flex items-center gap-2 border-b border-border/50 px-4 py-3">
@@ -192,7 +215,10 @@ export function ProjectOutcomeDetail({
         </section>
 
         <section
-          className="rounded-xl border border-border/60"
+          className={cn(
+            "rounded-xl border border-border/60",
+            contentOnly && "hidden",
+          )}
           data-testid="project-crew"
         >
           <div className="flex items-center gap-2 border-b border-border/50 px-4 py-3">
@@ -231,18 +257,36 @@ export function ProjectOutcomeDetail({
         </section>
 
         <details
+          className={
+            contentOnly
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden [&::details-content]:flex [&::details-content]:min-h-0 [&::details-content]:flex-1 [&::details-content]:flex-col [&::details-content]:overflow-hidden"
+              : undefined
+          }
           data-testid="project-plumbing"
           onToggle={(event) => setPlumbingOpen(event.currentTarget.open)}
-          open={plumbingOpen}
+          open={contentOnly || plumbingOpen}
         >
-          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-border/60 px-4 py-3 text-sm font-semibold text-foreground">
+          <summary
+            className={cn(
+              "flex cursor-pointer list-none items-center gap-2 rounded-xl border border-border/60 px-4 py-3 text-sm font-semibold text-foreground",
+              contentOnly && "hidden",
+            )}
+          >
             <ChevronDown className="h-4 w-4" />
             Plumbing
             <span className="ml-auto text-xs font-normal text-muted-foreground">
               Files · Commits · Issues · PRs · Contributors
             </span>
           </summary>
-          <div className={cn("mt-3")}>{children}</div>
+          <div
+            className={cn(
+              "mt-3",
+              contentOnly &&
+                "mt-0 flex min-h-0 flex-1 flex-col overflow-hidden",
+            )}
+          >
+            {children}
+          </div>
         </details>
       </div>
       {openThread ? (

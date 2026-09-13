@@ -446,6 +446,14 @@ export function useWikiEventsQuery(
   return {
     ...repoQuery,
     data,
+    // Keep repository-read state separate from the company query. A project
+    // tab must not hide an accepted repository snapshot because the unrelated
+    // company Wiki request is still loading or has failed.
+    repositoryError: repoQuery.error
+      ? new Error(errorMessage(repoQuery.error))
+      : null,
+    repositoryFetching: repoQuery.isFetching,
+    repositoryPending: repoQuery.isPending,
     error:
       scopeError ??
       repoQuery.error ??

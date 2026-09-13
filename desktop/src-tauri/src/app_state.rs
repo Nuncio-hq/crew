@@ -34,6 +34,11 @@ pub struct AppState {
     /// Workspace-provided relay URL override. Set by `apply_workspace` on app
     /// init and takes priority over env vars and compile-time defaults.
     pub relay_url_override: Mutex<Option<String>>,
+    /// Serializes a complete workspace apply, including deferred launch
+    /// restoration. The inner workspace lock remains the scope-capture and
+    /// mutation fence; this outer lock is transferred through restoration so
+    /// queued applies cannot enter while restore is still using that fence.
+    pub workspace_apply_transaction_lock: Arc<AsyncMutex<()>>,
     pub workspace_apply_lock: Arc<AsyncMutex<()>>,
     pub workspace_apply_generation: AtomicU64,
     /// Set during backend setup when managed agents are eligible for launch
@@ -223,6 +228,7 @@ pub fn build_app_state() -> AppState {
              header across origins (redirect-hop SSRF)",
         ),
         relay_url_override: Mutex::new(None),
+        workspace_apply_transaction_lock: Arc::new(AsyncMutex::new(())),
         workspace_apply_lock: Arc::new(AsyncMutex::new(())),
         workspace_apply_generation: AtomicU64::new(0),
         managed_agent_restore_pending: AtomicBool::new(false),

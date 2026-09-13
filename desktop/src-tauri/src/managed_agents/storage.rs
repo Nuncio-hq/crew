@@ -289,9 +289,21 @@ fn load_agent_store<R: tauri::Runtime>(
 pub fn load_managed_agents<R: tauri::Runtime>(
     app: &AppHandle<R>,
 ) -> Result<Vec<ManagedAgentRecord>, String> {
+    let mut records = load_managed_agent_metadata(app)?;
+    hydrate_keys(&mut records);
+    Ok(records)
+}
+
+/// Load keyed agent records without consulting the keyring.
+///
+/// Metadata readers use this path for rendering, status, and eligibility
+/// decisions that do not require a signing key. Callers that will start or
+/// deploy an agent must hydrate only the selected records before using them.
+pub(crate) fn load_managed_agent_metadata<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<ManagedAgentRecord>, String> {
     let mut records = load_agent_store(app)?;
     records.retain(|record| !record.pubkey.is_empty());
-    hydrate_keys(&mut records);
     Ok(records)
 }
 
@@ -323,16 +335,10 @@ pub(crate) fn backup_invalid_store(path: &Path) {
     }
 }
 
-/// Fill in each record's in-memory `private_key_nsec` from the keyring, and
-/// opportunistically re-migrate any key that is still inline.
-///
-/// - Empty key → fetch it from the keyring (the normal keyring-backed case).
-/// - Non-empty key → the JSON carried it inline because the keyring was
-///   unreachable at its last save. Re-migrate it now ([`migrate_inline_key`]):
-///   if the keyring is reachable this boot, write-verify-strip so the next save
-///   writes clean JSON and plaintext stops lingering on disk; if still
-///   unreachable, leave it inline. This makes the strip deterministic on the
-///   next reachable boot rather than waiting for a non-deterministic save.
+/// Fill empty `private_key_nsec` values from the keyring. Re-migrate inline
+/// residue through [`migrate_inline_key`] while retaining the in-memory key.
+/// Saves strip inline keys only after verifying the keyring copy; an outage
+/// leaves them intact so a later boot can retry migration.
 fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
     let Some(store) = agent_secret_store() else {
         return;
@@ -340,14 +346,22 @@ fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
     hydrate_keys_with(store, records);
 }
 
+/// Hydrate only records selected by the caller's runtime policy.
+pub(crate) fn hydrate_selected_managed_agent_keys(
+    records: &mut [ManagedAgentRecord],
+    should_hydrate: impl Fn(&ManagedAgentRecord) -> bool,
+) {
+    let Some(store) = agent_secret_store() else {
+        return;
+    };
+    hydrate_selected_keys_with(store, records, should_hydrate);
+}
+
 /// Testable core of [`hydrate_keys`], generic over the [`KeyStore`] seam.
 ///
-/// A keyring LOAD error (`Err`) is an OUTAGE — distinct from `Ok(None)`
-/// (genuinely absent). On an outage the key is left empty and the record is
-/// surfaced as unavailable rather than silently swallowed: callers must refuse
-/// to spawn an agent whose key could not be read (see the empty-key bail in
-/// `spawn_agent_child`). Empty here never means "fine" — it means "no usable
-/// key this boot."
+/// A LOAD error is an outage, distinct from `Ok(None)` (absent). Both leave the
+/// key empty and report why it is unavailable; `spawn_agent_child` must refuse
+/// that record until it has a usable key.
 fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) {
     for record in records.iter_mut() {
         // A key-less definition (no pubkey yet — unified agent model) has no
@@ -382,6 +396,19 @@ fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) 
             // then strips it from JSON. Outcome is intentionally ignored:
             // on failure the key simply stays inline until a later boot.
             let _ = migrate_inline_key(store, record);
+        }
+    }
+}
+
+/// Testable core for [`hydrate_selected_managed_agent_keys`].
+fn hydrate_selected_keys_with(
+    store: &impl KeyStore,
+    records: &mut [ManagedAgentRecord],
+    should_hydrate: impl Fn(&ManagedAgentRecord) -> bool,
+) {
+    for record in records.iter_mut() {
+        if should_hydrate(record) {
+            hydrate_keys_with(store, std::slice::from_mut(record));
         }
     }
 }

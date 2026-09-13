@@ -1,11 +1,12 @@
 use super::{
     bestie_assignment::recover_pending_assignment_cleanup, find_managed_agent_mut,
-    kill_stale_tracked_processes, load_managed_agents, load_personas, managed_agents_base_dir,
-    save_managed_agents, spawn_agent_child, sync_managed_agent_processes, BackendKind,
-    ManagedAgentProcess,
+    hydrate_selected_managed_agent_keys, kill_stale_tracked_processes, load_managed_agent_metadata,
+    load_personas, managed_agents_base_dir, save_managed_agents, spawn_agent_child,
+    sync_managed_agent_processes, BackendKind, ManagedAgentProcess,
 };
 use crate::app_state::AppState;
 use crate::util;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 
@@ -47,7 +48,7 @@ pub fn backfill_persona_snapshots(app: &tauri::AppHandle) -> Result<(), String> 
         .lock()
         .map_err(|error| error.to_string())?;
 
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let needs_backfill = records
         .iter()
         .any(|r| r.persona_id.is_some() && r.persona_source_version.is_none());
@@ -131,7 +132,7 @@ pub async fn restore_managed_agents_on_launch(
             return Ok(());
         }
 
-        let mut records = load_managed_agents(app)?;
+        let mut records = load_managed_agent_metadata(app)?;
         recover_pending_assignment_cleanup(&managed_agents_base_dir(app)?, |pending_pubkey| {
             records
                 .iter()
@@ -204,7 +205,7 @@ pub async fn restore_managed_agents_on_launch(
             .map(|record| record.pubkey.clone())
             .collect();
 
-        let mut to_start = Vec::new();
+        let mut to_start_pubkeys = Vec::new();
         for pubkey in &candidates {
             if let Some(runtime) = runtimes
                 .iter_mut()
@@ -221,10 +222,25 @@ pub async fn restore_managed_agents_on_launch(
                         continue;
                     }
                 }
-                to_start.push(record.clone());
+                to_start_pubkeys.push(record.pubkey.clone());
             }
         }
-        agents_to_start = to_start;
+        // Decide liveness and deletion eligibility from metadata first. Only
+        // records that will actually spawn may consult the keyring.
+        hydrate_selected_managed_agent_keys(&mut records, |record| {
+            to_start_pubkeys
+                .iter()
+                .any(|pubkey| pubkey == &record.pubkey)
+        });
+        agents_to_start = records
+            .iter()
+            .filter(|record| {
+                to_start_pubkeys
+                    .iter()
+                    .any(|pubkey| pubkey == &record.pubkey)
+            })
+            .cloned()
+            .collect();
 
         // Re-snapshot persona config for agents about to be restored, matching
         // the interactive spawn path so auto-start agents also pick up the
@@ -422,13 +438,14 @@ pub async fn restore_managed_agents_on_launch(
         .managed_agents_store_lock
         .lock()
         .map_err(|error| error.to_string())?;
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let mut runtimes = state
         .managed_agent_processes
         .lock()
         .map_err(|error| error.to_string())?;
 
     let mut successfully_spawned: Vec<String> = Vec::new();
+    let mut successfully_spawned_keys = HashMap::new();
 
     for (pubkey, outcome) in spawn_results {
         match outcome {
@@ -467,6 +484,13 @@ pub async fn restore_managed_agents_on_launch(
                     owner_hex.as_deref(),
                 );
                 runtimes.insert(key, runtime);
+                if let Some(source_record) = agents_to_start
+                    .iter()
+                    .find(|candidate| candidate.pubkey == pubkey)
+                {
+                    successfully_spawned_keys
+                        .insert(pubkey.clone(), source_record.private_key_nsec.clone());
+                }
                 successfully_spawned.push(pubkey);
             }
             SpawnOutcome::Failed(error) => {
@@ -484,36 +508,13 @@ pub async fn restore_managed_agents_on_launch(
     // start_managed_agent — ensuring boot-restored agents get the same profile
     // self-healing as UI-started agents.
     let reconcile_personas = super::load_personas(app).unwrap_or_default();
-    let reconcile_items: Vec<(String, crate::commands::ProfileReconcileData)> =
-        successfully_spawned
-            .iter()
-            .filter_map(|pubkey| {
-                let record = records.iter().find(|r| r.pubkey == *pubkey)?;
-                // Resolve the effective harness for the avatar-fallback
-                // derivation (the snapshot may be empty/stale for an inherited
-                // harness). Mirrors the UI start path.
-                let effective_command =
-                    crate::managed_agents::record_agent_command(record, &reconcile_personas);
-                Some((
-                    pubkey.clone(),
-                    crate::commands::ProfileReconcileData {
-                        private_key_nsec: record.private_key_nsec.clone(),
-                        name: record.name.clone(),
-                        relay_url: record.relay_url.clone(),
-                        target_relay_url: Some(crate::relay::relay_ws_url_with_override(&state)),
-                        avatar_url: record.avatar_url.clone(),
-                        auth_tag: record.auth_tag.clone(),
-                        pubkey: record.pubkey.clone(),
-                        agent_command: effective_command,
-                        persona_id: record.persona_id.clone(),
-                        about: crate::managed_agents::record_effective_description(
-                            record,
-                            &reconcile_personas,
-                        ),
-                    },
-                ))
-            })
-            .collect();
+    let reconcile_items = build_restore_profile_reconcile_items(
+        &records,
+        &successfully_spawned,
+        &successfully_spawned_keys,
+        &reconcile_personas,
+        &crate::relay::relay_ws_url_with_override(&state),
+    );
 
     save_managed_agents(app, &records)?;
     drop(runtimes);
@@ -542,6 +543,48 @@ pub async fn restore_managed_agents_on_launch(
     }
 
     Ok(())
+}
+
+fn build_restore_profile_reconcile_items(
+    records: &[super::ManagedAgentRecord],
+    successfully_spawned: &[String],
+    successfully_spawned_keys: &HashMap<String, String>,
+    personas: &[crate::managed_agents::AgentDefinition],
+    target_relay_url: &str,
+) -> Vec<(String, crate::commands::ProfileReconcileData)> {
+    successfully_spawned
+        .iter()
+        .filter_map(|pubkey| {
+            let record = records.iter().find(|record| record.pubkey == *pubkey)?;
+            // Resolve the effective harness for the avatar-fallback derivation
+            // (the snapshot may be empty/stale for an inherited harness).
+            // Mirrors the UI start path.
+            let effective_command = crate::managed_agents::record_agent_command(record, personas);
+            Some((
+                pubkey.clone(),
+                crate::commands::ProfileReconcileData {
+                    // Phase C reloads metadata without touching the keyring, so
+                    // carry the key captured for this successfully spawned
+                    // pubkey in Phase B. The record fallback preserves the
+                    // existing refusal/logging behavior if the invariant is
+                    // ever violated.
+                    private_key_nsec: successfully_spawned_keys
+                        .get(pubkey)
+                        .cloned()
+                        .unwrap_or_else(|| record.private_key_nsec.clone()),
+                    name: record.name.clone(),
+                    relay_url: record.relay_url.clone(),
+                    target_relay_url: Some(target_relay_url.to_string()),
+                    avatar_url: record.avatar_url.clone(),
+                    auth_tag: record.auth_tag.clone(),
+                    pubkey: record.pubkey.clone(),
+                    agent_command: effective_command,
+                    persona_id: record.persona_id.clone(),
+                    about: crate::managed_agents::record_effective_description(record, personas),
+                },
+            ))
+        })
+        .collect()
 }
 
 fn profile_reconcile_completed(outcome: crate::commands::ProfileReconcileOutcome) -> bool {
@@ -603,8 +646,56 @@ pub(crate) fn spawn_pending_profile_reconciliations(app: &tauri::AppHandle, work
 
 #[cfg(test)]
 mod profile_reconcile_tests {
-    use super::profile_reconcile_completed;
+    use super::{build_restore_profile_reconcile_items, profile_reconcile_completed};
     use crate::commands::ProfileReconcileOutcome;
+    use crate::managed_agents::ManagedAgentRecord;
+    use std::collections::HashMap;
+
+    fn test_record(
+        pubkey: &str,
+        private_key_nsec: &str,
+        start_on_app_launch: bool,
+    ) -> ManagedAgentRecord {
+        serde_json::from_value(serde_json::json!({
+            "pubkey": pubkey,
+            "name": "restored-agent",
+            "private_key_nsec": private_key_nsec,
+            "relay_url": "wss://relay.example.com",
+            "acp_command": "buzz-acp",
+            "agent_command": "goose",
+            "agent_args": [],
+            "mcp_command": "",
+            "turn_timeout_seconds": 320,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "start_on_app_launch": start_on_app_launch
+        }))
+        .expect("sample restore record")
+    }
+
+    #[test]
+    fn restored_profile_data_carries_hydrated_key_and_filters_excluded_records() {
+        let selected_key = "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5";
+        let selected_phase_c = test_record("selected", "", true);
+        let excluded_phase_c = test_record("excluded", "", false);
+        let mut successfully_spawned_keys = HashMap::new();
+        successfully_spawned_keys.insert("selected".to_string(), selected_key.to_string());
+
+        let items = build_restore_profile_reconcile_items(
+            &[selected_phase_c, excluded_phase_c.clone()],
+            &["selected".to_string()],
+            &successfully_spawned_keys,
+            &[],
+            "ws://relay.example.com",
+        );
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, "selected");
+        assert_eq!(items[0].1.private_key_nsec, selected_key);
+        assert!(nostr::Keys::parse(&items[0].1.private_key_nsec).is_ok());
+        assert!(excluded_phase_c.private_key_nsec.is_empty());
+        assert!(items.iter().all(|(pubkey, _)| pubkey != "excluded"));
+    }
 
     #[test]
     fn skipped_reconciliation_never_retires_pending_work() {
@@ -628,7 +719,7 @@ fn persist_restore_error(
         .managed_agents_store_lock
         .lock()
         .map_err(|error| error.to_string())?;
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let record = find_managed_agent_mut(&mut records, pubkey)?;
     record.updated_at = util::now_iso();
     record.last_error = Some(error);

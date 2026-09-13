@@ -430,7 +430,7 @@ export function WorkspaceTabs({
 
   return (
     <Tabs
-      className="flex min-w-0 flex-1 flex-col space-y-3"
+      className="flex min-h-0 min-w-0 flex-1 flex-col space-y-3 overflow-hidden"
       onValueChange={handleTabChange}
       value={selectedTab}
     >
@@ -468,7 +468,7 @@ export function WorkspaceTabs({
       {/* Project content follows the same borderless flow as work-item details.
           Inner panels retain standalone chrome, neutralized here. */}
       <div
-        className="-mx-4 flex flex-1 flex-col [&_[data-project-detail-panel]]:rounded-none [&_[data-project-detail-panel]]:border-0"
+        className="-mx-4 flex min-h-0 flex-1 flex-col [&_[data-project-detail-panel]]:rounded-none [&_[data-project-detail-panel]]:border-0"
         data-testid="project-workspace-panel"
       >
         {sectionHeader}
@@ -641,7 +641,10 @@ export function WorkspaceTabs({
           />
         </TabsContent>
 
-        <TabsContent className="m-0" value="wiki">
+        <TabsContent
+          className="m-0 min-h-0 flex-1 flex-col data-[state=active]:flex"
+          value="wiki"
+        >
           <WikiProjectTab project={project} projectId={projectId} />
         </TabsContent>
         <TabsContent className="m-0" value="contributors">

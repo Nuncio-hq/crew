@@ -5,8 +5,8 @@ use tauri::AppHandle;
 use crate::{
     app_state::AppState,
     managed_agents::{
-        find_managed_agent_mut, load_managed_agents, save_managed_agents, BackendKind,
-        ManagedAgentRecord,
+        find_managed_agent_mut, hydrate_selected_managed_agent_keys, load_managed_agent_metadata,
+        save_managed_agents, BackendKind, ManagedAgentRecord,
     },
     util::now_iso,
 };
@@ -68,7 +68,11 @@ pub(crate) async fn reconcile_on_workspace_apply(
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
-        collect_targets_with(load_managed_agents(app)?, owner_only_access, |record| {
+        let mut records = load_managed_agent_metadata(app)?;
+        hydrate_selected_managed_agent_keys(&mut records, |record| {
+            needs_reconciliation_with_policy(record, owner_only_access)
+        });
+        collect_targets_with(records, owner_only_access, |record| {
             super::build_deploy_payload(app, state, record)
         })
     };
@@ -123,7 +127,7 @@ pub(crate) fn persist_failure(
         .managed_agents_store_lock
         .lock()
         .map_err(|lock_error| lock_error.to_string())?;
-    let mut records = load_managed_agents(app)?;
+    let mut records = load_managed_agent_metadata(app)?;
     let record = find_managed_agent_mut(&mut records, pubkey)?;
     record.last_error = Some(error.to_string());
     record.updated_at = now_iso();

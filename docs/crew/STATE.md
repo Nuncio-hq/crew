@@ -34,8 +34,10 @@ attempt, and AUTH event. Staging and turn/receipt acceptance remain #338 gates.
 
 ## Desktop
 
-Channel-first IA (Inbox, channels, and DMs; no Projects/Workbench/Org nav).
-Workbench has no door; Focus is [#354](https://github.com/Nuncio-hq/crew/issues/354),
+CompanyOS navigation includes Inbox, channels, DMs, Projects, and Workflows
+under the accepted D-078 / Stage 0 contract. Projects expose their Wiki and
+channels; a separate Workbench picker remains absent.
+Focus is [#354](https://github.com/Nuncio-hq/crew/issues/354),
 observer completion is [#352](https://github.com/Nuncio-hq/crew/issues/352). Tool Pane,
 Crew Dark, text-only zoom, the 1000-line ratchet, and composer-revision mention
 flow are shipped. Agent membership is unknown unless runtime nonce, transport,
@@ -43,7 +45,8 @@ and community scope match.
 Project Wiki Read, bounded full-body Search, and revision-bound Source view are
 shipped in [#397](https://github.com/Nuncio-hq/crew/pull/397). Native generation/
 publication, Ask/History, and installed staging acceptance remain separate
-gates (#348/#362/#363/#366/#367).
+gates (#362/#363/#364/#366/#367); completing the staging environment (#348)
+does not complete those feature acceptance checks.
 The reader remembers page and scroll position only within the captured
 owner/community, Project, repository, and door. Source controls require a
 current native grant and an exact recorded page reference; the source list and
@@ -72,8 +75,9 @@ enforces NIP-42 plus NIP-43. The earlier stop → restore lifecycle remains
 historical evidence for relay `a1fe2c6`/schema `45`; current production CLI
 verification passed against source `37577a3aee801d8bbb7b501732b3bb2b04d9c125`
 and schema `46`, reusing the existing probe without a new event. The daily
-relay and app-data tree were not used. See the [#348 production verification
-comment](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5646675058).
+relay and app-data tree were not used. The installed staging app also read the
+existing private verification probe with the staging identity; #348 is closed.
+See the [#348 completion and native screenshot](https://github.com/Nuncio-hq/crew/issues/348#issuecomment-5650182314).
 This is separate from the historical AUTH challenge/close symptoms in
 [#338](https://github.com/Nuncio-hq/crew/issues/338), which still have no
 established transport root cause.
