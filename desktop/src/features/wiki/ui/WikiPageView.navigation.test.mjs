@@ -409,7 +409,7 @@ test("Wiki falls back to a surviving page with a clear notice when the saved pag
   }
 });
 
-test("Wiki does not reuse a replacement event that keeps the saved page slug", async () => {
+test("Wiki keeps a selected page when publication refresh changes its event id", async () => {
   writeWikiNavigationState(identity(), {
     pageId: runtime.event.id,
     pageSlug: runtime.slug,
@@ -426,14 +426,68 @@ test("Wiki does not reuse a replacement event that keeps the saved page slug", a
     pages: [intro, replacement],
   });
   try {
-    await waitFor(() => screen.getByTestId("wiki-navigation-fallback"));
-    assert.match(
-      screen.getByTestId("wiki-navigation-fallback").textContent,
-      /no longer available/u,
+    await waitFor(() => screen.getByText("Replacement body"));
+    assert.equal(screen.queryByTestId("wiki-navigation-fallback"), null);
+    assert.equal(
+      readWikiNavigationState(identity()).pageId,
+      replacement.event.id,
     );
-    assert.ok(screen.getByText("Intro body"));
-    assert.equal(screen.queryByText("Replacement body"), null);
-    assert.equal(readWikiNavigationState(identity()).pageId, intro.event.id);
+    assert.equal(readWikiNavigationState(identity()).pageSlug, runtime.slug);
+  } finally {
+    await act(async () => mounted.view.unmount());
+    mounted.client.clear();
+    mounted.client.unmount();
+  }
+});
+
+test("Wiki keeps the active non-first page through an in-place publication refresh", async () => {
+  const mounted = mount();
+  try {
+    await waitFor(() => screen.getByText("Intro body"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-toc-runtime"));
+    });
+    await waitFor(() => screen.getByText("Runtime body"));
+
+    const refreshedIntro = page(
+      "3".repeat(64),
+      intro.slug,
+      "Refreshed introduction",
+      "Refreshed intro body",
+    );
+    const refreshedRuntime = page(
+      "4".repeat(64),
+      runtime.slug,
+      "Refreshed runtime",
+      "Refreshed runtime body",
+    );
+    const refreshedToc = { ...toc, event: refreshedIntro.event };
+    await act(async () => {
+      mounted.view.rerender(
+        React.createElement(
+          QueryClientProvider,
+          { client: mounted.client },
+          React.createElement(
+            WikiPageView,
+            viewProps({
+              page: refreshedIntro,
+              pages: [refreshedIntro, refreshedRuntime],
+              toc: refreshedToc,
+            }),
+          ),
+        ),
+      );
+    });
+    await waitFor(() => screen.getByText("Refreshed runtime body"));
+    assert.equal(screen.queryByTestId("wiki-navigation-fallback"), null);
+    assert.equal(
+      readWikiNavigationState(identity()).pageId,
+      refreshedRuntime.event.id,
+    );
+    assert.equal(
+      readWikiNavigationState(identity()).pageSlug,
+      refreshedRuntime.slug,
+    );
   } finally {
     await act(async () => mounted.view.unmount());
     mounted.client.clear();

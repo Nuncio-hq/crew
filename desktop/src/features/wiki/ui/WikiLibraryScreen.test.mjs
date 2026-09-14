@@ -286,8 +286,13 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
     if (command === "get_media_proxy_port") return null;
     if (command === "list_hermes_profiles")
       return ["saved-profile", "other-profile"];
-    if (command === "wiki_publication_prepare")
+    if (command === "wiki_publication_prepare") {
+      if (options.prepare) {
+        listedJob = generationJob();
+        return await options.prepare;
+      }
       throw new Error("fixture stops after launch");
+    }
     if (command === "wiki_publication_list") {
       return { token: expected, value: options.noJob ? [] : [listedJob] };
     }
@@ -612,13 +617,11 @@ test("Codex generation accepts a blank optional model and records runtime defaul
     const start = await screen.findByRole("button", {
       name: "Start generation",
     });
+    const model = await screen.findByRole("textbox", {
+      name: "Wiki runtime model",
+    });
     await act(async () =>
-      fireEvent.change(
-        screen.getByRole("textbox", { name: "Wiki runtime model" }),
-        {
-          target: { value: "   " },
-        },
-      ),
+      fireEvent.change(model, { target: { value: "   " } }),
     );
     await waitFor(() => assert.equal(start.disabled, false));
     await act(async () => fireEvent.click(start));
@@ -742,6 +745,60 @@ test("initial native generation shows clear progress and only the real Cancel ac
       screen.getByTestId("wiki-generate-mirror").disabled,
       false,
       "a terminal canceled draft permits a new Generate",
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a canceled generation does not duplicate its durable prepare error", async () => {
+  const calls = [];
+  const message = canceledGenerationJob().lastError;
+  let rejectPrepare;
+  const prepare = new Promise((_, reject) => {
+    rejectPrepare = reject;
+  });
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: { ...canceledGenerationJob(), id: "previous-generation" },
+    prepare,
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () => fireEvent.click(start));
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    const cancel = await screen.findByRole(
+      "button",
+      { name: "Cancel", exact: true },
+      { timeout: 5000 },
+    );
+    await act(async () => fireEvent.click(cancel));
+    await waitFor(() =>
+      assert.ok(screen.queryByTestId("wiki-generation-canceled")),
+    );
+    await act(async () => rejectPrepare(new Error(message)));
+    await waitFor(() =>
+      assert.ok(
+        mounted.client
+          .getMutationCache()
+          .getAll()
+          .some((candidate) => candidate.state.status === "error"),
+      ),
+    );
+    assert.equal(screen.getAllByText(message).length, 1);
+    assert.equal(screen.queryByTestId("wiki-generate-error") === null, true);
+    assert.equal(
+      screen.getByTestId("wiki-generation-canceled").textContent,
+      message,
     );
   } finally {
     mounted.dispose();

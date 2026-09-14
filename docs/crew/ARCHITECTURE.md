@@ -547,8 +547,11 @@ acceptance must run in the #348 staging environment; #348 owns that environment
 and #363 owns the runtime acceptance result. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
 selected page and bounded scroll position under the captured owner/community,
-parent Project, repository coordinate, and door; when a saved page is gone, it
-selects a surviving page and explains the fallback. Source file controls are
+parent Project, repository coordinate, and door. A publication refresh may
+replace signed page event IDs; when the selected slug remains in the new
+publication, the reader preserves that logical selection and records the
+current event ID. When the saved slug is gone, it selects a surviving page and
+explains the fallback. Source file controls are
 fail-closed: they require a native grant in the current scope and an exact
 recorded page reference, and never open current checkout bytes or arbitrary
 line ranges when that evidence is unavailable. The source list and Markdown
@@ -778,3 +781,20 @@ and stale view completion cannot settle a newer request. Only a confirmed
 `not_attempted` publication unlocks retry; an unknown send remains unconfirmed.
 The transcript remains mounted alongside these controls. This source composition
 has Node proof; native batch, full CI, review and staging acceptance remain gates.
+
+## Installed Wiki runtime authentication (#363)
+
+The installed Wiki adapter uses disposable runtime state and hands off only
+the existing subscription access credential. Hermes authentication remains
+owned by its selected staged profile. Claude reads the current user's native
+Keychain entry (`Claude Code-credentials`) and passes only its unexpired access
+token in the child environment; the refresh token is never copied. Codex reads
+the host `CODEX_HOME/auth.json` and writes a private child file containing the
+access, identity, account, and exact `last_refresh` fields plus the parser
+required empty refresh field; API keys and refresh tokens are omitted. Missing,
+malformed, oversized, or expired credentials fail before launch. The child
+configs use fresh state and no user settings. Claude uses restricted mode,
+strict MCP config, and an empty tool list; Codex retains read-only sandboxing
+and explicit shell feature disables. These flags are launch controls, not proof
+of Codex snapshot-only or complete tool isolation; installed generation and
+credential renewal remain acceptance requirements.

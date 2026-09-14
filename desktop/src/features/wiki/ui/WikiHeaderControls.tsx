@@ -94,6 +94,12 @@ export function WikiHeaderControls({
       ? wikiRecoveryActionLabel(affordance)
       : null;
   const canceledGeneration = isCanceledWikiGeneration(recoveryJob);
+  // A prepare rejection can repeat the durable terminal message already
+  // rendered below. Keep one user-facing copy while preserving other errors.
+  const duplicateGenerationError =
+    canceledGeneration &&
+    Boolean(recoveryJob?.error) &&
+    generateError === recoveryJob?.error;
   const sourceBranch = defaultBranchCommit(repoState)?.branch ?? toc?.branch;
   return (
     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-2xs text-muted-foreground">
@@ -193,7 +199,7 @@ export function WikiHeaderControls({
           {cadenceError}
         </span>
       ) : null}
-      {generateError ? (
+      {generateError && !duplicateGenerationError ? (
         <span
           className="text-destructive"
           data-testid="wiki-generate-error"

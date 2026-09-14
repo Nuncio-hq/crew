@@ -421,9 +421,15 @@ export function WikiPageView({
       const saved = navigationIdentity
         ? readWikiNavigationState(navigationIdentity)
         : null;
+      // Publication updates issue fresh signed event IDs while keeping the
+      // page slug stable. Prefer the exact event when it survives, then use
+      // the slug only when the current publication still contains it.
       const savedPage = saved
         ? saved.pageId
-          ? availablePages.find((item) => item.event.id === saved.pageId)
+          ? (availablePages.find((item) => item.event.id === saved.pageId) ??
+            (saved.pageSlug
+              ? availablePages.find((item) => item.slug === saved.pageSlug)
+              : null))
           : saved.pageSlug
             ? availablePages.find((item) => item.slug === saved.pageSlug)
             : null
@@ -483,6 +489,28 @@ export function WikiPageView({
     shown,
     startScrollRestore,
   ]);
+
+  React.useEffect(() => {
+    if (!navigationIdentity || !navigationKey || !shown) return;
+    const saved = readWikiNavigationState(navigationIdentity);
+    if (saved?.pageSlug !== shown.slug || saved.pageId === shown.event.id) {
+      return;
+    }
+    const scrollTop = scrollRef.current?.scrollTop ?? saved.scrollTop;
+    writeWikiNavigationState(navigationIdentity, {
+      pageId: shown.event.id || null,
+      pageSlug: shown.slug,
+      scrollTop,
+    });
+    const snapshot = navigationSnapshotRef.current;
+    if (snapshot?.key === navigationKey && snapshot.activeSlug === shown.slug) {
+      navigationSnapshotRef.current = {
+        ...snapshot,
+        page: shown,
+        scrollTop,
+      };
+    }
+  }, [navigationIdentity, navigationKey, shown]);
 
   React.useLayoutEffect(() => {
     if (!navigationIdentity || !navigationKey || !shown) return;
