@@ -48,11 +48,11 @@ export async function awaitSteerTurnOutcome({
     unsubscribe();
     cancelTimeout();
   };
-  const settle = (outcome: SteerTurnOutcome, error?: string | null) => {
+  const settle = (outcome: SteerTurnOutcome, error?: unknown) => {
     if (settled) return;
     settled = true;
     cleanup();
-    const detail = error?.trim();
+    const detail = typeof error === "string" ? error.trim() : undefined;
     resolveResult(detail ? { outcome, error: detail } : { outcome });
   };
   const fail = (error: unknown) => {

@@ -238,6 +238,29 @@ test("rejected Steer feedback falls back when the native reason is absent", asyn
     /The selected runtime rejected Steer\. You can retry\./,
   );
 });
+test("rejected Steer feedback ignores a malformed native reason", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      { target: { value: "retry safely" } },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () => h.steerResult({ status: "rejected", error: 503 }));
+  assert.match(
+    view.getByRole("status").textContent,
+    /The selected runtime rejected Steer\. You can retry\./,
+  );
+});
 test("same-tick Stop publishes once with immutable exact turn and waits for correlated native result", async () => {
   const { render, act } = await import("@testing-library/react");
   const h = harness();
