@@ -555,7 +555,9 @@ the signed `wiki-slug` logical name (legacy pages fall back to their address slu
 to preserve selection across snapshots, while TOC links and source reads retain
 the exact publication address and event ID. When the saved logical name is gone,
 it selects a surviving page and
-explains the fallback. Source file controls are
+explains the fallback. Arrow-key navigation belongs to focused TOC page buttons
+and moves focus with the selected page. Runtime dialogs, editable controls,
+modified keys, and composition retain their own keyboard behavior. Source file controls are
 fail-closed: they require a native grant in the current scope and an exact
 recorded page reference, and never open current checkout bytes or arbitrary
 line ranges when that evidence is unavailable. The source list and Markdown

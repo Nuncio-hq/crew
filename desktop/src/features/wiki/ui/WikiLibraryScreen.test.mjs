@@ -132,6 +132,73 @@ function repoState(branch = "release") {
   };
 }
 
+function wikiPageEvent(id, slug, title, content) {
+  return {
+    id,
+    pubkey: OWNER,
+    created_at: 3,
+    kind: 30623,
+    content,
+    sig: "1".repeat(128),
+    tags: [
+      ["d", `${REPO_D}/${slug}`],
+      ["a", `30617:${OWNER}:${REPO_D}`],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", "snapshot-1"],
+      ["wiki-slug", slug],
+      ["title", title],
+      ["section", "overview"],
+      ["language", "en"],
+    ],
+  };
+}
+
+function completeWikiSnapshot() {
+  const intro = wikiPageEvent(
+    "1".repeat(64),
+    "intro",
+    "Introduction",
+    "Introduction body",
+  );
+  const runtime = wikiPageEvent(
+    "2".repeat(64),
+    "runtime",
+    "Runtime",
+    "Runtime body",
+  );
+  return {
+    state: "complete",
+    head: {
+      ...intro,
+      id: "3".repeat(64),
+      content: JSON.stringify({
+        sections: [
+          {
+            id: "overview",
+            title: "Overview",
+            pages: [
+              { slug: "intro", title: "Introduction" },
+              { slug: "runtime", title: "Runtime" },
+            ],
+          },
+        ],
+      }),
+      tags: [
+        ["d", `${REPO_D}/_toc`],
+        ["a", `30617:${OWNER}:${REPO_D}`],
+        ["wiki-version", "1"],
+        ["wiki-snapshot", "snapshot-1"],
+        ["commit", "b".repeat(40)],
+        ["branch", "main"],
+        ["cadence", "manual"],
+      ],
+    },
+    manifest: null,
+    pages: [intro, runtime],
+    repo_state: repoState("main"),
+  };
+}
+
 /**
  * A durable native row proving a retired immutable dependency: unresolved,
  * read-only, and therefore Regenerate-only.
@@ -202,6 +269,19 @@ function failedGenerationJob() {
   };
 }
 
+function completedGenerationJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "completed",
+    reconciled: true,
+    snapshotId: "snapshot-1",
+    sourceRevision: `git:${"b".repeat(40)}`,
+    pages: 2,
+    progress: "head",
+  };
+}
+
 function missingSourceJob() {
   return {
     ...generationJob(),
@@ -243,10 +323,18 @@ after(() => dom.window.close());
  * the detail view is reachable without any real Wiki graph.
  */
 async function mountDetail(localWorkspacePath, calls, options = {}) {
+  localStorage.removeItem("buzz.wiki.navigation.v1");
   const expected = scope();
   const originalFetchEvents = relayClient.fetchEvents;
   relayClient.fetchEvents = async () => [];
   let listedJob = options.job ?? retiredJob();
+  const snapshot = options.snapshot ?? {
+    state: "missing",
+    head: null,
+    manifest: null,
+    pages: [],
+    repo_state: options.repoState ?? null,
+  };
   installTauriInvoke(async (command, args) => {
     calls.push({ command, args });
     if (command === "owner_operation_scope") return expected;
@@ -263,17 +351,12 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
     if (command === "wiki_snapshot_read") {
       return {
         token: expected,
-        value: {
-          state: "missing",
-          head: null,
-          manifest: null,
-          pages: [],
-          repo_state: options.repoState ?? null,
-        },
+        value: snapshot,
       };
     }
     if (command === "wiki_runtime_settings_set") {
       if (options.saveError) throw new Error(options.saveError);
+      if (options.save) await options.save;
       return { token: expected, value: args.selection };
     }
     if (command === "discover_acp_providers")
@@ -306,6 +389,10 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
         return await options.prepare;
       }
       throw new Error("fixture stops after launch");
+    }
+    if (command === "wiki_publication_dispatch") {
+      if (options.dispatch) return await options.dispatch;
+      return { token: expected, value: completedGenerationJob() };
     }
     if (command === "wiki_publication_list") {
       return { token: expected, value: options.noJob ? [] : [listedJob] };
@@ -607,6 +694,203 @@ test("Start generation persists the selected runtime before reaching native prep
     assert.equal(calls[save].args.selection.profile, "other-profile");
     assert.equal(calls[prepare].args.repoPath, LINKED_PATH);
     assert.equal(screen.queryByRole("dialog"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki keeps the selected page while a changed-runtime update saves and prepares", async () => {
+  const calls = [];
+  let resolveSave;
+  let resolvePrepare;
+  const save = new Promise((resolve) => {
+    resolveSave = resolve;
+  });
+  const prepare = new Promise((resolve) => {
+    resolvePrepare = resolve;
+  });
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    snapshot: completeWikiSnapshot(),
+    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+    runtimeCatalog: [
+      { id: "hermes", label: "Hermes", availability: "available" },
+      {
+        id: "claude",
+        label: "Claude Code",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/claude",
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/codex",
+      },
+    ],
+    save,
+    prepare,
+  });
+  try {
+    await waitFor(() => screen.getByText("Introduction body"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-toc-runtime"));
+    });
+    await waitFor(() => screen.getByText("Runtime body"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror"));
+    });
+    const select = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(select.disabled, false));
+    await act(async () =>
+      fireEvent.change(select, { target: { value: "claude" } }),
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Start update" })),
+    );
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_runtime_settings_set"),
+      ),
+    );
+    assert.ok(screen.getByText("Runtime body"));
+    assert.ok(screen.getByRole("dialog", { name: "Update Wiki" }));
+
+    await act(async () => resolveSave());
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    assert.ok(screen.getByText("Runtime body"));
+    assert.equal(screen.queryByTestId("wiki-navigation-fallback"), null);
+
+    await act(async () =>
+      resolvePrepare({
+        token: scope(),
+        value: { result: "created", job: generationJob() },
+      }),
+    );
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_dispatch"),
+      ),
+    );
+    await waitFor(() => screen.getByText("Runtime body"));
+    assert.equal(screen.queryByTestId("wiki-navigation-fallback"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki runtime select owns ArrowUp without changing the selected page", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    snapshot: completeWikiSnapshot(),
+    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+  });
+  try {
+    await waitFor(() => screen.getByText("Introduction body"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-toc-runtime"));
+    });
+    await waitFor(() => screen.getByText("Runtime body"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror"));
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Update Wiki" });
+    const runtime = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(runtime.disabled, false));
+
+    const event = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowUp",
+    });
+    await act(async () => {
+      runtime.dispatchEvent(event);
+    });
+    assert.equal(
+      event.defaultPrevented,
+      false,
+      "the Wiki TOC must not cancel native runtime selector navigation",
+    );
+    assert.ok(screen.getByText("Runtime body"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+    assert.ok(screen.getByText("Runtime body"));
+    assert.equal(
+      calls.some(
+        ({ command }) =>
+          command === "wiki_runtime_settings_set" ||
+          command === "wiki_publication_prepare",
+      ),
+      false,
+      "canceling the dialog must not save settings or launch generation",
+    );
+    assert.ok(dialog, "the production Update dialog was exercised");
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki TOC arrow keys change pages only from focused TOC buttons", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    noJob: true,
+    snapshot: completeWikiSnapshot(),
+    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+  });
+  try {
+    await waitFor(() => screen.getByText("Introduction body"));
+    const intro = screen.getByTestId("wiki-toc-intro");
+    const runtime = screen.getByTestId("wiki-toc-runtime");
+
+    runtime.focus();
+    const up = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowUp",
+    });
+    await act(async () => {
+      runtime.dispatchEvent(up);
+    });
+    await waitFor(() => screen.getByText("Introduction body"));
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(document.activeElement, intro);
+
+    const down = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowDown",
+    });
+    await act(async () => {
+      intro.dispatchEvent(down);
+    });
+    await waitFor(() => screen.getByText("Runtime body"));
+    assert.equal(down.defaultPrevented, true);
+    assert.equal(document.activeElement, runtime);
+
+    const shiftedUp = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowUp",
+      shiftKey: true,
+    });
+    await act(async () => {
+      runtime.dispatchEvent(shiftedUp);
+    });
+    assert.equal(shiftedUp.defaultPrevented, false);
+    assert.ok(screen.getByText("Runtime body"));
   } finally {
     mounted.dispose();
   }
