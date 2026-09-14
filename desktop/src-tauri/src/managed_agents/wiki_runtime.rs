@@ -464,6 +464,8 @@ impl WikiRuntimeGenerator {
             "claude" => {
                 command
                     .env("CLAUDE_CONFIG_DIR", self.state_dir.join("config"))
+                    .env("DISABLE_AUTOUPDATER", "1")
+                    .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
                     .args([
                         "--safe-mode",
                         "--restricted",

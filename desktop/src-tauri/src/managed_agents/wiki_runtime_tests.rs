@@ -189,6 +189,15 @@ fn claude_command_uses_child_oauth_token_without_bare_or_argv_secret() {
     assert!(args.iter().any(|arg| arg == "--strict-mcp-config"));
     assert!(args.windows(2).any(|pair| pair == ["--tools", ""]));
     assert!(!args.iter().any(|arg| arg == "test-oauth-token"));
+    for guard in [
+        "DISABLE_AUTOUPDATER",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    ] {
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == guard && value == Some(std::ffi::OsStr::new("1"))));
+    }
+
     assert_eq!(
         command
             .get_envs()
