@@ -1,0 +1,9 @@
+{
+  "productName": "NuncioCrew Staging 348",
+  "identifier": "com.nuncio.crew.staging-348-r2",
+  "bundle": {
+    "macOS": {
+      "infoPlist": "Info.NuncioCrew.Staging348.plist"
+    }
+  }
+}
