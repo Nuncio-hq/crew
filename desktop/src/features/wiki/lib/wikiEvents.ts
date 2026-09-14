@@ -38,7 +38,10 @@ export type WikiFreshness = "never" | "fresh" | "stale" | "unknown";
 export type WikiPage = {
   event: RelayEvent;
   repoD: string;
+  /** Immutable address suffix carried by the page's `d` tag. */
   slug: string;
+  /** Stable logical slug carried by the signed `wiki-slug` tag, when present. */
+  logicalSlug?: string;
   title: string;
   section: string;
   commit: string;
@@ -243,11 +246,13 @@ export function parseWikiPage(event: RelayEvent): WikiPage | null {
   if (event.kind !== KIND_REPO_WIKI_PAGE) return null;
   const parsed = parseWikiDTag(tagValue(event, "d"));
   if (!parsed || parsed.slug === WIKI_TOC_SLUG) return null;
+  const logicalSlug = tagValue(event, "wiki-slug") || parsed.slug;
   return {
     event,
     repoD: parsed.repoD,
     slug: parsed.slug,
-    title: tagValue(event, "title") ?? parsed.slug,
+    ...(logicalSlug === parsed.slug ? {} : { logicalSlug }),
+    title: tagValue(event, "title") ?? logicalSlug,
     section: tagValue(event, "section") ?? "overview",
     commit: tagValue(event, "commit") ?? "",
     language: tagValue(event, "language") ?? "en",

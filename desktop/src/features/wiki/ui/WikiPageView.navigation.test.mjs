@@ -108,6 +108,7 @@ const { QueryClient, QueryClientProvider } = await import(
 const { readWikiNavigationState, writeWikiNavigationState } = await import(
   "../lib/wikiNavigationState.ts"
 );
+const { parseWikiPage } = await import("../lib/wikiEvents.ts");
 const { WikiPageView } = await import("./WikiPageView.tsx");
 
 function page(id, slug, title, content) {
@@ -135,6 +136,46 @@ function page(id, slug, title, content) {
     language: "en",
     sourceFiles: [],
     content,
+  };
+}
+
+function v1Page(id, addressSlug, logicalSlug, title, content) {
+  const event = {
+    id,
+    pubkey: OWNER,
+    kind: 30623,
+    content,
+    created_at: 10,
+    sig: "",
+    tags: [
+      ["d", `${REPO_D}/${addressSlug}`],
+      ["a", COORDINATE],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", SNAPSHOT],
+      ["wiki-slug", logicalSlug],
+      ["title", title],
+      ["section", "overview"],
+      ["language", "en"],
+    ],
+  };
+  const parsed = parseWikiPage(event);
+  assert.ok(parsed, "the v1 event must cross the production parser seam");
+  return parsed;
+}
+
+function tocForPages(pages) {
+  return {
+    ...toc,
+    event: pages[0]?.event ?? toc.event,
+    sections: [
+      {
+        ...toc.sections[0],
+        pages: pages.map((item) => ({
+          slug: item.slug,
+          title: item.title,
+        })),
+      },
+    ],
   };
 }
 
@@ -441,27 +482,48 @@ test("Wiki keeps a selected page when publication refresh changes its event id",
 });
 
 test("Wiki keeps the active non-first page through an in-place publication refresh", async () => {
-  const mounted = mount();
+  const initialIntro = v1Page(
+    "5".repeat(64),
+    `p1-${"a".repeat(64)}`,
+    "intro",
+    "Introduction",
+    "Intro body",
+  );
+  const initialRuntime = v1Page(
+    "6".repeat(64),
+    `p1-${"b".repeat(64)}`,
+    "runtime",
+    "Runtime",
+    "Runtime body",
+  );
+  const initialToc = tocForPages([initialIntro, initialRuntime]);
+  const mounted = mount({
+    page: initialIntro,
+    pages: [initialIntro, initialRuntime],
+    toc: initialToc,
+  });
   try {
     await waitFor(() => screen.getByText("Intro body"));
     await act(async () => {
-      fireEvent.click(screen.getByTestId("wiki-toc-runtime"));
+      fireEvent.click(screen.getByTestId(`wiki-toc-${initialRuntime.slug}`));
     });
     await waitFor(() => screen.getByText("Runtime body"));
 
-    const refreshedIntro = page(
+    const refreshedIntro = v1Page(
       "3".repeat(64),
-      intro.slug,
+      `p1-${"c".repeat(64)}`,
+      "intro",
       "Refreshed introduction",
       "Refreshed intro body",
     );
-    const refreshedRuntime = page(
+    const refreshedRuntime = v1Page(
       "4".repeat(64),
-      runtime.slug,
+      `p1-${"d".repeat(64)}`,
+      "runtime",
       "Refreshed runtime",
       "Refreshed runtime body",
     );
-    const refreshedToc = { ...toc, event: refreshedIntro.event };
+    const refreshedToc = tocForPages([refreshedIntro, refreshedRuntime]);
     await act(async () => {
       mounted.view.rerender(
         React.createElement(
@@ -486,7 +548,13 @@ test("Wiki keeps the active non-first page through an in-place publication refre
     );
     assert.equal(
       readWikiNavigationState(identity()).pageSlug,
-      refreshedRuntime.slug,
+      refreshedRuntime.logicalSlug,
+    );
+    assert.equal(refreshedRuntime.slug, `p1-${"d".repeat(64)}`);
+    assert.equal(refreshedRuntime.logicalSlug, "runtime");
+    assert.ok(
+      screen.getByTestId(`wiki-toc-${refreshedRuntime.slug}`),
+      "the TOC retains the current immutable address",
     );
   } finally {
     await act(async () => mounted.view.unmount());

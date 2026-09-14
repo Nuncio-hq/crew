@@ -10,7 +10,7 @@ import {
 } from "@/shared/ui/dialog";
 
 import {
-  useAvailableAcpRuntimes,
+  useAcpRuntimesQuery,
   useHermesProfilesQuery,
 } from "@/features/agents/hooks";
 import type { OwnerOperationScope } from "@/shared/api/ownerOperations";
@@ -51,7 +51,7 @@ export function WikiRuntimeSettingsControl({
   const [open, setOpen] = React.useState(false);
   const settingsQuery = useWikiRuntimeSettings(coordinate, expected);
   const saveMutation = useSetWikiRuntimeSettings();
-  const runtimeQuery = useAvailableAcpRuntimes({
+  const runtimeQuery = useAcpRuntimesQuery({
     enabled: Boolean(coordinate) && open,
   });
   const [runtimeId, setRuntimeId] = React.useState("hermes");
@@ -60,9 +60,14 @@ export function WikiRuntimeSettingsControl({
 
   const availableRuntimes = React.useMemo(() => {
     const entries = (runtimeQuery.data ?? [])
-      .filter((runtime) =>
-        (KNOWN_RUNTIME_IDS as readonly string[]).includes(runtime.id),
-      )
+      .filter((runtime) => {
+        if (!(KNOWN_RUNTIME_IDS as readonly string[]).includes(runtime.id))
+          return false;
+        // Wiki invokes the plain CLI; Claude/Codex do not need an ACP adapter.
+        return runtime.id === "hermes"
+          ? runtime.availability === "available"
+          : Boolean(runtime.underlyingCliPath?.trim());
+      })
       .map((runtime) => ({ id: runtime.id, label: runtime.label }));
     return entries;
   }, [runtimeQuery.data]);

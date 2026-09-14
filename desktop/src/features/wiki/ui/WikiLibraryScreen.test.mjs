@@ -266,22 +266,25 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
       return { token: expected, value: args.selection };
     }
     if (command === "discover_acp_providers")
-      return [
-        {
-          id: "hermes",
-          label: "Hermes",
-          availability: "available",
-          default_args: [],
-          source: "builtin",
-        },
-        {
-          id: "codex",
-          label: "Codex",
-          availability: "available",
-          default_args: [],
-          source: "builtin",
-        },
-      ];
+      return (
+        options.runtimeCatalog ?? [
+          {
+            id: "hermes",
+            label: "Hermes",
+            availability: "available",
+            default_args: [],
+            source: "builtin",
+          },
+          {
+            id: "codex",
+            underlying_cli_path: "/fixture/bin/codex",
+            label: "Codex",
+            availability: "available",
+            default_args: [],
+            source: "builtin",
+          },
+        ]
+      );
     if (command === "get_relay_http_url") return COMMUNITY;
     if (command === "get_media_proxy_port") return null;
     if (command === "list_hermes_profiles")
@@ -638,6 +641,95 @@ test("Codex generation accepts a blank optional model and records runtime defaul
       model: null,
       profile: null,
     });
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki selects installed plain CLIs without their ACP adapters", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    runtimeCatalog: [
+      { id: "hermes", label: "Hermes", availability: "available" },
+      {
+        id: "claude",
+        label: "Claude Code",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/claude",
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/codex",
+      },
+    ],
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const select = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(select.disabled, false));
+    assert.deepEqual(
+      Array.from(select.options, (option) => option.value),
+      ["hermes", "claude", "codex"],
+    );
+    await act(async () =>
+      fireEvent.change(select, { target: { value: "claude" } }),
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Start generation" })),
+    );
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    assert.equal(
+      calls.find(({ command }) => command === "wiki_runtime_settings_set").args
+        .selection.runtimeId,
+      "claude",
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki excludes a runtime whose plain CLI is missing", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    noJob: true,
+    runtimeCatalog: [
+      { id: "hermes", label: "Hermes", availability: "available" },
+      {
+        id: "claude",
+        label: "Claude Code",
+        availability: "cli_missing",
+        underlying_cli_path: null,
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        availability: "available",
+        underlying_cli_path: null,
+      },
+    ],
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const select = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(select.disabled, false));
+    assert.deepEqual(
+      Array.from(select.options, (option) => option.value),
+      ["hermes"],
+    );
   } finally {
     mounted.dispose();
   }

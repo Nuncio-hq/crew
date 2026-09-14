@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   defaultBranchCommit,
   isCanceledWikiGeneration,
+  parseWikiPage,
   parseWikiToc,
   wikiCanCancelRecovery,
   wikiFreshness,
@@ -75,6 +76,32 @@ test("a Wiki TOC without a branch keeps branch readback unknown", () => {
     sig: "d".repeat(128),
   });
   assert.equal(parsed?.branch, "");
+});
+
+test("a v1 Wiki page retains its immutable slug and exposes its logical slug", () => {
+  const addressSlug = `p1-${"b".repeat(64)}`;
+  const event = {
+    id: "f".repeat(64),
+    pubkey: "c".repeat(64),
+    kind: 30623,
+    content: "Runtime body",
+    created_at: 1,
+    tags: [
+      ["d", `crew/${addressSlug}`],
+      ["a", `30617:${"c".repeat(64)}:crew`],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", "12345678-1234-4234-9234-123456789abc"],
+      ["wiki-slug", "runtime"],
+      ["title", "Runtime"],
+    ],
+    sig: "d".repeat(128),
+  };
+
+  const parsed = parseWikiPage(event);
+  assert.equal(parsed?.slug, addressSlug);
+  assert.equal(parsed?.logicalSlug, "runtime");
+  assert.equal(parsed?.event, event);
+  assert.equal(parsed?.event.tags[0]?.[1], `crew/${addressSlug}`);
 });
 
 test("a verified different HEAD commit is stale", () => {

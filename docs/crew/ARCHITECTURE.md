@@ -511,7 +511,9 @@ Wiki dialog with the linked source, installed runtime, and Wiki-only profile/mod
 preference. Start saves that scoped preference before invoking native preparation;
 a failed save keeps the dialog open and starts no runtime. Cancel or Escape before
 Start dismisses the draft. Runtime labels load independently of opening the dialog,
-and catalog refreshes preserve an edited draft. Library navigation resolves the
+and catalog refreshes preserve an edited draft. The picker reuses Buzz's complete
+runtime catalog: Claude/Codex require an installed underlying CLI, independently
+of ACP adapter readiness; Hermes uses its existing CLI availability. Library navigation resolves the
 containing Project from the existing project query rather than using a repository
 ID as a project route. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
@@ -548,9 +550,11 @@ and #363 owns the runtime acceptance result. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
 selected page and bounded scroll position under the captured owner/community,
 parent Project, repository coordinate, and door. A publication refresh may
-replace signed page event IDs; when the selected slug remains in the new
-publication, the reader preserves that logical selection and records the
-current event ID. When the saved slug is gone, it selects a surviving page and
+replace signed page event IDs and V1 `p1-<hash>` address slugs. Navigation uses
+the signed `wiki-slug` logical name (legacy pages fall back to their address slug)
+to preserve selection across snapshots, while TOC links and source reads retain
+the exact publication address and event ID. When the saved logical name is gone,
+it selects a surviving page and
 explains the fallback. Source file controls are
 fail-closed: they require a native grant in the current scope and an exact
 recorded page reference, and never open current checkout bytes or arbitrary
