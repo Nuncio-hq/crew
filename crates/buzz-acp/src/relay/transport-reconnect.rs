@@ -20,7 +20,7 @@ pub(super) async fn try_autonomous_reconnect(
     observer_control_tx: &mpsc::Sender<Event>,
     auth_tag: Option<&nostr::Tag>,
 ) -> ReconnectOutcome {
-    try_autonomous_reconnect_with(
+    try_autonomous_reconnect_with_context(
         ws,
         cmd_rx,
         state,
@@ -30,12 +30,13 @@ pub(super) async fn try_autonomous_reconnect(
         event_tx,
         observer_control_tx,
         auth_tag,
-        || do_connect(relay_url, keys, auth_tag),
+        |attempt| do_connect(relay_url, keys, auth_tag, attempt),
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(super) async fn try_autonomous_reconnect_with<F, Fut>(
     ws: &mut WsStream,
     cmd_rx: &mut mpsc::Receiver<RelayCommand>,
@@ -50,6 +51,38 @@ pub(super) async fn try_autonomous_reconnect_with<F, Fut>(
 ) -> ReconnectOutcome
 where
     F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(WsStream, VecDeque<RelayMessage>), RelayError>>,
+{
+    try_autonomous_reconnect_with_context(
+        ws,
+        cmd_rx,
+        state,
+        keys,
+        relay_url,
+        agent_pubkey_hex,
+        event_tx,
+        observer_control_tx,
+        auth_tag,
+        move |_| connect(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn try_autonomous_reconnect_with_context<F, Fut>(
+    ws: &mut WsStream,
+    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
+    state: &mut BgState,
+    keys: &Keys,
+    relay_url: &str,
+    agent_pubkey_hex: &str,
+    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
+    observer_control_tx: &mpsc::Sender<Event>,
+    auth_tag: Option<&nostr::Tag>,
+    mut connect: F,
+) -> ReconnectOutcome
+where
+    F: FnMut(AuthAttemptContext) -> Fut,
     Fut: std::future::Future<Output = Result<(WsStream, VecDeque<RelayMessage>), RelayError>>,
 {
     state.requeue_observer_in_flight();
@@ -71,7 +104,7 @@ where
             attempt + 1,
             backoffs.len()
         );
-        match state.health.connect(&mut connect).await {
+        match state.health.connect_with_context(&mut connect).await {
             Ok((new_ws, handshake_buffer)) => {
                 *ws = new_ws;
                 state.connection_generation = state.connection_generation.saturating_add(1);
@@ -159,7 +192,7 @@ pub(super) async fn wait_for_reconnect(
     skip_drain: bool,
     auth_tag: Option<&nostr::Tag>,
 ) -> ReconnectOutcome {
-    wait_for_reconnect_with(
+    wait_for_reconnect_with_context(
         ws,
         cmd_rx,
         state,
@@ -170,12 +203,13 @@ pub(super) async fn wait_for_reconnect(
         observer_control_tx,
         skip_drain,
         auth_tag,
-        || do_connect(relay_url, keys, auth_tag),
+        |attempt| do_connect(relay_url, keys, auth_tag, attempt),
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(super) async fn wait_for_reconnect_with<F, Fut>(
     ws: &mut WsStream,
     cmd_rx: &mut mpsc::Receiver<RelayCommand>,
@@ -191,6 +225,40 @@ pub(super) async fn wait_for_reconnect_with<F, Fut>(
 ) -> ReconnectOutcome
 where
     F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(WsStream, VecDeque<RelayMessage>), RelayError>>,
+{
+    wait_for_reconnect_with_context(
+        ws,
+        cmd_rx,
+        state,
+        keys,
+        relay_url,
+        agent_pubkey_hex,
+        event_tx,
+        observer_control_tx,
+        skip_drain,
+        auth_tag,
+        move |_| connect(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn wait_for_reconnect_with_context<F, Fut>(
+    ws: &mut WsStream,
+    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
+    state: &mut BgState,
+    keys: &Keys,
+    relay_url: &str,
+    agent_pubkey_hex: &str,
+    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
+    observer_control_tx: &mpsc::Sender<Event>,
+    skip_drain: bool,
+    auth_tag: Option<&nostr::Tag>,
+    mut connect: F,
+) -> ReconnectOutcome
+where
+    F: FnMut(AuthAttemptContext) -> Fut,
     Fut: std::future::Future<Output = Result<(WsStream, VecDeque<RelayMessage>), RelayError>>,
 {
     state.requeue_observer_in_flight();
@@ -224,7 +292,7 @@ where
             return ReconnectOutcome::Shutdown;
         }
         info!("attempting relay reconnect to {relay_url}…");
-        match state.health.connect(&mut connect).await {
+        match state.health.connect_with_context(&mut connect).await {
             Ok((new_ws, handshake_buffer)) => {
                 *ws = new_ws;
                 state.connection_generation = state.connection_generation.saturating_add(1);
@@ -289,12 +357,24 @@ where
 
 /// Startup uses the same episode as post-start reconnect, but returns the
 /// final failure instead of inventing a running process before startup succeeds.
+#[cfg(test)]
 pub(super) async fn retry_initial_connect_with_health<F, Fut, T>(
     health: &mut TransportHealth,
     mut op: F,
 ) -> Result<T, RelayError>
 where
     F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, RelayError>>,
+{
+    retry_initial_connect_with_health_context(health, move |_| op()).await
+}
+
+pub(super) async fn retry_initial_connect_with_health_context<F, Fut, T>(
+    health: &mut TransportHealth,
+    mut op: F,
+) -> Result<T, RelayError>
+where
+    F: FnMut(AuthAttemptContext) -> Fut,
     Fut: std::future::Future<Output = Result<T, RelayError>>,
 {
     let mut last_error = RelayError::ConnectionClosed;
@@ -306,7 +386,7 @@ where
             health.defer(jittered_duration(delay));
             tokio::time::sleep_until(health.ready_at()).await;
         }
-        match health.connect(&mut op).await {
+        match health.connect_with_context(&mut op).await {
             Ok(value) => return Ok(value),
             Err(error) => {
                 let terminal = is_terminal_connect_error(&error);
@@ -314,6 +394,9 @@ where
                 if terminal {
                     break;
                 }
+                // Publish the failed attempt before the next startup retry
+                // mints a new context and clears per-attempt evidence.
+                health.report_or_warn().await;
             }
         }
     }

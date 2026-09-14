@@ -31,7 +31,14 @@ Manual retry uses the existing pair-scoped restart. Per-pair diagnostic storage
 is bounded; native preflight preserves required history, and ACP rechecks
 capacity before writing or recreating a file. Standalone ACP without the
 status environment pair retains legacy retry behavior. Installed staging and
-in-flight turn/receipt acceptance remain #338 gates, dependent on #348.
+in-flight turn/receipt acceptance remain #338 gates, dependent on #348. The
+additive v2 record binds the child PID and native pre-spawn timestamp, carries a
+monotonic per-generation connection attempt, and records only the exact negative
+AUTH acknowledgement with a fixed classification. v1 health records remain
+valid for legacy generations. Desktop exposes the optional AUTH wrapper only
+after those fences pass; retired final reads stay bounded and cannot become live
+process authority. The opt-in native marker export is bounded, stderr-only and
+deduplicated by generation, attempt and AUTH event.
 
 ## Desktop
 

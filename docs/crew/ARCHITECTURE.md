@@ -211,6 +211,31 @@ shutdown, and worktree deletion are distinct operations. The CompanyOS
 retention and automatic cleanup policy remains open in `PRODUCT.md`; this
 section does not authorize deleting unfinished work.
 
+## Local transport evidence boundary (#338)
+
+The existing managed-agent process is the producer boundary for local transport
+health. After native preflight, Desktop registers one exact generation ticket
+(owner, runtime key, nonce, child PID, pre-spawn timestamp, wire version and
+leave/rejoin epoch) and supplies the corresponding status path to ACP. A
+generation that cannot establish the secure sidechannel keeps the legacy
+health-only behavior; v1 records remain readable by a v2-capable native ticket.
+
+ACP writes one bounded atomic latest record. The additive v2 shape carries the
+process binding, a monotonic per-generation connection attempt, and only the
+exact negative AUTH acknowledgement for that attempt. Desktop validates the
+record against the ticket, lease freshness, attempt fence and fixed diagnostic
+codes before projecting `transport`. The optional `transportAuthEvidence`
+wrapper is derived from that accepted record and includes the native binding;
+relay text and unrelated acknowledgements do not enter it. A failed generation
+may receive a bounded final read in retired diagnostics, but the retired cache
+cannot establish a live process or overwrite a newer generation.
+
+The opt-in native evidence markers are a diagnostic sink only. Registration is
+emitted before an AUTH marker, each marker is bounded and retried a fixed number
+of times, and generation/attempt/AUTH identities deduplicate renewals and stale
+replays. The producer-to-reader proof remains a queued integration gate; its
+actual built-ACP recipe is in [`TESTING.md`](TESTING.md#queued-built-acp-producer-to-native-reader-proof).
+
 ## Observer completion scheduling (#352)
 
 `ObserverPublishQueue::next_frame` retains queue-wide same-channel batching;

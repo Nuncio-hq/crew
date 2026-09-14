@@ -1,5 +1,46 @@
 use super::*;
 
+/// Package a freshly spawned child with its generation metadata. The Windows
+/// branch adds the process-tree job object; Unix keeps the same result shape
+/// without a platform-specific lifecycle handle.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn finish_spawn_process(
+    child: std::process::Child,
+    log_path: std::path::PathBuf,
+    spawn_config: crate::managed_agents::spawn_snapshot::SpawnConfigSnapshot,
+    setup_mode: bool,
+    adapter_availability: Option<crate::managed_agents::AcpAvailabilityStatus>,
+    start_nonce: String,
+    spawn_started_at_ms: u64,
+    _agent_name: &str,
+) -> crate::managed_agents::ManagedAgentProcess {
+    #[cfg(windows)]
+    {
+        return crate::managed_agents::process_lifecycle::finish_spawn(
+            child,
+            log_path,
+            spawn_config,
+            setup_mode,
+            adapter_availability,
+            start_nonce,
+            spawn_started_at_ms,
+            _agent_name,
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        crate::managed_agents::ManagedAgentProcess {
+            child,
+            log_path,
+            spawn_started_at_ms,
+            spawn_config,
+            setup_mode,
+            adapter_availability,
+            start_nonce,
+        }
+    }
+}
+
 /// Kill stale agent processes from a previous session whose PID is still alive
 /// but not tracked in the current `runtimes` map. Updates the record fields and
 /// returns `true` if any records were modified.
@@ -183,6 +224,7 @@ mod tests {
         let process = ManagedAgentProcess {
             child,
             log_path: PathBuf::new(),
+            spawn_started_at_ms: 1,
             spawn_config: test_spawn_snapshot(),
             setup_mode: false,
             adapter_availability: None,
@@ -195,6 +237,9 @@ mod tests {
             path: PathBuf::from("/fixture/status.json"),
             owner: owner.clone(),
             epoch: 0,
+            process_id: 1,
+            spawn_started_at_ms: 1,
+            wire_version: 1,
         };
         let mut runtime = ManagedAgentPairRuntime::starting(process);
         runtime.transport = Some(Monitor::new(ticket, &diagnostics));
@@ -213,12 +258,12 @@ mod tests {
 
         assert_eq!(exited, vec![key.pubkey.clone()]);
         assert!(runtimes.is_empty());
-        let (status, failed) = diagnostics
+        let projection = diagnostics
             .lock()
             .unwrap()
             .projection(&key, &owner, Instant::now())
             .expect("the production lifecycle seam must retire the monitor");
-        assert!(failed);
-        assert_eq!(status.state, TransportState::Unknown);
+        assert!(projection.failed_exit);
+        assert_eq!(projection.status.state, TransportState::Unknown);
     }
 }

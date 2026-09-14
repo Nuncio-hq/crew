@@ -503,6 +503,10 @@ pub struct RelayMeshConfig {
 pub struct ManagedAgentProcess {
     pub child: Child,
     pub log_path: PathBuf,
+    /// Native wall-clock lower bound captured immediately before spawning the
+    /// managed child. It is echoed in v2 transport records and checked against
+    /// the registered process ticket; it is not an OS creation timestamp.
+    pub spawn_started_at_ms: u64,
     /// The effective spawn config this process was launched with (see
     /// `spawn_snapshot::SpawnConfigSnapshot`). Runtime-only — never persisted.
     /// The summary builder recomputes a prospective snapshot and reports
