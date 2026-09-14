@@ -1243,3 +1243,101 @@ test("a terminal runtime generation error is labeled failed and permits Generate
     mounted.dispose();
   }
 });
+
+for (const unmountBeforeDue of [false, true]) {
+  test(
+    unmountBeforeDue
+      ? "on-push cadence cancels the pending wakeup when Wiki unmounts"
+      : "on-push cadence rechecks after debounce when the observed graph stays stable",
+    async (t) => {
+      const nowSeconds = Math.floor(Date.now() / 1_000);
+      t.mock.timers.enable({
+        apis: ["Date"],
+        now: nowSeconds * 1_000,
+      });
+      const originalWindowSetTimeout = dom.window.setTimeout;
+      const originalWindowClearTimeout = dom.window.clearTimeout;
+      // Control browser-owned deadlines without freezing React Query and the
+      // test harness's process timers during mount.
+      let timerId = 0;
+      const timers = new Map();
+      dom.window.setTimeout = (callback, delay = 0) => {
+        const id = ++timerId;
+        timers.set(id, { callback, at: Date.now() + delay });
+        return id;
+      };
+      dom.window.clearTimeout = (id) => timers.delete(id);
+
+      const calls = [];
+      const snapshot = completeWikiSnapshot();
+      const pushedCommit = "c".repeat(40);
+      snapshot.head = {
+        ...snapshot.head,
+        tags: snapshot.head.tags.map((tag) =>
+          tag[0] === "cadence" ? ["cadence", "on-push"] : tag,
+        ),
+      };
+      snapshot.repo_state = {
+        ...snapshot.repo_state,
+        created_at: nowSeconds,
+        tags: snapshot.repo_state.tags.map((tag) =>
+          tag[0] === "refs/heads/main" ? [tag[0], pushedCommit] : tag,
+        ),
+      };
+
+      let mounted;
+      try {
+        mounted = await mountDetail(LINKED_PATH, calls, {
+          noJob: true,
+          snapshot,
+        });
+        const repoQuery = mounted.client.getQueryData([
+          "crew-wiki-events",
+          "repos",
+          OWNER,
+          COMMUNITY,
+          1,
+          1,
+        ]);
+        assert.equal(repoQuery?.tocs?.[0]?.cadence, "on-push");
+        assert.equal(repoQuery?.states?.[0]?.created_at, nowSeconds);
+        assert.equal(
+          calls.some(({ command }) => command === "wiki_publication_prepare"),
+          false,
+          "the fresh push is still inside the debounce window",
+        );
+
+        if (unmountBeforeDue) {
+          mounted.dispose();
+          mounted = undefined;
+          assert.equal(
+            timers.size,
+            0,
+            "unmount must cancel the browser deadline",
+          );
+        }
+        await act(async () => {
+          t.mock.timers.tick(30_001);
+          for (const [id, timer] of [...timers]) {
+            if (timer.at <= Date.now()) {
+              timers.delete(id);
+              timer.callback();
+            }
+          }
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        assert.equal(
+          calls.some(({ command }) => command === "wiki_publication_prepare"),
+          !unmountBeforeDue,
+          "a mounted Wiki must launch after the quiet-period deadline; an unmounted Wiki must not launch",
+        );
+      } finally {
+        mounted?.dispose();
+        dom.window.setTimeout = originalWindowSetTimeout;
+        dom.window.clearTimeout = originalWindowClearTimeout;
+      }
+    },
+  );
+}

@@ -492,6 +492,12 @@ compatible build rather than restoring a stale v1 database. See [the recovery
 runbook](TESTING.md#wiki-journal-v3-recovery) and
 [D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
+While the Wiki library is mounted, automatic refresh uses the same scoped
+native generation/publication path as manual Update. A single effect-owned
+timeout wakes the next eligible on-push debounce or daily/weekly deadline even
+when query data stays unchanged. Scope, repository, job or input changes and
+unmount cancel that timeout; unresolved durable claims still block new work.
+
 Initial Wiki generation reserves the existing Wiki publication claim before
 starting a runtime. Its tagged `generation_version: 1` payload has no signed
 pages and cannot enter the publication driver. A successful generation replaces
