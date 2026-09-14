@@ -20,6 +20,7 @@ mod definition_validation;
 mod discovery;
 pub(crate) use discovery::bounded_command::output_with_timeout as bounded_local_command;
 pub(crate) use discovery::bounded_command::{
+    output_with_policy as bounded_output_with_policy,
     output_with_policy_and_spawn_hook as bounded_output_with_policy_and_spawn_hook, BoundedFailure,
     BoundedPolicy, OutputBudget,
 };
@@ -53,6 +54,7 @@ pub(crate) mod recap_adapter;
 #[allow(dead_code)]
 pub(crate) mod recap_capability;
 pub(crate) mod recap_commands;
+pub(crate) mod recap_observer;
 #[allow(dead_code)]
 pub(crate) mod recap_ownership;
 #[allow(dead_code)]

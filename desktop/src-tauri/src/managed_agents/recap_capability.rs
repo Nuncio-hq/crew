@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::recap_adapter::RecapAdapterObservation;
-#[cfg(test)]
-use super::recap_adapter::RECAP_OUTPUT_LIMIT;
+use super::recap_adapter::{RecapAdapterObservation, RECAP_OUTPUT_LIMIT};
 
 /// Runtime-owned selection contract, separate from employee session settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,21 +346,30 @@ impl RecapRuntimeReadyProof {
 }
 
 impl RecapRuntimeCertification {
-    /// Refuse provider output until a native observer binds it to the executed
-    /// plan and independently records state/process outcomes.
+    /// Consume one observation produced by the native runtime observer.
     ///
-    /// `parse_probe_output` only validates a bounded provider envelope. It is
-    /// not evidence that the declared command, executable, selection, state or
-    /// process observations actually occurred, so this seam intentionally
-    /// cannot mint a positive certification today.
+    /// The observer owns command construction, executable resolution, profile
+    /// snapshots, auth checks and process cleanup. This constructor only
+    /// accepts the typed evidence it returns and turns it into the opaque
+    /// positive value that the ownership layer may persist. In particular,
+    /// parsing a provider envelope without the observer's target and cleanup
+    /// facts can never mint a certification.
     pub(crate) fn from_adapter_observation(
         target: RecapProbeTarget,
         adapter: RecapAdapterObservation,
         state: RecapStateObservation,
         process: RecapProcessObservation,
     ) -> Result<Self, RecapFailure> {
-        let _ = (target, adapter, state, process);
-        Err(RecapFailure::UnverifiedCapability)
+        certify_observation(
+            target.runtime_id,
+            target.contract,
+            target.executable,
+            target.selection,
+            target.auth,
+            adapter,
+            state,
+            process,
+        )
     }
 
     /// Construct a synthetic certificate for module tests only. Production
@@ -389,125 +396,18 @@ impl RecapRuntimeCertification {
         contract: RecapRuntimeContract,
         probe: RecapProbeAttestation,
     ) -> Result<Self, RecapFailure> {
-        let Some(runtime) = super::known_acp_runtime_exact(&probe.runtime_id) else {
-            return Err(RecapFailure::RuntimeMismatch);
-        };
-        if runtime.recap_contract() != contract || contract.command.is_none() {
-            return Err(RecapFailure::UnsupportedOneShot);
-        }
-        if !valid_identity(&probe.executable) {
-            return Err(RecapFailure::InvalidExecutableIdentity);
-        }
-        if probe.executable.platform != current_platform() {
-            return Err(RecapFailure::InvalidExecutableIdentity);
-        }
-        if !valid_recap_model(&probe.selection.model) {
-            return Err(RecapFailure::InvalidModelSelection);
-        }
-        if probe.selection.profile.is_some()
-            && !probe
-                .selection
-                .profile_digest
-                .as_deref()
-                .is_some_and(is_sha256)
-        {
-            return Err(RecapFailure::ProfileMismatch);
-        }
-        if probe.selection.profile.is_none() && probe.selection.profile_digest.is_some() {
-            return Err(RecapFailure::ProfileMismatch);
-        }
-        if probe.selection.profile.is_none() && probe.selection.profile_identity.is_some() {
-            return Err(RecapFailure::ProfileMismatch);
-        }
-        if !probe.selection.auth_available {
-            return Err(RecapFailure::AuthRequired);
-        }
-        if !valid_auth_service(&probe.auth.service) || !valid_auth_reference(&probe.auth.reference)
-        {
-            return Err(RecapFailure::InvalidAuthBinding);
-        }
-        match contract.selection {
-            RecapSelectionContract::ExplicitModel if probe.selection.profile.is_some() => {
-                return Err(RecapFailure::ProfileMismatch);
-            }
-            RecapSelectionContract::StagingProfile
-                if !probe
-                    .selection
-                    .profile
-                    .as_deref()
-                    .is_some_and(Path::is_absolute) =>
-            {
-                return Err(RecapFailure::MissingProfile);
-            }
-            RecapSelectionContract::StagingProfile if probe.selection.profile_digest.is_none() => {
-                return Err(RecapFailure::ProfileMismatch);
-            }
-            RecapSelectionContract::StagingProfile
-                if probe.selection.profile_identity.is_none() =>
-            {
-                return Err(RecapFailure::ProfileMismatch);
-            }
-            _ => {}
-        }
-        if let (Some(profile), Some(expected_digest)) = (
-            probe.selection.profile.as_deref(),
-            probe.selection.profile_digest.as_deref(),
-        ) {
-            let observed_digest = super::recap_adapter::profile_tree_digest(profile)
-                .map_err(|_| RecapFailure::ProfileMismatch)?;
-            if observed_digest != expected_digest {
-                return Err(RecapFailure::ProfileMismatch);
-            }
-            if super::recap_adapter::profile_identity(profile)
-                .ok()
-                .as_ref()
-                != probe.selection.profile_identity.as_ref()
-            {
-                return Err(RecapFailure::ProfileMismatch);
-            }
-        }
-        if probe.adapter.output().is_empty() {
-            return Err(RecapFailure::EmptyProbeOutput);
-        }
-        if probe.adapter.output().len() > RECAP_OUTPUT_LIMIT {
-            return Err(RecapFailure::ProbeOutputLimit);
-        }
-        if probe.adapter.output().contains(&0) {
-            return Err(RecapFailure::InvalidProbeOutput);
-        }
-        if !valid_recap_model(probe.adapter.effective_model()) {
-            return Err(RecapFailure::EffectiveModelMismatch);
-        }
-        if probe.adapter.effective_model() != probe.selection.model {
-            return Err(RecapFailure::EffectiveModelMismatch);
-        }
-        if !probe.adapter.one_shot_completed() {
-            return Err(RecapFailure::UnsupportedOneShot);
-        }
-        if !valid_tool_probe_evidence(probe.adapter.tool_probe()) {
-            return Err(RecapFailure::InvalidToolProbeEvidence);
-        }
-        if probe.state != RecapStateObservation::Unchanged {
-            return Err(RecapFailure::ProbeStateChanged);
-        }
-        if probe.process != RecapProcessObservation::ReapedAndContained {
-            return Err(RecapFailure::ProbeProcessNotReaped);
-        }
-        Ok(Self {
-            runtime_id: probe.runtime_id,
-            executable: probe.executable,
-            selection: probe.selection,
-            auth: probe.auth,
-            guarantees: RecapGuarantees {
-                one_shot: true,
-                tool_isolation: true,
-                state_isolation: true,
-                process_containment: true,
+        Self::from_adapter_observation(
+            RecapProbeTarget {
+                contract,
+                runtime_id: probe.runtime_id,
+                executable: probe.executable,
+                selection: probe.selection,
+                auth: probe.auth,
             },
-            effective_model: probe.adapter.effective_model().to_owned(),
-            output_digest: hex::encode(Sha256::digest(probe.adapter.output())),
-            tool_probe_digest: tool_probe_digest(probe.adapter.tool_probe()),
-        })
+            probe.adapter,
+            probe.state,
+            probe.process,
+        )
     }
 
     pub(crate) fn parts(&self) -> RecapCertificationParts {
@@ -522,6 +422,128 @@ impl RecapRuntimeCertification {
             tool_probe_digest: self.tool_probe_digest.clone(),
         }
     }
+}
+
+/// Validate the complete observation tuple and create the sole positive
+/// certification value. The tuple is intentionally kept separate from the
+/// adapter parser: an envelope can be syntactically valid while referring to
+/// another executable, profile, model, process or state snapshot.
+fn certify_observation(
+    runtime_id: String,
+    contract: RecapRuntimeContract,
+    executable: RecapExecutableIdentity,
+    selection: RecapSelection,
+    auth: RecapAuthBinding,
+    adapter: RecapAdapterObservation,
+    state: RecapStateObservation,
+    process: RecapProcessObservation,
+) -> Result<RecapRuntimeCertification, RecapFailure> {
+    let Some(runtime) = super::known_acp_runtime_exact(&runtime_id) else {
+        return Err(RecapFailure::RuntimeMismatch);
+    };
+    if runtime.recap_contract() != contract || contract.command.is_none() {
+        return Err(RecapFailure::UnsupportedOneShot);
+    }
+    if !valid_identity(&executable) || executable.platform != current_platform() {
+        return Err(RecapFailure::InvalidExecutableIdentity);
+    }
+    if !valid_recap_model(&selection.model) {
+        return Err(RecapFailure::InvalidModelSelection);
+    }
+    if selection.profile.is_some()
+        && !selection.profile_digest.as_deref().is_some_and(is_sha256)
+    {
+        return Err(RecapFailure::ProfileMismatch);
+    }
+    if selection.profile.is_none()
+        && (selection.profile_digest.is_some() || selection.profile_identity.is_some())
+    {
+        return Err(RecapFailure::ProfileMismatch);
+    }
+    if !selection.auth_available {
+        return Err(RecapFailure::AuthRequired);
+    }
+    if !valid_auth_service(&auth.service) || !valid_auth_reference(&auth.reference) {
+        return Err(RecapFailure::InvalidAuthBinding);
+    }
+    match contract.selection {
+        RecapSelectionContract::ExplicitModel if selection.profile.is_some() => {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        RecapSelectionContract::StagingProfile
+            if !selection
+                .profile
+                .as_deref()
+                .is_some_and(Path::is_absolute) =>
+        {
+            return Err(RecapFailure::MissingProfile);
+        }
+        RecapSelectionContract::StagingProfile if selection.profile_digest.is_none() => {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        RecapSelectionContract::StagingProfile if selection.profile_identity.is_none() => {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        _ => {}
+    }
+    if let (Some(profile), Some(expected_digest)) = (
+        selection.profile.as_deref(),
+        selection.profile_digest.as_deref(),
+    ) {
+        let observed_digest = super::recap_adapter::profile_tree_digest(profile)
+            .map_err(|_| RecapFailure::ProfileMismatch)?;
+        if observed_digest != expected_digest {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+        if super::recap_adapter::profile_identity(profile)
+            .ok()
+            .as_ref()
+            != selection.profile_identity.as_ref()
+        {
+            return Err(RecapFailure::ProfileMismatch);
+        }
+    }
+    if adapter.output().is_empty() {
+        return Err(RecapFailure::EmptyProbeOutput);
+    }
+    if adapter.output().len() > RECAP_OUTPUT_LIMIT {
+        return Err(RecapFailure::ProbeOutputLimit);
+    }
+    if adapter.output().contains(&0) {
+        return Err(RecapFailure::InvalidProbeOutput);
+    }
+    if !valid_recap_model(adapter.effective_model())
+        || adapter.effective_model() != selection.model
+    {
+        return Err(RecapFailure::EffectiveModelMismatch);
+    }
+    if !adapter.one_shot_completed() {
+        return Err(RecapFailure::UnsupportedOneShot);
+    }
+    if !valid_tool_probe_evidence(adapter.tool_probe()) {
+        return Err(RecapFailure::InvalidToolProbeEvidence);
+    }
+    if state != RecapStateObservation::Unchanged {
+        return Err(RecapFailure::ProbeStateChanged);
+    }
+    if process != RecapProcessObservation::ReapedAndContained {
+        return Err(RecapFailure::ProbeProcessNotReaped);
+    }
+    Ok(RecapRuntimeCertification {
+        runtime_id,
+        executable,
+        selection,
+        auth,
+        guarantees: RecapGuarantees {
+            one_shot: true,
+            tool_isolation: true,
+            state_isolation: true,
+            process_containment: true,
+        },
+        effective_model: adapter.effective_model().to_owned(),
+        output_digest: hex::encode(Sha256::digest(adapter.output())),
+        tool_probe_digest: tool_probe_digest(adapter.tool_probe()),
+    })
 }
 
 /// Admit a runtime only when the native proof and requested selection agree.

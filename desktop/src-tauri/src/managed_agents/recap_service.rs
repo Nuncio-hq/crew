@@ -18,7 +18,8 @@ use serde::Deserialize;
 use tauri::Manager;
 
 use super::recap_adapter::{
-    bind_hermes_prompt, claude_recap_plan, hermes_recap_plan, RecapLaunchPlan, RecapRunFailure,
+    bind_hermes_prompt, claude_recap_plan_contained, hermes_recap_plan, RecapLaunchPlan,
+    RecapRunFailure,
 };
 use super::recap_capability::{
     admit_runtime_ready, same_executable_proof, verify_executable, RecapAdmission, RecapFailure,
@@ -515,7 +516,7 @@ pub(crate) fn run_recap_sync_with_cancel<R: tauri::Runtime>(
         .map_err(|error| error_code(RecapServiceFailure::State(error)).to_string())?;
     let input = request.input.into_bytes();
     let plan = match match contract.selection {
-        RecapSelectionContract::ExplicitModel => claude_recap_plan(
+        RecapSelectionContract::ExplicitModel => claude_recap_plan_contained(
             &admission.executable.resolved_path,
             run.path(),
             &admission.selection.model,

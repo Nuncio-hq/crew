@@ -151,6 +151,15 @@ impl RecapLaunchPlan {
         &self.executable
     }
 
+    /// Whether this plan has a platform process boundary strong enough for a
+    /// positive runtime certification. macOS plans are wrapped in the fixed
+    /// `sandbox-exec` fork-denial profile; Windows uses the bounded runner's
+    /// non-breakaway Job Object. Unix process groups alone are deliberately
+    /// insufficient because a descendant can call `setsid`.
+    pub(crate) fn process_containment_available(&self) -> bool {
+        self.sandbox_profile.is_some() || cfg!(target_os = "windows")
+    }
+
     /// Recheck the source profile immediately before spawning the child.
     pub(crate) fn profile_matches_admission(
         &self,
@@ -297,6 +306,29 @@ pub(crate) fn claude_recap_plan(
     model: &str,
     input: &[u8],
 ) -> Result<RecapLaunchPlan, RecapRunFailure> {
+    claude_recap_plan_inner(executable, root, model, input, false)
+}
+
+/// Prepare the Claude recipe with the fixed platform containment boundary.
+/// Production generation uses this variant after a runtime-ready grant has
+/// been issued; the unwrapped helper remains available to unit fixtures that
+/// exercise only argv/env parsing.
+pub(crate) fn claude_recap_plan_contained(
+    executable: &Path,
+    root: &Path,
+    model: &str,
+    input: &[u8],
+) -> Result<RecapLaunchPlan, RecapRunFailure> {
+    claude_recap_plan_inner(executable, root, model, input, true)
+}
+
+fn claude_recap_plan_inner(
+    executable: &Path,
+    root: &Path,
+    model: &str,
+    input: &[u8],
+    require_containment: bool,
+) -> Result<RecapLaunchPlan, RecapRunFailure> {
     if input.len() > RECAP_INPUT_LIMIT {
         return Err(RecapRunFailure::InputLimit);
     }
@@ -340,6 +372,11 @@ pub(crate) fn claude_recap_plan(
         "CLAUDE_CONFIG_DIR".into(),
         root.join("config").into_os_string(),
     );
+    let sandbox_profile = if require_containment {
+        macos_containment_profile(executable)?
+    } else {
+        None
+    };
     Ok(RecapLaunchPlan {
         kind: RecapLaunchKind::Claude,
         executable: executable.to_owned(),
@@ -353,7 +390,7 @@ pub(crate) fn claude_recap_plan(
         profile_destination: None,
         profile_destination_identity: None,
         usage_file: None,
-        sandbox_profile: None,
+        sandbox_profile,
     })
 }
 

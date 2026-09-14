@@ -468,14 +468,21 @@ fn validate_settings(
         {
             return Err("profile_mismatch".to_string());
         }
+        // Hermes profiles own their model. A renderer-supplied model would be
+        // silently ignored by the fixed profile-bound recipe, so reject it
+        // instead of persisting a misleading selection.
+        if settings.requested_model.is_some() {
+            return Err("profile_mismatch".to_string());
+        }
     } else if settings.profile_ref.is_some() {
         return Err("profile_mismatch".to_string());
-    }
-    let Some(model) = settings.requested_model.as_deref() else {
-        return Err("missing_selection".to_string());
-    };
-    if !runtime.models.iter().any(|candidate| candidate == model) {
-        return Err("invalid_model_selection".to_string());
+    } else {
+        let Some(model) = settings.requested_model.as_deref() else {
+            return Err("missing_selection".to_string());
+        };
+        if !runtime.models.iter().any(|candidate| candidate == model) {
+            return Err("invalid_model_selection".to_string());
+        }
     }
     Ok(normalized)
 }
@@ -861,10 +868,21 @@ pub(crate) async fn generate_thread_recap_for_runtime<R: tauri::Runtime>(
     else {
         return Err("runtime_not_ready".to_string());
     };
-    let model = settings
-        .requested_model
-        .clone()
-        .ok_or_else(|| "invalid_model_selection".to_string())?;
+    let model = if runtimes
+        .iter()
+        .find(|runtime| runtime.id == runtime_id)
+        .is_some_and(|runtime| runtime.kind == "hermes")
+    {
+        proof
+            .as_ref()
+            .map(|proof| proof.selection_for_service().model)
+            .ok_or_else(|| "runtime_not_ready".to_string())?
+    } else {
+        settings
+            .requested_model
+            .clone()
+            .ok_or_else(|| "invalid_model_selection".to_string())?
+    };
     let settings_fingerprint = settings_fingerprint(&settings)?;
     // Close the capture/register race: a settings, identity, or relay change
     // that lands before or during source collection must still prevent this

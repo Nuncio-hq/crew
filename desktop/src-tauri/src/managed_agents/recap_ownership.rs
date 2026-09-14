@@ -13,6 +13,7 @@ use super::recap_state::{
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tauri::Manager;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::io::Read;
@@ -238,6 +239,43 @@ impl VerifiedStagingOwnership {
             Err(_) => return Err(RecapStateFailure::Ownership),
         }
         Ok(base)
+    }
+
+    /// Resolve a named Hermes staging profile from the verified ownership
+    /// roots. The renderer supplies only the profile name; the native receipt
+    /// supplies the absolute path and rechecks its identity before use.
+    pub(crate) fn recap_profile_path(
+        &self,
+        profile_ref: &str,
+    ) -> Result<PathBuf, RecapStateFailure> {
+        self.validate()?;
+        if profile_ref != profile_ref.trim()
+            || super::hermes_profile::validate_hermes_profile_name(profile_ref).is_err()
+            || profile_ref == super::hermes_profile::HERMES_HOME_PROFILE_NAME
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        let root = &self.document.mac.roots.profiles;
+        let profile = root.join(profile_ref);
+        let canonical = profile
+            .canonicalize()
+            .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        if canonical != profile
+            || !canonical.starts_with(root)
+            || super::recap_adapter::hermes_profile_ref(&canonical).as_deref()
+                != Some(profile_ref)
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        super::recap_state::directory_identity(&canonical)
+            .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        Ok(canonical)
+    }
+
+    /// Native keyring service that owns the staging identity. Callers use this
+    /// only as a service label for an opaque recap auth binding.
+    pub(crate) fn recap_keyring_service(&self) -> &str {
+        &self.native.keyring_service
     }
 
     #[cfg(test)]
@@ -721,12 +759,42 @@ pub(crate) fn certify_runtime_probe_for_app<R: tauri::Runtime>(
     process: RecapProcessObservation,
     certified_at: u64,
 ) -> Result<(), RecapStateFailure> {
-    // No native observer currently binds provider output to the executed
-    // command, executable, selection, state snapshot and process reaping.
-    // Keep this entrypoint present for the eventual observer wiring, but never
-    // turn self-reported adapter fields into a runtime-ready grant.
-    let _ = (app, target, adapter, state, process, certified_at);
-    Err(RecapStateFailure::RuntimeNotReady)
+    let certification = RecapRuntimeCertification::from_adapter_observation(
+        target, adapter, state, process,
+    )
+    .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    let ownership = VerifiedStagingOwnership::load(app)?;
+    let state = app.state::<crate::app_state::AppState>();
+    let scope = super::retention::active_retention_scope(app, &state)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    let store = super::retention::open_retention_db(&scope.db_path)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    ownership.issue_runtime_ready_grant(&store, &certification, certified_at)
+}
+
+/// Project a certification into the retention database captured before a
+/// bounded observer run. The final scope fence prevents a workspace or
+/// identity switch during the probe from issuing a grant for another owner.
+pub(crate) fn certify_runtime_probe_for_captured_scope<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    ownership: &VerifiedStagingOwnership,
+    expected_scope: &crate::app_state::owner_scope::OwnerScopeToken,
+    retention_db_path: &Path,
+    target: RecapProbeTarget,
+    adapter: RecapAdapterObservation,
+    state: RecapStateObservation,
+    process: RecapProcessObservation,
+    certified_at: u64,
+) -> Result<(), RecapStateFailure> {
+    let certification = RecapRuntimeCertification::from_adapter_observation(
+        target, adapter, state, process,
+    )
+    .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    crate::app_state::owner_scope::assert_current_blocking(app.clone(), expected_scope)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    let store = super::retention::open_retention_db(retention_db_path)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    ownership.issue_runtime_ready_grant(&store, &certification, certified_at)
 }
 
 fn atomic_write_runtime_grant(app_data: &Path, bytes: &[u8]) -> Result<(), RecapStateFailure> {

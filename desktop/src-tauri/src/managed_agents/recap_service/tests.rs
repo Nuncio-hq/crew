@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use super::*;
+use crate::managed_agents::recap_adapter::claude_recap_plan;
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 

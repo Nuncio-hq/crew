@@ -306,7 +306,7 @@ fn explicit_model_contract_rejects_profile_bearing_proof() {
 }
 
 #[test]
-fn provider_probe_output_without_native_observer_stays_unsupported() {
+fn complete_typed_observation_can_certify_for_the_native_producer() {
     let raw = probe();
     let result = RecapRuntimeCertification::from_adapter_observation(
         RecapProbeTarget {
@@ -320,7 +320,8 @@ fn provider_probe_output_without_native_observer_stays_unsupported() {
         raw.state,
         raw.process,
     );
-    assert_eq!(result, Err(RecapFailure::UnverifiedCapability));
+    let certification = result.expect("complete typed observation should certify");
+    assert_eq!(certification.parts().runtime_id, "claude");
 }
 
 #[test]
