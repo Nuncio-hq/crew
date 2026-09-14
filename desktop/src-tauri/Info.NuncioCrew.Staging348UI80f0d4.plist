@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>NuncioCrew Staging 348 UI80f0d4</string>
+    <key>CFBundleName</key>
+    <string>NuncioCrew Staging 348 UI80f0d4</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>NuncioCrew Staging uses microphone access only for explicitly started voice features.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>NuncioCrew Staging uses camera access only for explicitly started avatar features.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>NuncioCrew Staging connects only to the recorded staging relay.</string>
+</dict>
+</plist>
