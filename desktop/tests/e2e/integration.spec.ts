@@ -369,7 +369,7 @@ test("live mentions refetch the home feed without waiting for polling", async ({
     });
     const mention = {
       eventId,
-      renderedContent: `Heads up tyler live mention ${stamp}`,
+      renderedContent: `Heads up @tyler live mention ${stamp}`,
       label: "tyler",
       pubkey: TEST_IDENTITIES.tyler.pubkey,
     };
@@ -439,7 +439,7 @@ test("live forum mentions refetch the home feed without waiting for polling", as
     });
     const mention = {
       eventId,
-      renderedContent: `Forum ping tyler ${stamp}`,
+      renderedContent: `Forum ping @tyler ${stamp}`,
       label: "tyler",
       pubkey: TEST_IDENTITIES.tyler.pubkey,
     };
