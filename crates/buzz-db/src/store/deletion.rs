@@ -3489,6 +3489,48 @@ mod postgres_tests {
         (request, inventory)
     }
 
+    async fn wait_for_deletion_lock_waiters(
+        pool: &PgPool,
+        community_id: CommunityId,
+        gate_pid: i32,
+        expected: i64,
+    ) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*)::BIGINT \
+                     FROM pg_locks \
+                     WHERE locktype = 'advisory' \
+                       AND mode = 'ExclusiveLock' \
+                       AND NOT granted \
+                       AND database = (SELECT oid FROM pg_database \
+                                       WHERE datname = current_database()) \
+                       AND objsubid = 1 \
+                       AND classid::BIGINT = ((community_deletion_lock_key($1) >> 32) \
+                                             & 4294967295::BIGINT) \
+                       AND objid::BIGINT = (community_deletion_lock_key($1) \
+                                           & 4294967295::BIGINT) \
+                       AND $2 = ANY(pg_blocking_pids(pid))",
+                )
+                .bind(community_id.as_uuid())
+                .bind(gate_pid)
+                .fetch_one(pool)
+                .await
+                .expect("inspect deletion lock waiters");
+                if waiting >= expected {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "timed out waiting for {expected} deletion lock waiter(s) behind gate {gate_pid}"
+            )
+        });
+    }
+
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn approval_boundary_blocks_claim_until_exact_inventory_is_approved() {
@@ -3759,6 +3801,10 @@ mod postgres_tests {
             .execute(&mut *gate)
             .await
             .expect("hold community lock");
+        let gate_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *gate)
+            .await
+            .expect("read lock gate backend pid");
 
         let abort_store = store.clone();
         let aborting = tokio::spawn(async move {
@@ -3766,7 +3812,7 @@ mod postgres_tests {
                 .abort(request.id, "operator", "race recovery")
                 .await
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for_deletion_lock_waiters(&db.pool, request.community_id, gate_pid, 1).await;
         assert!(
             !aborting.is_finished(),
             "abort must wait for the community lock"
@@ -3774,7 +3820,7 @@ mod postgres_tests {
         let forward_store = store.clone();
         let lease = claim.lease.clone();
         let forwarding = tokio::spawn(async move { forward_store.begin_quiescing(&lease).await });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for_deletion_lock_waiters(&db.pool, request.community_id, gate_pid, 2).await;
         assert!(
             !forwarding.is_finished(),
             "forward transition must queue on the same lock"
@@ -3822,6 +3868,10 @@ mod postgres_tests {
             .execute(&mut *gate)
             .await
             .expect("hold community lock");
+        let gate_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *gate)
+            .await
+            .expect("read lock gate backend pid");
 
         let abort_store = store.clone();
         let aborting = tokio::spawn(async move {
@@ -3829,7 +3879,7 @@ mod postgres_tests {
                 .abort(request.id, "operator", "race recovery")
                 .await
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for_deletion_lock_waiters(&db.pool, request.community_id, gate_pid, 1).await;
         assert!(
             !aborting.is_finished(),
             "abort must wait for the community lock"
@@ -3837,7 +3887,7 @@ mod postgres_tests {
         let forward_store = store.clone();
         let lease = claim.lease.clone();
         let forwarding = tokio::spawn(async move { forward_store.fence(&lease).await });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for_deletion_lock_waiters(&db.pool, request.community_id, gate_pid, 2).await;
         assert!(
             !forwarding.is_finished(),
             "fence must queue on the same lock"
