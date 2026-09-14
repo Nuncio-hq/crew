@@ -493,7 +493,14 @@ runbook](TESTING.md#wiki-journal-v3-recovery) and
 [D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
 #363 owns the installed-runtime generation seam and immutable Git/folder
-snapshot handoff. Native publication resolves an owner/community/repository
+snapshot handoff. The Wiki library and page header open a shared Generate/Update
+Wiki dialog with the linked source, installed runtime, and Wiki-only profile/model
+preference. Start saves that scoped preference before invoking native preparation;
+a failed save keeps the dialog open and starts no runtime. Cancel or Escape before
+Start dismisses the draft. Runtime labels load independently of opening the dialog,
+and catalog refreshes preserve an edited draft. Library navigation resolves the
+containing Project from the existing project query rather than using a repository
+ID as a project route. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
 caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
 profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Claude/Codex

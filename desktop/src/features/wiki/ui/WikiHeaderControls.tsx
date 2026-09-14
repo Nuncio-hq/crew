@@ -113,13 +113,6 @@ export function WikiHeaderControls({
                       : "Freshness unavailable"}
       </span>
       <span>⑂ {toc?.branch || "main"}</span>
-      {canGenerate ? (
-        <WikiRuntimeSettingsControl
-          expected={operationScope}
-          owner={owner}
-          repoD={repoD}
-        />
-      ) : null}
       {showCadence && canEditOwner ? (
         <label className="flex items-center gap-1">
           Auto:
@@ -158,25 +151,33 @@ export function WikiHeaderControls({
         </label>
       ) : null}
       {canGenerate ? (
-        <button
-          className="rounded-md border border-input bg-card px-2 py-0.5 text-foreground"
-          data-testid="wiki-generate-mirror"
-          disabled={generate.isPending || setCadence.isPending}
-          onClick={() => {
-            if (!owner || !repoD || !operationScope) return;
-            generate.mutate({
-              owner,
-              repoD,
-              repoKey: repoKey(owner, repoD),
-              repoPath,
-              workspaceMode,
-              expectedScope: operationScope,
-            });
+        <WikiRuntimeSettingsControl
+          owner={owner}
+          repoD={repoD}
+          expected={operationScope}
+          generation={{
+            repoName: repoD ?? "Repository",
+            repoPath,
+            branch: workspaceMode === "folder" ? null : toc?.branch,
+            hasPages: Boolean(toc),
+            pending:
+              generate.isPending ||
+              setCadence.isPending ||
+              recoveryJob?.status === "generating",
+            testId: "wiki-generate-mirror",
+            onStart: () => {
+              if (!owner || !repoD || !operationScope) return;
+              generate.mutate({
+                owner,
+                repoD,
+                repoKey: repoKey(owner, repoD),
+                repoPath,
+                workspaceMode,
+                expectedScope: operationScope,
+              });
+            },
           }}
-          type="button"
-        >
-          {freshness === "stale" ? "Regenerate" : "Generate"}
-        </button>
+        />
       ) : null}
       {cadenceError ? (
         <span

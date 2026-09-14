@@ -22,23 +22,35 @@ import { JSDOM } from "jsdom";
 // recovery affordance and drags the whole app shell into the mount.
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === "@/shared/theme/ThemeProvider") {
+      return { shortCircuit: true, url: "buzz-wiki-stub:theme" };
+    }
     if (specifier === "@/app/navigation/useAppNavigation") {
       return { shortCircuit: true, url: "buzz-wiki-stub:useAppNavigation" };
     }
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
+    if (url === "buzz-wiki-stub:theme") {
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: "export const useTheme = () => ({ isDark: true });",
+      };
+    }
     if (url === "buzz-wiki-stub:useAppNavigation") {
       return {
         format: "module",
         shortCircuit: true,
         source:
-          "export const useAppNavigation = () => ({ goProject: () => {} });\n",
+          "export const useAppNavigation = () => ({ goProject: (id) => globalThis.__wikiProjectVisits.push(id) });\n",
       };
     }
     return nextLoad(url, context);
   },
 });
+
+globalThis.__wikiProjectVisits = [];
 
 const OWNER = "a".repeat(64);
 const COMMUNITY = "https://relay.example";
@@ -59,6 +71,12 @@ class NoopObserver {
 Object.assign(globalThis, {
   document: dom.window.document,
   HTMLElement: dom.window.HTMLElement,
+  Node: dom.window.Node,
+  NodeFilter: dom.window.NodeFilter,
+  HTMLInputElement: dom.window.HTMLInputElement,
+  MutationObserver: dom.window.MutationObserver,
+  CustomEvent: dom.window.CustomEvent,
+  getComputedStyle: dom.window.getComputedStyle,
   IS_REACT_ACT_ENVIRONMENT: true,
   localStorage: dom.window.localStorage,
   window: dom.window,
@@ -150,13 +168,19 @@ after(() => dom.window.close());
  * navigate into its detail view. WikiRepoCard's onOpen is unconditional, so
  * the detail view is reachable without any real Wiki graph.
  */
-async function mountDetail(localWorkspacePath, calls) {
+async function mountDetail(localWorkspacePath, calls, options = {}) {
   const expected = scope();
   const originalFetchEvents = relayClient.fetchEvents;
   relayClient.fetchEvents = async () => [];
   installTauriInvoke(async (command, args) => {
     calls.push({ command, args });
     if (command === "owner_operation_scope") return expected;
+    if (command === "wiki_runtime_settings_get") {
+      return {
+        token: expected,
+        value: { runtimeId: "hermes", profile: "saved-profile", model: null },
+      };
+    }
     if (command === "wiki_snapshot_read") {
       return {
         token: expected,
@@ -169,8 +193,35 @@ async function mountDetail(localWorkspacePath, calls) {
         },
       };
     }
+    if (command === "wiki_runtime_settings_set") {
+      if (options.saveError) throw new Error(options.saveError);
+      return { token: expected, value: args.selection };
+    }
+    if (command === "discover_acp_providers")
+      return [
+        {
+          id: "hermes",
+          label: "Hermes",
+          availability: "available",
+          default_args: [],
+          source: "builtin",
+        },
+        {
+          id: "codex",
+          label: "Codex",
+          availability: "available",
+          default_args: [],
+          source: "builtin",
+        },
+      ];
+    if (command === "get_relay_http_url") return COMMUNITY;
+    if (command === "get_media_proxy_port") return null;
+    if (command === "list_hermes_profiles")
+      return ["saved-profile", "other-profile"];
+    if (command === "wiki_publication_prepare")
+      throw new Error("fixture stops after launch");
     if (command === "wiki_publication_list") {
-      return { token: expected, value: [retiredJob()] };
+      return { token: expected, value: options.noJob ? [] : [retiredJob()] };
     }
     if (command === "wiki_publication_regenerate") {
       // The captured arguments are the contract under test; refusing here
@@ -216,7 +267,9 @@ async function mountDetail(localWorkspacePath, calls) {
   });
   await waitFor(() => {
     assert.ok(
-      screen.queryByTestId("wiki-recovery-header"),
+      options.noJob
+        ? screen.queryByTestId("wiki-generate-mirror")
+        : screen.queryByTestId("wiki-recovery-header"),
       "the detail view must render the durable recovery row",
     );
   });
@@ -299,6 +352,142 @@ test("a linked workspace exposes Regenerate and forwards the captured path", asy
     );
     assert.equal(call.args.id, "operation-1");
     assert.equal(call.args.revision, 3);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Open project uses the containing project rather than its repository id", async () => {
+  const mounted = await mountDetail(LINKED_PATH, []);
+  try {
+    globalThis.__wikiProjectVisits.length = 0;
+    const open = buttonNamed("Open project");
+    assert.ok(open);
+    await act(async () => {
+      fireEvent.click(open);
+    });
+    assert.deepEqual(globalThis.__wikiProjectVisits, ["project-1"]);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("saved Wiki runtime is visible before opening settings", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls);
+  try {
+    await waitFor(() =>
+      assert.match(
+        screen.getByTestId("wiki-runtime-label").textContent,
+        /Hermes \/ saved-profile/,
+      ),
+    );
+    assert.ok(
+      calls.some(({ command }) => command === "wiki_runtime_settings_get"),
+    );
+    assert.equal(screen.queryByTestId("wiki-runtime-settings-panel"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki generation opens a source dialog; Escape cancels without saving or launching", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, { noJob: true });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Generate Wiki" });
+    assert.ok(dialog.textContent.includes(LINKED_PATH));
+    await act(async () => fireEvent.keyDown(dialog, { key: "Escape" }));
+    await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+    assert.equal(
+      calls.some(
+        ({ command }) =>
+          command === "wiki_runtime_settings_set" ||
+          command === "wiki_publication_prepare",
+      ),
+      false,
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Start generation persists the selected runtime before reaching native prepare", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, { noJob: true });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () =>
+      fireEvent.change(
+        screen.getByRole("combobox", { name: "Hermes profile" }),
+        { target: { value: "other-profile" } },
+      ),
+    );
+    await act(async () => {
+      mounted.client.setQueryData(
+        ["acp-runtimes"],
+        [
+          { id: "hermes", label: "Hermes", availability: "available" },
+          { id: "codex", label: "Codex", availability: "available" },
+        ],
+      );
+    });
+    assert.equal(
+      screen.getByRole("combobox", { name: "Hermes profile" }).value,
+      "other-profile",
+      "catalog refresh must preserve the user's draft",
+    );
+    await act(async () => fireEvent.click(start));
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    const save = calls.findIndex(
+      ({ command }) => command === "wiki_runtime_settings_set",
+    );
+    const prepare = calls.findIndex(
+      ({ command }) => command === "wiki_publication_prepare",
+    );
+    assert.ok(save >= 0 && prepare > save);
+    assert.equal(calls[save].args.selection.profile, "other-profile");
+    assert.equal(calls[prepare].args.repoPath, LINKED_PATH);
+    assert.equal(screen.queryByRole("dialog"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a failed runtime save keeps the dialog open and never launches generation", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    saveError: "settings disk unavailable",
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () => fireEvent.click(start));
+    await screen.findByText("settings disk unavailable");
+    assert.ok(screen.queryByRole("dialog"));
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
+    );
   } finally {
     mounted.dispose();
   }

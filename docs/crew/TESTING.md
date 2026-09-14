@@ -960,6 +960,13 @@ exact-head review and installed release acceptance remain separate gates.
 
 ## Wiki installed-runtime generation (#363)
 
+`desktop/src/features/wiki/ui/WikiLibraryScreen.test.mjs` mounts the production
+library, Wiki page, dialog, and runtime/recovery hooks. It covers grouped-project
+navigation, saved-runtime readback before opening the dialog, Escape without a
+save or generation, runtime-save failure, and saving an edited profile before
+native prepare. Catalog refresh during editing must retain the draft. These
+JSDOM/IPC tests do not prove installed generation or in-flight cancellation.
+
 The production Wiki generation seam is covered by the native
 `managed_agents::wiki_runtime`, `wiki_runtime_settings`, and
 `managed_agents::discovery::bounded_command` lanes:

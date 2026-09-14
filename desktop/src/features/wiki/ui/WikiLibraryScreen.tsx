@@ -178,6 +178,11 @@ export function WikiLibraryScreen() {
             (tag) => tag[0] === "a" && tag[1] === repo?.repoAddress,
           )),
     );
+    const project = projectsQuery.data?.find((project) =>
+      project.repositories.some(
+        (member) => member.repoAddress === repo?.repoAddress,
+      ),
+    );
     return (
       <WikiPageView
         admin
@@ -186,11 +191,15 @@ export function WikiLibraryScreen() {
         door="library"
         isCompany={false}
         onBack={() => setSelected(null)}
-        onOpenProject={() => {
-          if (repo) void goProject(repo.id);
-        }}
+        onOpenProject={
+          project
+            ? () => {
+                void goProject(project.id);
+              }
+            : undefined
+        }
         owner={repo?.owner ?? toc?.owner ?? ""}
-        navigationProjectId={repo?.id ?? selectedCoordinate}
+        navigationProjectId={project?.id ?? selectedCoordinate}
         operationScope={selectedScope}
         page={page}
         pages={repoPages}
@@ -413,6 +422,10 @@ export function WikiLibraryScreen() {
                   readStatus={readStatus}
                   generating={job}
                   name={repo.name}
+                  repoPath={repo.localWorkspacePath}
+                  branch={
+                    repo.workspaceMode === "folder" ? null : repo.defaultBranch
+                  }
                   onGenerate={
                     canWrite
                       ? () => {

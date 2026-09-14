@@ -19,6 +19,8 @@ export function WikiRepoCard({
   name,
   owner,
   repoD,
+  repoPath,
+  branch,
   description,
   freshness,
   generating,
@@ -39,6 +41,8 @@ export function WikiRepoCard({
   name: string;
   owner: string;
   repoD: string;
+  repoPath?: string | null;
+  branch?: string | null;
   description?: string;
   freshness: WikiFreshness | "generating" | "failed";
   generating?: WikiJobState;
@@ -83,9 +87,7 @@ export function WikiRepoCard({
   const failedAction =
     onRecoveryRetry && publicationAction
       ? { label: publicationAction, run: onRecoveryRetry }
-      : !durable && onGenerate
-        ? { label: "Retry", run: onGenerate }
-        : null;
+      : null;
   return (
     <div
       className="rounded-xl border border-border bg-card p-4"
@@ -147,24 +149,28 @@ export function WikiRepoCard({
             {missingLocalCopy}
           </p>
         ) : null}
-        {onGenerate && operationScope ? (
+        {!emptyRepo && onGenerate && operationScope ? (
           <div className="mb-2">
             <WikiRuntimeSettingsControl
               expected={operationScope}
               owner={owner}
               repoD={repoD}
+              generation={{
+                repoName: name,
+                repoPath,
+                branch,
+                hasPages: updatedAt !== null,
+                pending:
+                  freshness === "generating" ||
+                  (durable && !generating?.reconciled),
+                testId:
+                  freshness === "stale"
+                    ? `wiki-regenerate-${name}`
+                    : `wiki-generate-${name}`,
+                onStart: onGenerate,
+              }}
             />
           </div>
-        ) : null}
-        {!emptyRepo && freshness === "never" && onGenerate ? (
-          <button
-            className="rounded-md bg-primary px-2 py-1 text-2xs text-primary-foreground"
-            data-testid={`wiki-generate-${name}`}
-            onClick={onGenerate}
-            type="button"
-          >
-            Generate wiki
-          </button>
         ) : null}
         {freshness === "generating" ? (
           <div
@@ -193,16 +199,6 @@ export function WikiRepoCard({
           >
             Freshness unavailable
           </div>
-        ) : null}
-        {freshness === "stale" && onGenerate ? (
-          <button
-            className="rounded-md bg-attention/20 px-2 py-1 text-2xs text-attention"
-            data-testid={`wiki-regenerate-${name}`}
-            onClick={onGenerate}
-            type="button"
-          >
-            Stale · Regenerate
-          </button>
         ) : null}
         {freshness === "failed" ? (
           <div data-testid="wiki-failed">
