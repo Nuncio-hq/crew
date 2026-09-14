@@ -935,6 +935,11 @@ identity; v4-specific cases cover tag-order/path preservation and pre-persist
 intent validation. This lane does not prove the relay's conditional capability
 advertisement or installed picker behavior.
 
+Mounted `PersonaDeleteDialog.interaction.test.mjs` exercises Cancel/reopen,
+default Keep, and explicit Archive with its exact reason at the production
+confirmation callback. Its read-only size-estimate IPC is stubbed; native
+deletion and relay readback remain separate acceptance requirements.
+
 The managed-agent deletion coordinator has a focused native lane:
 
 ```text
