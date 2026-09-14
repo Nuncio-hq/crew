@@ -30,6 +30,7 @@ export function WikiRepoCard({
   probe,
   readStatus,
   onOpen,
+  onManageWorkspace,
   onGenerate,
   onRetry,
   onRecoveryRetry,
@@ -52,6 +53,8 @@ export function WikiRepoCard({
   probe?: WikiRepoProbe;
   readStatus?: WikiRepositoryReadStatus;
   onOpen: () => void;
+  /** Open the containing Project's workspace management surface. */
+  onManageWorkspace?: () => void;
   onGenerate?: () => void;
   onRetry?: () => void;
   onRecoveryRetry?: () => void;
@@ -145,12 +148,19 @@ export function WikiRepoCard({
           </p>
         ) : null}
         {missingLocalCopy ? (
-          <p
-            className="text-2xs text-muted-foreground"
-            data-testid="wiki-missing-local"
-          >
-            {missingLocalCopy}
-          </p>
+          <div data-testid="wiki-missing-local">
+            <p className="text-2xs text-muted-foreground">{missingLocalCopy}</p>
+            {onManageWorkspace ? (
+              <button
+                className="mt-2 rounded-md border border-input bg-card px-2 py-1 text-2xs text-foreground"
+                data-testid={`wiki-manage-workspace-${name}`}
+                onClick={onManageWorkspace}
+                type="button"
+              >
+                Manage workspace
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {!emptyRepo && onGenerate && operationScope ? (
           <div className="mb-2">

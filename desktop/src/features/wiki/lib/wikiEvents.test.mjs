@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   defaultBranchCommit,
   isCanceledWikiGeneration,
+  parseWikiToc,
   wikiCanCancelRecovery,
   wikiFreshness,
   wikiGenerationStatusLabel,
@@ -58,6 +59,22 @@ test("freshness follows the exact advertised HEAD ref", () => {
     commit: COMMIT,
   });
   assert.equal(wikiFreshness(toc(), state), "fresh");
+});
+
+test("a Wiki TOC without a branch keeps branch readback unknown", () => {
+  const parsed = parseWikiToc({
+    id: "toc",
+    pubkey: "c".repeat(64),
+    created_at: 1,
+    kind: 30623,
+    tags: [
+      ["d", "crew/_toc"],
+      ["a", `30617:${"c".repeat(64)}:crew`],
+    ],
+    content: JSON.stringify({ sections: [] }),
+    sig: "d".repeat(128),
+  });
+  assert.equal(parsed?.branch, "");
 });
 
 test("a verified different HEAD commit is stale", () => {

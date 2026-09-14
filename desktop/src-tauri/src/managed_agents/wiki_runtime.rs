@@ -48,7 +48,8 @@ const HERMES_PROFILE_BINDING_KEYS: [&str; 2] = ["HERMES_HOME", "HERMES_MANAGED_D
 pub(crate) struct WikiRuntimeSelection {
     /// Canonical `KnownAcpRuntime::id` (`hermes`, `claude`, or `codex`).
     pub runtime_id: String,
-    /// Explicit model for runtimes whose model is not profile-owned.
+    /// Optional explicit model override for runtimes whose model is not
+    /// profile-owned; `None` requests the runtime default.
     #[serde(default)]
     pub model: Option<String>,
     /// Named profile for the profile-owned Hermes runtime.
@@ -57,6 +58,21 @@ pub(crate) struct WikiRuntimeSelection {
 }
 
 impl WikiRuntimeSelection {
+    /// Canonicalize the optional model override before it is persisted or
+    /// handed to a runtime. Empty UI input is the absence of an override;
+    /// non-empty values still pass the closed validation below.
+    pub(crate) fn normalized(mut self) -> Result<Self, WikiRuntimeFailure> {
+        if self
+            .model
+            .as_deref()
+            .is_some_and(|model| model.trim().is_empty())
+        {
+            self.model = None;
+        }
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Validate the closed runtime/model/profile vocabulary before resolution.
     pub(crate) fn validate(&self) -> Result<(), WikiRuntimeFailure> {
         let runtime_id = self.runtime_id.trim();
@@ -239,7 +255,7 @@ impl WikiRuntimeGenerator {
         selection: WikiRuntimeSelection,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, WikiRuntimeFailure> {
-        selection.validate()?;
+        let selection = selection.normalized()?;
         let runtime = known_acp_runtime_exact(selection.runtime_id.trim())
             .ok_or_else(|| WikiRuntimeFailure::UnsupportedRuntime(selection.runtime_id.clone()))?;
         let command = runtime
@@ -284,7 +300,7 @@ impl WikiRuntimeGenerator {
         state_dir: PathBuf,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, WikiRuntimeFailure> {
-        selection.validate()?;
+        let selection = selection.normalized()?;
         if !executable.is_absolute() || !state_dir.is_absolute() {
             return Err(WikiRuntimeFailure::InvalidStateDirectory);
         }
@@ -338,7 +354,10 @@ impl WikiRuntimeGenerator {
     /// not a cost or provider claim inferred from an environment variable.
     #[allow(dead_code)]
     pub(crate) fn diagnostic(&self) -> String {
-        let model = self.selection.model.as_deref().unwrap_or("profile-owned");
+        let model = match self.selection.runtime_id.trim() {
+            "hermes" => "profile-owned",
+            _ => self.selection.model.as_deref().unwrap_or("runtime-default"),
+        };
         let profile = self.selection.profile.as_deref().unwrap_or("none");
         format!(
             "runtime={} model={} profile={}",
@@ -740,8 +759,8 @@ impl Generator for WikiRuntimeGenerator {
 }
 
 fn validate_model(model: Option<&str>) -> Result<(), WikiRuntimeFailure> {
-    let Some(model) = model else {
-        return Err(WikiRuntimeFailure::InvalidModel);
+    let Some(model) = model.filter(|model| !model.trim().is_empty()) else {
+        return Ok(());
     };
     validate_value(model).map_err(|_| WikiRuntimeFailure::InvalidModel)
 }

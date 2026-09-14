@@ -411,6 +411,14 @@ export function WikiLibraryScreen() {
                 remoteBranch: tip?.branch,
                 remoteCommit: tip?.commit,
               });
+              const containingProject = projectsQuery.data?.find((project) =>
+                project.repositories.some(
+                  (member) => member.repoAddress === repo.repoAddress,
+                ),
+              );
+              const missingWorkspace =
+                probe.kind === "missing-local" ||
+                probe.kind === "missing-local-gone";
               return (
                 <WikiRepoCard
                   key={repo.id}
@@ -424,7 +432,17 @@ export function WikiLibraryScreen() {
                   name={repo.name}
                   repoPath={repo.localWorkspacePath}
                   branch={
-                    repo.workspaceMode === "folder" ? null : repo.defaultBranch
+                    repo.workspaceMode === "folder"
+                      ? null
+                      : (tip?.branch ?? toc?.branch ?? null)
+                  }
+                  onManageWorkspace={
+                    missingWorkspace && containingProject
+                      ? () =>
+                          void goProject(containingProject.id, {
+                            repositoryAddress: repo.repoAddress,
+                          })
+                      : undefined
                   }
                   onGenerate={
                     canWrite

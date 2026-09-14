@@ -3,6 +3,7 @@ import {
   useWikiSetCadence,
 } from "@/features/wiki/hooks/useWikiGenerate";
 import {
+  defaultBranchCommit,
   repoKey,
   wikiCanCancelRecovery,
   wikiFreshness,
@@ -93,6 +94,7 @@ export function WikiHeaderControls({
       ? wikiRecoveryActionLabel(affordance)
       : null;
   const canceledGeneration = isCanceledWikiGeneration(recoveryJob);
+  const sourceBranch = defaultBranchCommit(repoState)?.branch ?? toc?.branch;
   return (
     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-2xs text-muted-foreground">
       <span
@@ -115,7 +117,7 @@ export function WikiHeaderControls({
                       ? "Never generated"
                       : "Freshness unavailable"}
       </span>
-      <span>⑂ {toc?.branch || "main"}</span>
+      <span>⑂ {sourceBranch || "Snapshot"}</span>
       {showCadence && canEditOwner ? (
         <label className="flex items-center gap-1">
           Auto:
@@ -161,7 +163,7 @@ export function WikiHeaderControls({
           generation={{
             repoName: repoD ?? "Repository",
             repoPath,
-            branch: workspaceMode === "folder" ? null : toc?.branch,
+            branch: workspaceMode === "folder" ? null : sourceBranch,
             hasPages: Boolean(toc),
             pending:
               generate.isPending ||

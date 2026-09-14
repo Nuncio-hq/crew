@@ -131,23 +131,20 @@ export function WikiRuntimeSettingsControl({
   const savedLabel = settingsQuery.data
     ? settingsQuery.data.runtimeId === "hermes"
       ? `${savedRuntimeLabel} / ${settingsQuery.data.profile ?? "unknown"}`
-      : `${savedRuntimeLabel} / ${settingsQuery.data.model ?? "unknown"}`
+      : `${savedRuntimeLabel} / ${settingsQuery.data.model ?? "runtime default"}`
     : settingsQuery.isPending
       ? "Loading…"
       : settingsQuery.isError
         ? "Unavailable"
         : "Not configured";
-  const invalidDraft =
-    runtimeId === "hermes"
-      ? profile.trim().length === 0
-      : model.trim().length === 0;
+  const invalidDraft = runtimeId === "hermes" && profile.trim().length === 0;
 
   async function save() {
     const started = activeGeneration.current;
     const selection: WikiRuntimeSelection =
       runtimeId === "hermes"
         ? { runtimeId, profile: profile.trim(), model: null }
-        : { runtimeId, model: model.trim(), profile: null };
+        : { runtimeId, model: model.trim() || null, profile: null };
     try {
       await saveMutation.mutateAsync({
         coordinate: activeCoordinate,
@@ -278,12 +275,14 @@ export function WikiRuntimeSettingsControl({
             </label>
           ) : (
             <label className="mb-2 block">
-              <span className="mb-1 block text-muted-foreground">Model</span>
+              <span className="mb-1 block text-muted-foreground">
+                Model (optional)
+              </span>
               <input
                 aria-label="Wiki runtime model"
                 className="w-full rounded border border-input bg-background px-2 py-1 text-foreground"
                 onChange={(event) => setModel(event.target.value)}
-                placeholder="model identifier"
+                placeholder="Runtime default"
                 value={model}
               />
             </label>

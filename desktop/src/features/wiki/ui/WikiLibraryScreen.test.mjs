@@ -43,7 +43,7 @@ registerHooks({
         format: "module",
         shortCircuit: true,
         source:
-          "export const useAppNavigation = () => ({ goProject: (id) => globalThis.__wikiProjectVisits.push(id) });\n",
+          "export const useAppNavigation = () => ({ goProject: (id, behavior) => { globalThis.__wikiProjectVisits.push(id); globalThis.__wikiProjectVisitOptions.push(behavior ?? null); } });\n",
       };
     }
     return nextLoad(url, context);
@@ -51,6 +51,7 @@ registerHooks({
 });
 
 globalThis.__wikiProjectVisits = [];
+globalThis.__wikiProjectVisitOptions = [];
 
 const OWNER = "a".repeat(64);
 const COMMUNITY = "https://relay.example";
@@ -92,7 +93,7 @@ function scope() {
   };
 }
 
-function repository(localWorkspacePath) {
+function repository(localWorkspacePath, overrides = {}) {
   return {
     id: REPO_D,
     dtag: REPO_D,
@@ -110,6 +111,24 @@ function repository(localWorkspacePath) {
     defaultBranch: "main",
     repoAddress: `30617:${OWNER}:${REPO_D}`,
     channelId: null,
+    ...overrides,
+  };
+}
+
+function repoState(branch = "release") {
+  const commit = "b".repeat(40);
+  return {
+    id: "f".repeat(64),
+    pubkey: OWNER,
+    created_at: 2,
+    kind: 30618,
+    tags: [
+      ["d", REPO_D],
+      ["HEAD", `ref: refs/heads/${branch}`],
+      [`refs/heads/${branch}`, commit],
+    ],
+    content: "",
+    sig: "1".repeat(128),
   };
 }
 
@@ -172,6 +191,17 @@ function canceledGenerationJob() {
   };
 }
 
+function missingSourceJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "canceled",
+    reconciled: true,
+    cancelRequested: true,
+    lastError: "Source workspace is missing or not a directory.",
+  };
+}
+
 function installTauriInvoke(handler) {
   const bridge = { invoke: handler, transformCallback: () => 1 };
   globalThis.__TAURI_INTERNALS__ = bridge;
@@ -212,7 +242,11 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
     if (command === "wiki_runtime_settings_get") {
       return {
         token: expected,
-        value: { runtimeId: "hermes", profile: "saved-profile", model: null },
+        value: options.runtimeSettings ?? {
+          runtimeId: "hermes",
+          profile: "saved-profile",
+          model: null,
+        },
       };
     }
     if (command === "wiki_snapshot_read") {
@@ -223,7 +257,7 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
           head: null,
           manifest: null,
           pages: [],
-          repoState: null,
+          repo_state: options.repoState ?? null,
         },
       };
     }
@@ -284,7 +318,14 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
   // any repository fetch.
   client.setQueryData(
     ["projects"],
-    [{ id: "project-1", repositories: [repository(localWorkspacePath)] }],
+    [
+      {
+        id: "project-1",
+        repositories: [
+          repository(localWorkspacePath, options.repository ?? {}),
+        ],
+      },
+    ],
   );
 
   const view = render(
@@ -412,6 +453,33 @@ test("Open project uses the containing project rather than its repository id", a
   }
 });
 
+test("a missing bound workspace offers Manage workspace for the exact repository", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    job: missingSourceJob(),
+    repoState: repoState("release"),
+    openDetail: false,
+  });
+  try {
+    const card = screen.getByTestId(`wiki-repo-card-${REPO_D}`);
+    const missing = await screen.findByTestId("wiki-missing-local");
+    assert.match(missing.textContent, /Project folder is gone/);
+    const manage = screen.getByTestId(`wiki-manage-workspace-${REPO_D}`);
+    globalThis.__wikiProjectVisits.length = 0;
+    globalThis.__wikiProjectVisitOptions.length = 0;
+    await act(async () => fireEvent.click(manage));
+    assert.deepEqual(globalThis.__wikiProjectVisits, ["project-1"]);
+    assert.deepEqual(globalThis.__wikiProjectVisitOptions, [
+      { repositoryAddress: `30617:${OWNER}:${REPO_D}` },
+    ]);
+    assert.equal(
+      card.querySelector(`[data-testid="wiki-manage-workspace-${REPO_D}"]`),
+      manage,
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
 test("saved Wiki runtime is visible before opening settings", async () => {
   const calls = [];
   const mounted = await mountDetail(LINKED_PATH, calls);
@@ -450,6 +518,24 @@ test("Wiki generation opens a source dialog; Escape cancels without saving or la
       ),
       false,
     );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki generation dialog reads the repository state's actual branch", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    noJob: true,
+    repoState: repoState("release"),
+    repository: { defaultBranch: "main" },
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Generate Wiki" });
+    assert.match(dialog.textContent, /release/);
+    assert.doesNotMatch(dialog.textContent, /\bmain\b/);
   } finally {
     mounted.dispose();
   }
@@ -502,6 +588,53 @@ test("Start generation persists the selected runtime before reaching native prep
     assert.equal(calls[save].args.selection.profile, "other-profile");
     assert.equal(calls[prepare].args.repoPath, LINKED_PATH);
     assert.equal(screen.queryByRole("dialog"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Codex generation accepts a blank optional model and records runtime default", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+  });
+  try {
+    await waitFor(() =>
+      assert.match(
+        screen.getByTestId("wiki-runtime-label").textContent,
+        /Codex \/ runtime default/,
+      ),
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    await act(async () =>
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Wiki runtime model" }),
+        {
+          target: { value: "   " },
+        },
+      ),
+    );
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () => fireEvent.click(start));
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    const save = calls.find(
+      ({ command }) => command === "wiki_runtime_settings_set",
+    );
+    assert.deepEqual(save.args.selection, {
+      runtimeId: "codex",
+      model: null,
+      profile: null,
+    });
   } finally {
     mounted.dispose();
   }

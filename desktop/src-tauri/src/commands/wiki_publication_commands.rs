@@ -6,7 +6,8 @@ use super::owner_operations::{
     load_owner_operation_for_dispatch, owner_operation_create, owner_operation_update,
     replace_wiki_with_successor, ScopedOperationResult,
 };
-use super::wiki_generation_record::{admit_generation, GenerationControl};
+use super::wiki_generation_record::GenerationControl;
+use super::wiki_native_generation::{generate_native_wiki, NativeWikiGenerationContext};
 use super::wiki_publication_driver::drive;
 use super::wiki_publication_native_reads::{NativeClock, NativeJournal};
 use super::wiki_publication_record::WikiPublicationRecord;
@@ -22,75 +23,12 @@ use crate::owner_operations::{
 use crate::wiki_worker::WikiGeneration;
 use crew_wiki::snapshot_v1_build::{build_cadence_update, build_snapshot, SnapshotBuild};
 use serde::Serialize;
-use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 #[cfg(test)]
 use std::path::PathBuf;
 use tauri::{AppHandle, Runtime};
 
 const MAX_OPERATION_PAGES: usize = 10;
 const OPERATION_PAGE_SIZE: usize = 100;
-
-async fn generate_native_wiki(
-    expected: &OwnerScopeToken,
-    owner: &str,
-    repo_d: &str,
-    repo_path: Option<&str>,
-    workspace_mode: Option<&str>,
-    runtime_selection: WikiRuntimeSelection,
-    control: GenerationControl,
-) -> Result<WikiGeneration, String> {
-    let generation_owner = owner.to_owned();
-    let generation_repo = repo_d.to_owned();
-    let generation_path = repo_path.map(str::to_owned);
-    let generation_mode = workspace_mode.map(str::to_owned);
-    let generation_scope = expected.scope.community.clone();
-    let generation_permit = match control.permit {
-        Some(permit) => permit,
-        None => admit_generation().await?,
-    };
-    let generation_key = control.key;
-    let registered_cancel = control.cancel;
-    let result = tokio::task::spawn_blocking(move || {
-        let _generation_permit = generation_permit;
-        let _guard = super::super::wiki_worker::generate_lock()
-            .acquire(&format!(
-                "{generation_scope}:{generation_owner}:{generation_repo}"
-            ))
-            .map_err(|error| error.to_string())?;
-        // Initial generation already owns its unique journal claim and token.
-        // Legacy regeneration registers here, after acquiring the repository
-        // lock, so a rejected concurrent request cannot take over its token.
-        let owns_registration = registered_cancel.is_none();
-        let generation_cancel = match registered_cancel {
-            Some(token) => token,
-            None => super::super::wiki_worker::begin_generation_cancel(&generation_key)?,
-        };
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            super::super::wiki_worker::generate_wiki_pages_with_runtime_and_cancel(
-                &generation_owner,
-                &generation_repo,
-                generation_path.as_deref(),
-                generation_mode.as_deref(),
-                Some(runtime_selection),
-                Some(generation_cancel.clone()),
-            )
-            .map_err(|error| error.to_string())
-        }));
-        if owns_registration {
-            super::super::wiki_worker::finish_generation_cancel(
-                &generation_key,
-                &generation_cancel,
-            );
-        }
-        match result {
-            Ok(result) => result,
-            Err(payload) => resume_unwind(payload),
-        }
-    })
-    .await
-    .map_err(|_| "Wiki generation worker failed.".to_string());
-    result?
-}
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "result", rename_all = "kebab-case")]
@@ -336,6 +274,15 @@ pub(super) async fn prepare_registered(
     // self-association tag that older repository announcements may omit.
     runtime.repository_head().await?;
     let before_head = runtime.current_head().await?;
+    // A complete v1 publication is the only reusable input. Legacy or
+    // incomplete Wiki state remains publishable as a fresh v1 graph; transport
+    // and verification failures stay errors instead of becoming a fake cache
+    // miss.
+    let previous = match runtime.current_publication().await {
+        Ok(publication) => publication,
+        Err(error) if error.starts_with("Current Wiki is legacy or incomplete;") => None,
+        Err(error) => return Err(error),
+    };
     let generation = generate_native_wiki(
         &expected,
         owner,
@@ -343,7 +290,10 @@ pub(super) async fn prepare_registered(
         repo_path.as_deref(),
         workspace_mode.as_deref(),
         runtime_selection,
-        control,
+        NativeWikiGenerationContext {
+            control,
+            previous: previous.clone(),
+        },
     )
     .await?;
     // Long local capture/generation must never publish against a head that
@@ -353,7 +303,7 @@ pub(super) async fn prepare_registered(
         return Err("Wiki repository head changed while generating; retry.".into());
     }
     if let Some(head) = &after_head {
-        if let Ok(Some(existing)) = runtime.current_publication().await {
+        if let Some(existing) = previous.as_ref() {
             let existing_revision = existing.source_revision.clone();
             let cadence = head
                 .tags
@@ -362,7 +312,13 @@ pub(super) async fn prepare_registered(
                 .and_then(|tag| tag.as_slice().get(1))
                 .map(String::as_str)
                 .unwrap_or("manual");
-            if existing_revision == generation.snapshot.source_revision
+            if existing.head.id == head.id
+                && existing_revision == generation.snapshot.source_revision
+                && super::super::wiki_worker::all_pages_reused(
+                    &generation.snapshot,
+                    &generation.plan,
+                    existing,
+                )
                 && cadence == current_cadence(head)
             {
                 let final_head = runtime.current_head().await?;
@@ -620,10 +576,13 @@ pub(crate) async fn wiki_publication_regenerate(
         repo_path.as_deref(),
         workspace_mode.as_deref(),
         runtime_selection,
-        GenerationControl {
-            key: generation_key,
-            cancel: None,
-            permit: None,
+        NativeWikiGenerationContext {
+            control: GenerationControl {
+                key: generation_key,
+                cancel: None,
+                permit: None,
+            },
+            previous: None,
         },
     )
     .await?;

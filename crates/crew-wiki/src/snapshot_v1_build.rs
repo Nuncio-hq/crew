@@ -9,7 +9,7 @@ use crate::git_snapshot::RepoSnapshot;
 use crate::publish::PageDraft;
 use crate::snapshot_v1::{projection, verify_snapshot, verify_snapshot_index, SnapshotManifest};
 use crate::snapshot_v1_validation::{canonical, digest, hex, MAX_EVENT_BYTES};
-use crate::source_snapshot::{source_reference, SourceReference};
+use crate::source_snapshot::{source_hash, source_reference, SourceReference};
 use crate::types::WikiPlan;
 use crate::WikiError;
 use buzz_core::kind::KIND_REPO_WIKI_PAGE;
@@ -468,6 +468,16 @@ fn head_tags(
         manifest.id.to_hex(),
         manifest_digest.to_owned(),
     )?);
+    // Page source references intentionally contain only the files selected for
+    // that page.  The signed head also carries the complete steering-file
+    // identity so an incremental run can authenticate unchanged explicit
+    // pages when `.crew/wiki.json` is not one of their source files.
+    let steering_hash = snapshot
+        .contents
+        .get(".crew/wiki.json")
+        .map(|content| source_hash(content.as_bytes()))
+        .unwrap_or_else(|| "absent".into());
+    tags.push(tag2("wiki-steering-hash", steering_hash)?);
     tags.push(tag2("cadence", cadence)?);
     tags.push(tag2("expected-revision", expected_revision)?);
     Ok(tags)

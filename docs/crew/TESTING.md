@@ -977,10 +977,12 @@ cargo test --manifest-path desktop/src-tauri/Cargo.toml wiki_runtime --lib
 cargo test --manifest-path desktop/src-tauri/Cargo.toml bounded_command --lib
 ```
 
-These tests bind explicit runtime/profile/model validation, owner/community
-preference persistence, immutable source prompt construction, Codex-style
-stdin delivery, isolated disposable state, nonzero failure, cancellation and
-bounded input/output/process cleanup. Native generation also has a 15-minute
+These tests bind runtime/profile/model validation, including null model
+normalization and omission of the CLI override for Claude/Codex while Hermes
+continues to require a named profile, owner/community preference persistence,
+immutable source prompt construction, Codex-style stdin delivery, isolated
+disposable state, nonzero failure, cancellation and bounded input/output/process
+cleanup. Native generation also has a 15-minute
 job budget around the 180-second per-page process bound. The legacy unsigned
 preview remains a heuristic fixture; a native publication call with no stored
 or supplied selection fails closed. Fake-process GREEN tests do not certify
@@ -988,6 +990,15 @@ provider auth, effective generation model, or an installed runtime; #348 must
 run one exact staged runtime with a disposable copied profile/config and
 record source revision, runtime/model/profile, output and no employee-session
 mutation.
+
+Incremental tests in `desktop/src-tauri/src/wiki_incremental_tests.rs` bind
+the production planner/generator seam to verified signed publications. A
+counting generator proves zero runtime construction for unchanged sources,
+one call for one affected page, metadata/steering invalidation, and removal
+from the next manifest. Generation-journal tests also force Cancel to win
+before no-op settlement and require the foreground result to honor that
+terminal revision. These deterministic tests do not establish installed
+process cancellation or a real incremental relay update.
 
 The Hermes child command sets `HERMES_SAFE_MODE=1` and passes Hermes'
 top-level `--safe-mode` flag, while retaining the copied profile's

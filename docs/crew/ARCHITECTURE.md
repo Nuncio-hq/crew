@@ -517,7 +517,8 @@ ID as a project route. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
 caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
 profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Claude/Codex
-receive an explicit model selection. For Hermes Agent v0.21.2 (source HEAD
+receive an optional model override, and a null model omits `--model` and
+requests the isolated runtime default. For Hermes Agent v0.21.2 (source HEAD
 `eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads profile dotenv,
 external secret sources, and managed dotenv before its startup guard reapplies
 safe mode; its `hermes_cli/oneshot.py` path still loads the selected profile
@@ -554,6 +555,17 @@ line ranges when that evidence is unavailable. The source list and Markdown
 citations both open a dismissible verified-source pane; the pane hides the
 table of contents, returns focus to its activating control, and is scoped to
 the exact owner, repository, path, and line range recorded on the page.
+Native Update reads one verified prior publication and captures the new source
+once. It reuses a page body only when source hashes and membership, page/section
+metadata, language, source kind, branch, and the signed `wiki-steering-hash`
+match. The runtime is created lazily for changed pages; an unchanged snapshot
+makes no runtime calls and settles through the same durable generation claim.
+New publications sign the complete steering-file digest (or `absent`) on the
+TOC. Older heads without that digest regenerate once before reuse is possible.
+Removed pages are omitted from the new manifest; the previous complete Wiki
+remains readable until publication commits. Explicit recovery regeneration
+builds fresh pages without reuse.
+
 Native reads still require the selected root and live snapshot checks, and real
 cross-client acceptance remains a separate gate. Repository announcements bind
 their identity through signed kind 30617, author, and `d`; they need no self-`a`

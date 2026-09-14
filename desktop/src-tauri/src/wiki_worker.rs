@@ -14,11 +14,14 @@ use crew_wiki::generate_root::{
 };
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::{page_event_tags, toc_content, toc_event_tags, PageDraft, TocManifest};
+use crew_wiki::snapshot_v1::SnapshotManifest;
+use crew_wiki::snapshot_v1_build::SnapshotPublication;
 use crew_wiki::source_folder::capture_folder;
+use crew_wiki::source_snapshot::{source_hash, SourceReference};
 use crew_wiki::steering::load_captured_steering;
 use crew_wiki::types::WikiPlan;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -215,15 +218,101 @@ pub(crate) fn generate_wiki_pages_with_runtime_and_cancel(
     runtime_selection: Option<WikiRuntimeSelection>,
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<WikiGeneration, WikiGenerationError> {
+    generate_wiki_pages_with_runtime_and_cancel_and_previous(
+        owner,
+        repo_d,
+        repo_path,
+        workspace_mode,
+        runtime_selection,
+        cancel,
+        None,
+    )
+}
+
+/// Capture and generate while reusing pages from one fully verified previous
+/// publication. The previous graph is only a source of immutable content; the
+/// new snapshot and plan still bind every event that the caller eventually
+/// signs.
+pub(crate) fn generate_wiki_pages_with_runtime_and_cancel_and_previous(
+    owner: &str,
+    repo_d: &str,
+    repo_path: Option<&str>,
+    workspace_mode: Option<&str>,
+    runtime_selection: Option<WikiRuntimeSelection>,
+    cancel: Option<Arc<AtomicBool>>,
+    previous: Option<&SnapshotPublication>,
+) -> Result<WikiGeneration, WikiGenerationError> {
     let started = Instant::now();
-    if cancel
-        .as_ref()
-        .is_some_and(|token| token.load(Ordering::Acquire))
-    {
+    check_generation_state(started, cancel.as_ref())?;
+    let (snapshot, plan) = capture_wiki_source(
+        owner,
+        repo_d,
+        repo_path,
+        workspace_mode,
+        cancel.as_ref(),
+        started,
+    )?;
+    let runtime_cancel = cancel.clone();
+    let drafts = generate_planned_pages(
+        &snapshot,
+        &plan,
+        previous,
+        cancel.as_ref(),
+        started,
+        move || {
+            let generator: Box<dyn Generator> = match runtime_selection {
+                Some(selection) => Box::new(
+                    WikiRuntimeGenerator::installed_with_cancel(
+                        selection,
+                        runtime_cancel
+                            .clone()
+                            .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+                    )
+                    .map_err(|error| WikiGenerationError::Failed(error.to_string()))?,
+                ),
+                None => Box::new(HeuristicGenerator),
+            };
+            Ok(generator)
+        },
+    )?;
+    if drafts.is_empty() {
+        return Err(WikiGenerationError::Failed(
+            "Source coverage unavailable: no Wiki pages were generated.".into(),
+        ));
+    }
+    Ok(WikiGeneration {
+        snapshot,
+        plan,
+        drafts,
+    })
+}
+
+fn check_generation_state(
+    started: Instant,
+    cancel: Option<&Arc<AtomicBool>>,
+) -> Result<(), WikiGenerationError> {
+    if cancel.is_some_and(|token| token.load(Ordering::Acquire)) {
         return Err(WikiGenerationError::Failed(
             "Wiki generation was canceled.".into(),
         ));
     }
+    if started.elapsed() >= WIKI_RUNTIME_JOB_TIMEOUT {
+        return Err(WikiGenerationError::Failed(
+            "Wiki generation exceeded its job time limit.".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn capture_wiki_source(
+    owner: &str,
+    repo_d: &str,
+    repo_path: Option<&str>,
+    workspace_mode: Option<&str>,
+    cancel: Option<&Arc<AtomicBool>>,
+    started: Instant,
+) -> Result<(RepoSnapshot, WikiPlan), WikiGenerationError> {
+    check_generation_state(started, cancel)?;
     let root = match resolve_wiki_generate_root(repo_path) {
         WikiGenerateRoot::MissingLocalPath => return Err(WikiGenerationError::MissingLocalPath),
         WikiGenerateRoot::Ready(root) => root,
@@ -247,6 +336,7 @@ pub(crate) fn generate_wiki_pages_with_runtime_and_cancel(
             ))
         }
     };
+    check_generation_state(started, cancel)?;
     if snapshot.is_empty_tree() {
         return Err(WikiGenerationError::EmptyTree);
     }
@@ -260,55 +350,202 @@ pub(crate) fn generate_wiki_pages_with_runtime_and_cancel(
         .map_err(|error| WikiGenerationError::Failed(error.to_string()))?;
     let plan = plan_pages(&snapshot, steering.as_ref())
         .map_err(|error| WikiGenerationError::Failed(error.to_string()))?;
-    if started.elapsed() >= WIKI_RUNTIME_JOB_TIMEOUT {
-        return Err(WikiGenerationError::Failed(
-            "Wiki generation exceeded its job time limit.".into(),
-        ));
-    }
-    let generator: Box<dyn Generator> = match runtime_selection {
-        Some(selection) => Box::new(
-            WikiRuntimeGenerator::installed_with_cancel(
-                selection,
-                cancel
-                    .clone()
-                    .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
-            )
-            .map_err(|error| WikiGenerationError::Failed(error.to_string()))?,
-        ),
-        None => Box::new(HeuristicGenerator),
-    };
+    check_generation_state(started, cancel)?;
+    Ok((snapshot, plan))
+}
+
+/// Generate the pages for one captured plan, constructing the runtime lazily.
+/// This is the production counting seam for incremental generation: unchanged
+/// pages are copied only after their verified source and metadata identities
+/// match, so a zero-call run never constructs or invokes the selected runtime.
+fn generate_planned_pages<F>(
+    snapshot: &RepoSnapshot,
+    plan: &WikiPlan,
+    previous: Option<&SnapshotPublication>,
+    cancel: Option<&Arc<AtomicBool>>,
+    started: Instant,
+    make_generator: F,
+) -> Result<Vec<PageDraft>, WikiGenerationError>
+where
+    F: FnOnce() -> Result<Box<dyn Generator>, WikiGenerationError>,
+{
+    let reusable = previous
+        .map(|publication| reusable_drafts(snapshot, plan, publication))
+        .unwrap_or_default();
     let mut drafts = Vec::new();
+    let mut generator: Option<Box<dyn Generator>> = None;
+    let mut make_generator = Some(make_generator);
     for section in &plan.sections {
         for page in &section.pages {
-            if cancel
-                .as_ref()
-                .is_some_and(|token| token.load(Ordering::Acquire))
-            {
-                return Err(WikiGenerationError::Failed(
-                    "Wiki generation was canceled.".into(),
-                ));
+            check_generation_state(started, cancel)?;
+            if let Some(draft) = reusable.get(&page.slug) {
+                drafts.push(draft.clone());
+                continue;
             }
-            if started.elapsed() >= WIKI_RUNTIME_JOB_TIMEOUT {
-                return Err(WikiGenerationError::Failed(
-                    "Wiki generation exceeded its job time limit.".into(),
-                ));
+            if generator.is_none() {
+                let factory = make_generator.take().ok_or_else(|| {
+                    WikiGenerationError::Failed("Wiki generator unavailable.".into())
+                })?;
+                generator = Some(factory()?);
             }
+            let generator = generator
+                .as_deref()
+                .ok_or_else(|| WikiGenerationError::Failed("Wiki generator unavailable.".into()))?;
             drafts.push(
-                generate_page(generator.as_ref(), page, &snapshot, &plan.language)
+                generate_page(generator, page, snapshot, &plan.language)
                     .map_err(|error| WikiGenerationError::Failed(error.to_string()))?,
             );
         }
     }
-    if drafts.is_empty() {
-        return Err(WikiGenerationError::Failed(
-            "Source coverage unavailable: no Wiki pages were generated.".into(),
-        ));
+    Ok(drafts)
+}
+
+/// Reconstruct drafts only from a publication that has already passed the
+/// native complete-graph verifier. A mismatch is simply non-reusable and is
+/// sent through the selected generator; it never becomes an unverified cache.
+fn reusable_drafts(
+    snapshot: &RepoSnapshot,
+    plan: &WikiPlan,
+    previous: &SnapshotPublication,
+) -> BTreeMap<String, PageDraft> {
+    let Ok(manifest) = serde_json::from_str::<SnapshotManifest>(&previous.manifest.content) else {
+        return BTreeMap::new();
+    };
+    if !steering_identity_matches(snapshot, previous) {
+        return BTreeMap::new();
     }
-    Ok(WikiGeneration {
-        snapshot,
-        plan,
-        drafts,
-    })
+    let source_kind = if snapshot.source_revision.starts_with("folder:") {
+        "folder"
+    } else {
+        "git"
+    };
+    let mut reusable = BTreeMap::new();
+    for section in &plan.sections {
+        let section_matches = manifest
+            .6
+            .iter()
+            .find(|candidate| candidate.0 == section.id)
+            .is_some_and(|candidate| candidate.1 == section.title);
+        for page in &section.pages {
+            let Some(reference) = manifest.7.iter().find(|candidate| candidate.0 == page.slug)
+            else {
+                continue;
+            };
+            let Some(event) = previous
+                .pages
+                .iter()
+                .find(|candidate| candidate.id.to_hex() == reference.2)
+            else {
+                continue;
+            };
+            if !section_matches
+                || reference.4 != page.title
+                || reference.5 != page.section
+                || reference.6 != plan.language
+                || !source_membership_matches(&page.source_files, &reference.7, snapshot)
+                || event_tag(event, "source-kind") != Some(source_kind)
+                || (source_kind == "git"
+                    && event_tag(event, "branch") != Some(snapshot.branch.as_str()))
+                || (source_kind == "folder" && event_tag(event, "branch").is_some())
+                || event.content.trim().is_empty()
+            {
+                continue;
+            }
+            reusable.insert(
+                page.slug.clone(),
+                PageDraft {
+                    slug: page.slug.clone(),
+                    title: page.title.clone(),
+                    section: page.section.clone(),
+                    source_files: page.source_files.clone(),
+                    // The signed graph is rebuilt against the new immutable
+                    // source revision. The body is the only reused value.
+                    commit: snapshot.commit.clone(),
+                    language: plan.language.clone(),
+                    content: event.content.clone(),
+                },
+            );
+        }
+    }
+    reusable
+}
+
+/// Whether every page in a newly captured plan can be reused from a verified
+/// publication. This keeps the no-op decision on the same production reuse
+/// predicate as partial generation.
+pub(crate) fn all_pages_reused(
+    snapshot: &RepoSnapshot,
+    plan: &WikiPlan,
+    previous: &SnapshotPublication,
+) -> bool {
+    let page_count: usize = plan
+        .sections
+        .iter()
+        .map(|section| section.pages.len())
+        .sum();
+    reusable_drafts(snapshot, plan, previous).len() == page_count
+}
+
+fn source_membership_matches(
+    planned: &[String],
+    references: &[SourceReference],
+    snapshot: &RepoSnapshot,
+) -> bool {
+    if planned.len() != references.len() {
+        return false;
+    }
+    let mut planned_paths = BTreeSet::new();
+    if planned
+        .iter()
+        .any(|path| !planned_paths.insert(path.as_str()))
+    {
+        return false;
+    }
+    let mut reference_paths = BTreeSet::new();
+    for reference in references {
+        if !reference_paths.insert(reference.0.as_str()) {
+            return false;
+        }
+        let Some(content) = snapshot.contents.get(&reference.0) else {
+            return false;
+        };
+        if source_hash(content.as_bytes()) != reference.1 || content.len() as u64 != reference.2 {
+            return false;
+        }
+    }
+    planned_paths == reference_paths
+}
+
+fn steering_identity_matches(snapshot: &RepoSnapshot, previous: &SnapshotPublication) -> bool {
+    let current = snapshot
+        .contents
+        .get(".crew/wiki.json")
+        .map(|content| source_hash(content.as_bytes()));
+    let Some(previous) = event_tag(&previous.head, "wiki-steering-hash") else {
+        // Publications written before the signed steering identity existed
+        // cannot prove that page bodies were produced under the current
+        // steering notes and must take the safe full-generation path.
+        return false;
+    };
+    match current {
+        Some(current) => previous == current,
+        None => previous == "absent",
+    }
+}
+
+fn event_tag<'a>(event: &'a nostr::Event, name: &str) -> Option<&'a str> {
+    let mut found = None;
+    for tag in event.tags.iter() {
+        let values = tag.as_slice();
+        if values.first().map(String::as_str) != Some(name) {
+            continue;
+        }
+        if values.len() != 2 || found.is_some() {
+            return None;
+        }
+        found = values.get(1).map(String::as_str);
+    }
+    found
 }
 
 /// Run `crew-wiki generate` for a repository coordinate.
@@ -539,3 +776,7 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "wiki_incremental_tests.rs"]
+mod incremental_tests;

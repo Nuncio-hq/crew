@@ -28,6 +28,40 @@ fn codex(model: &str) -> WikiRuntimeSelection {
     }
 }
 
+fn claude_default() -> WikiRuntimeSelection {
+    WikiRuntimeSelection {
+        runtime_id: "claude".into(),
+        model: None,
+        profile: None,
+    }
+}
+
+fn codex_default() -> WikiRuntimeSelection {
+    WikiRuntimeSelection {
+        runtime_id: "codex".into(),
+        model: None,
+        profile: None,
+    }
+}
+
+fn fake_executable_path() -> PathBuf {
+    std::env::temp_dir().join("wiki-runtime-test")
+}
+
+fn command_args(selection: WikiRuntimeSelection) -> Vec<String> {
+    let generator = WikiRuntimeGenerator::with_executable(
+        selection,
+        fake_executable_path(),
+        tempfile::tempdir().expect("state").keep(),
+    )
+    .expect("generator");
+    generator
+        .command(Some("prompt"))
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
 fn page_snapshot(content: &str) -> (PlannedPage, RepoSnapshot) {
     (
         PlannedPage {
@@ -51,7 +85,101 @@ fn page_snapshot(content: &str) -> (PlannedPage, RepoSnapshot) {
 fn selection_is_independent_from_employee_agent_settings() {
     assert!(hermes("wiki-proof").validate().is_ok());
     assert!(claude("claude-fable-5-1").validate().is_ok());
+    assert!(claude_default().validate().is_ok());
+    assert!(codex_default().validate().is_ok());
     assert_eq!(hermes("wiki-proof").model, None);
+}
+
+#[test]
+fn optional_model_normalizes_blank_input_and_preserves_runtime_profile_invariants() {
+    let blank = claude_default()
+        .normalized()
+        .expect("blank model is default");
+    assert_eq!(blank.model, None);
+    assert_eq!(blank.profile, None);
+    assert_eq!(
+        hermes("wiki-proof").normalized().expect("Hermes profile"),
+        hermes("wiki-proof")
+    );
+    assert_eq!(
+        WikiRuntimeSelection {
+            runtime_id: "hermes".into(),
+            model: Some("  \t ".into()),
+            profile: Some("wiki-proof".into()),
+        }
+        .normalized()
+        .expect("blank Hermes model is default")
+        .model,
+        None
+    );
+    assert_eq!(
+        WikiRuntimeSelection {
+            runtime_id: "hermes".into(),
+            model: Some("ignored-model".into()),
+            profile: Some("wiki-proof".into()),
+        }
+        .normalized(),
+        Err(WikiRuntimeFailure::ProfileOwnsModel)
+    );
+    for runtime_id in ["claude", "codex"] {
+        assert_eq!(
+            WikiRuntimeSelection {
+                runtime_id: runtime_id.into(),
+                model: None,
+                profile: Some("not-supported".into()),
+            }
+            .validate(),
+            Err(WikiRuntimeFailure::UnsupportedProfile)
+        );
+    }
+}
+
+#[test]
+fn omitted_model_omits_cli_override_and_explicit_model_is_forwarded() {
+    for (default, explicit, expected_model) in [
+        (
+            claude_default(),
+            claude("claude-fable-5-1"),
+            "claude-fable-5-1",
+        ),
+        (codex_default(), codex("codex-fable-5-1"), "codex-fable-5-1"),
+    ] {
+        let default_args = command_args(default);
+        assert!(!default_args.iter().any(|arg| arg == "--model"));
+        let explicit_args = command_args(explicit);
+        let model_index = explicit_args
+            .iter()
+            .position(|arg| arg == "--model")
+            .expect("explicit model flag");
+        assert_eq!(
+            explicit_args.get(model_index + 1).map(String::as_str),
+            Some(expected_model)
+        );
+    }
+}
+
+#[test]
+fn diagnostics_distinguish_runtime_default_from_profile_owned_model() {
+    let claude = WikiRuntimeGenerator::with_executable(
+        claude_default(),
+        fake_executable_path(),
+        tempfile::tempdir().expect("state").keep(),
+    )
+    .expect("generator");
+    assert_eq!(
+        claude.diagnostic(),
+        "runtime=claude model=runtime-default profile=none"
+    );
+    let hermes = WikiRuntimeGenerator::with_executable(
+        hermes("wiki-proof"),
+        fake_executable_path(),
+        tempfile::tempdir().expect("state").keep(),
+    )
+    .expect("generator");
+    assert_eq!(
+        hermes.diagnostic(),
+        "runtime=hermes model=profile-owned profile=wiki-proof"
+    );
 }
 
 #[test]

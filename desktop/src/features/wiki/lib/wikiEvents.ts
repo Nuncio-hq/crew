@@ -230,7 +230,9 @@ export function parseWikiToc(event: RelayEvent): WikiToc | null {
     repoD: parsed.repoD,
     owner: owner.toLowerCase(),
     commit: tagValue(event, "commit") ?? "",
-    branch: tagValue(event, "branch") ?? "main",
+    // A missing branch tag is unknown; do not invent the conventional `main`
+    // name when the signed Wiki record did not identify its source branch.
+    branch: tagValue(event, "branch") ?? "",
     cadence,
     sections,
     generatedAt: event.created_at,
