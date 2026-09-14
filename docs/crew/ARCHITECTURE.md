@@ -497,6 +497,13 @@ native generation/publication path as manual Update. A single effect-owned
 timeout wakes the next eligible on-push debounce or daily/weekly deadline even
 when query data stays unchanged. Scope, repository, job or input changes and
 unmount cancel that timeout; unresolved durable claims still block new work.
+One library-owned Buzz live subscription listens for kind 30618 from the known
+repository owners or current relay self. Matching events only request a scoped
+native snapshot reread; event payloads never become generation authority.
+Subscription readiness and reconnect also reread, closing the initial history
+gap. Bursts coalesce, and an event arriving during a read forces a trailing
+read. Failures expose Retry live updates and pause cadence until recovery;
+they do not start a refresh loop. Leaving the library retires the listener.
 
 Initial Wiki generation reserves the existing Wiki publication claim before
 starting a runtime. Its tagged `generation_version: 1` payload has no signed

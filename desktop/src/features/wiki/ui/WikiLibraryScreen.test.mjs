@@ -326,7 +326,14 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
   localStorage.removeItem("buzz.wiki.navigation.v1");
   const expected = scope();
   const originalFetchEvents = relayClient.fetchEvents;
+  const originalSubscribeLive = relayClient.subscribeLive;
   relayClient.fetchEvents = async () => [];
+  relayClient.subscribeLive =
+    options.subscribeLive ??
+    (async (_filter, _onEvent, onStatus) => {
+      onStatus?.({ state: "open" });
+      return async () => {};
+    });
   let listedJob = options.job ?? retiredJob();
   const snapshot = options.snapshot ?? {
     state: "missing",
@@ -338,6 +345,7 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
   installTauriInvoke(async (command, args) => {
     calls.push({ command, args });
     if (command === "owner_operation_scope") return expected;
+    if (command === "get_relay_self") return options.relaySelf ?? null;
     if (command === "wiki_runtime_settings_get") {
       return {
         token: expected,
@@ -470,6 +478,7 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
       cleanup();
       resetWikiStore();
       relayClient.fetchEvents = originalFetchEvents;
+      relayClient.subscribeLive = originalSubscribeLive;
       delete globalThis.__TAURI_INTERNALS__;
       delete dom.window.__TAURI_INTERNALS__;
     },
@@ -1341,3 +1350,304 @@ for (const unmountBeforeDue of [false, true]) {
     },
   );
 }
+
+const RELAY_SELF = "d".repeat(64);
+
+async function runFreshOnPushCase(
+  t,
+  variant,
+  { unmountBeforeRefresh = false } = {},
+) {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: nowSeconds * 1_000,
+  });
+  const originalWindowSetTimeout = dom.window.setTimeout;
+  const originalWindowClearTimeout = dom.window.clearTimeout;
+  // Keep process timers real for Testing Library and the 250 ms live
+  // coalescer. Control only the browser-owned cadence deadline with the
+  // Date-only clock used by the quiet-period regression above.
+  let timerId = 0;
+  const timers = new Map();
+  dom.window.setTimeout = (callback, delay = 0) => {
+    const id = ++timerId;
+    timers.set(id, { callback, at: Date.now() + delay, delay });
+    return id;
+  };
+  dom.window.clearTimeout = (id) => timers.delete(id);
+
+  const liveSubscriptions = [];
+  const subscribeLive = async (filter, onEvent, onStatus) => {
+    liveSubscriptions.push({ filter, onEvent });
+    onStatus?.({ state: "open" });
+    return async () => {};
+  };
+  const calls = [];
+  const snapshot = completeWikiSnapshot();
+  const previousCommit = "b".repeat(40);
+  const pushedCommit = "c".repeat(40);
+  snapshot.head = {
+    ...snapshot.head,
+    tags: snapshot.head.tags.map((tag) =>
+      tag[0] === "cadence" ? ["cadence", "on-push"] : tag,
+    ),
+  };
+  snapshot.repo_state = {
+    ...snapshot.repo_state,
+    created_at: nowSeconds - 1,
+    tags: snapshot.repo_state.tags.map((tag) =>
+      tag[0] === "refs/heads/main" ? [tag[0], previousCommit] : tag,
+    ),
+  };
+  const pushedState = {
+    ...snapshot.repo_state,
+    id: "4".repeat(64),
+    pubkey: variant.author,
+    created_at: nowSeconds,
+    tags: [
+      ...snapshot.repo_state.tags.map((tag) =>
+        tag[0] === "refs/heads/main" ? [tag[0], pushedCommit] : tag,
+      ),
+      ...(variant.relaySigned ? [["a", `30617:${OWNER}:${REPO_D}`]] : []),
+    ],
+  };
+
+  let mounted;
+  try {
+    mounted = await mountDetail(LINKED_PATH, calls, {
+      noJob: true,
+      snapshot,
+      relaySelf: variant.relaySelf,
+      subscribeLive,
+      prepare: Promise.resolve({
+        token: scope(),
+        value: { result: "created", job: generationJob() },
+      }),
+    });
+    const queryKey = ["crew-wiki-events", "repos", OWNER, COMMUNITY, 1, 1];
+    const initial = mounted.client.getQueryData(queryKey);
+    assert.equal(initial?.tocs?.[0]?.cadence, "on-push");
+    assert.equal(
+      initial?.states?.[0]?.tags.find(
+        (tag) => tag[0] === "refs/heads/main",
+      )?.[1],
+      previousCommit,
+      "the mounted Wiki first observes the pre-push repository tip",
+    );
+
+    // The hook's live setup and initial overlap read use the real 250 ms
+    // process timer. Let that settle before counting the push-triggered read.
+    await waitFor(() => assert.equal(liveSubscriptions.length, 1));
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    const initialReadCount = calls.filter(
+      ({ command }) => command === "wiki_snapshot_read",
+    ).length;
+    const subscription = liveSubscriptions[0];
+    const expectedAuthors = [OWNER, ...(variant.relaySelf ? [RELAY_SELF] : [])];
+    assert.deepEqual(
+      subscription.filter.authors,
+      expectedAuthors,
+      "live state reads must authorize the repository owner and relay self",
+    );
+    assert.deepEqual(subscription.filter.kinds, [30618]);
+    assert.deepEqual(subscription.filter["#d"], [REPO_D]);
+    assert.equal(subscription.filter.limit, 0);
+    if (variant.relaySigned) {
+      assert.deepEqual(
+        pushedState.tags.find((tag) => tag[0] === "a"),
+        ["a", `30617:${OWNER}:${REPO_D}`],
+        "relay-signed repository state must carry the exact repository coordinate",
+      );
+    }
+
+    if (unmountBeforeRefresh) {
+      mounted.dispose();
+      mounted = undefined;
+      snapshot.repo_state = pushedState;
+      await act(async () => {
+        subscription.onEvent(pushedState, { replay: false });
+      });
+      await act(async () => {
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+      });
+      assert.equal(
+        calls.filter(({ command }) => command === "wiki_snapshot_read").length,
+        initialReadCount,
+        "a late live event after unmount must not refetch the Wiki",
+      );
+      assert.equal(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+        false,
+        "a late live event after unmount must not start generation",
+      );
+      return;
+    }
+
+    // The push is observable only through the live event; native projection
+    // data becomes fresh after that callback requests the scoped reread.
+    snapshot.repo_state = pushedState;
+    await act(async () => {
+      subscription.onEvent(pushedState, { replay: false });
+    });
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    await waitFor(() =>
+      assert.ok(
+        calls.filter(({ command }) => command === "wiki_snapshot_read").length >
+          initialReadCount,
+        "the live 30618 event must invalidate the mounted Wiki projection",
+      ),
+    );
+    await waitFor(() => {
+      const refreshed = mounted.client.getQueryData(queryKey);
+      assert.equal(
+        refreshed?.states?.[0]?.tags.find(
+          (tag) => tag[0] === "refs/heads/main",
+        )?.[1],
+        pushedCommit,
+        "the invalidated read must expose the fresh repository tip",
+      );
+    });
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
+      "on-push generation waits for the quiet period",
+    );
+    const cadenceTimer = [...timers.values()].find(
+      ({ delay }) => delay >= 30_000,
+    );
+    assert.ok(
+      cadenceTimer,
+      "the fresh post-mount state must arm the 30-second cadence wakeup",
+    );
+
+    await act(async () => {
+      t.mock.timers.tick(30_001);
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= Date.now()) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+        "a fresh post-mount push must start generation after 30 seconds",
+      ),
+    );
+  } finally {
+    mounted?.dispose();
+    dom.window.setTimeout = originalWindowSetTimeout;
+    dom.window.clearTimeout = originalWindowClearTimeout;
+  }
+}
+
+for (const variant of [
+  { label: "owner", author: OWNER, relaySelf: null, relaySigned: false },
+  {
+    label: "relay-self",
+    author: RELAY_SELF,
+    relaySelf: RELAY_SELF,
+    relaySigned: true,
+  },
+]) {
+  test(`a fresh ${variant.label} on-push state observed after mount refreshes the Wiki and starts after quiet time`, async (t) =>
+    runFreshOnPushCase(t, variant));
+}
+
+test("an unmounted Wiki ignores a late owner repository-state callback", async (t) =>
+  runFreshOnPushCase(
+    t,
+    {
+      label: "owner",
+      author: OWNER,
+      relaySelf: null,
+      relaySigned: false,
+    },
+    { unmountBeforeRefresh: true },
+  ));
+
+test("a recovering live subscription keeps its error until open confirms a reread", async () => {
+  let resolveSubscription;
+  const liveSubscriptions = [];
+  const subscribeLive = async (filter, onEvent, onStatus) => {
+    liveSubscriptions.push({ filter, onEvent, onStatus });
+    onStatus?.({ state: "recovering", message: "fixture reconnecting" });
+    await new Promise((resolve) => {
+      resolveSubscription = resolve;
+    });
+    return async () => {};
+  };
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    subscribeLive,
+    snapshot: completeWikiSnapshot(),
+  });
+  try {
+    await waitFor(() => {
+      assert.ok(
+        screen.getByTestId("wiki-live-error"),
+        "a recovering subscription must surface its live error",
+      );
+    });
+    assert.equal(typeof resolveSubscription, "function");
+    const subscription = liveSubscriptions[0];
+    assert.ok(subscription, "the production live hook must register first");
+
+    await act(async () => {
+      resolveSubscription();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const readCountBeforeEvent = calls.filter(
+      ({ command }) => command === "wiki_snapshot_read",
+    ).length;
+    await act(async () => {
+      subscription.onEvent(repoState("main"), { replay: false });
+    });
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    await waitFor(() =>
+      assert.ok(
+        calls.filter(({ command }) => command === "wiki_snapshot_read").length >
+          readCountBeforeEvent,
+        "a live event must perform the successful native reread",
+      ),
+    );
+    assert.ok(
+      screen.getByTestId("wiki-live-error"),
+      "a successful reread while still recovering must keep the error visible",
+    );
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
+      "recovering live state must not start generation",
+    );
+
+    await act(async () => {
+      subscription.onStatus({ state: "open" });
+    });
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    await waitFor(() =>
+      assert.equal(
+        screen.queryByTestId("wiki-live-error"),
+        null,
+        "an actual open followed by a successful reread clears the error",
+      ),
+    );
+  } finally {
+    mounted.dispose();
+  }
+});

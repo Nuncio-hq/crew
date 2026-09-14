@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { useWikiGenerate } from "@/features/wiki/hooks/useWikiGenerate";
 import { useWikiEventsQuery } from "@/features/wiki/hooks/useWikiEventsQuery";
+import { useWikiRepoStateLive } from "./useWikiRepoStateLive";
 import { useProjectsQuery } from "@/features/projects/hooks";
 import {
   debounce_due,
@@ -38,9 +39,23 @@ export function useWikiRefresh() {
   const scope = eventsQuery.scopeQuery.error
     ? null
     : (eventsQuery.scopeQuery.data ?? null);
+  const repositorySignature = JSON.stringify([
+    ...new Map(
+      (projectsQuery.data ?? []).flatMap((project) =>
+        project.repositories.map(
+          ({ owner, dtag }) => [`${owner}:${dtag}`, { owner, dtag }] as const,
+        ),
+      ),
+    ).values(),
+  ]);
+  const live = useWikiRepoStateLive(
+    scope,
+    repositorySignature,
+    eventsQuery.refetch,
+  );
 
   React.useEffect(() => {
-    if (!scope) return;
+    if (!scope || live.error) return;
     const tocs = eventsQuery.data?.tocs ?? [];
     const states = eventsQuery.data?.states ?? [];
     const repos = (projectsQuery.data ?? []).flatMap(
@@ -138,7 +153,15 @@ export function useWikiRefresh() {
     };
     checkCadence();
     return () => window.clearTimeout(timer);
-  }, [eventsQuery.data, jobs, mutateGenerate, projectsQuery.data, scope]);
+  }, [
+    eventsQuery.data,
+    jobs,
+    mutateGenerate,
+    projectsQuery.data,
+    scope,
+    live.error,
+  ]);
+  return live;
 }
 
 function debounceDue(lastFiredUnix: number, lastPushUnix: number, now: number) {
