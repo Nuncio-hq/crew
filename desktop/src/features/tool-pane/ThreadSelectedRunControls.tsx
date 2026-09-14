@@ -236,12 +236,20 @@ export function ThreadSelectedRunControls({
       });
     }
   };
+  const controlsEnabled = eligible();
   return (
-    <div className="flex flex-col gap-2 p-2">
-      {eligible() ? (
+    <div
+      className={
+        controlsEnabled
+          ? "flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
+          : "flex flex-col gap-2 p-2"
+      }
+    >
+      {controlsEnabled ? (
         <>
           <button
             type="button"
+            className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
             disabled={gate.claimed}
             onClick={() => {
               void stop();
@@ -250,11 +258,17 @@ export function ThreadSelectedRunControls({
             Stop selected run
           </button>
           {publishSteer ? (
-            <div className="flex flex-col gap-1 text-sm">
-              <label htmlFor={steerInputId}>Steer selected run</label>
+            <div className="flex flex-col gap-1.5 text-sm">
+              <label
+                className="text-xs font-medium text-foreground"
+                htmlFor={steerInputId}
+              >
+                Steer selected run
+              </label>
               <textarea
                 id={steerInputId}
                 aria-label="Steer selected run"
+                className="min-h-16 w-full resize-y rounded-md border border-input/60 bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-hidden transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
                 value={steerDraft}
                 disabled={gate.claimed}
                 maxLength={16 * 1024}
@@ -270,6 +284,7 @@ export function ThreadSelectedRunControls({
               />
               <button
                 type="button"
+                className="inline-flex h-8 items-center justify-center self-start rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={gate.claimed || !steerDraft.trim()}
                 onClick={() => {
                   void steer();
@@ -281,7 +296,14 @@ export function ThreadSelectedRunControls({
           ) : null}
         </>
       ) : null}
-      {feedback?.gate === gate ? <p role="status">{feedback.text}</p> : null}
+      {feedback?.gate === gate ? (
+        <p
+          className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2 text-xs text-foreground"
+          role="status"
+        >
+          {feedback.text}
+        </p>
+      ) : null}
     </div>
   );
 }
