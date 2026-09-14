@@ -1,20 +1,23 @@
 //! Native Wiki publication prepare, dispatch, and recovery commands.
 
 use super::owner_operations::{
-    load_owner_operation_for_dispatch, owner_operation_create, owner_operation_update,
-    replace_wiki_with_successor, ScopedOperationResult,
+    owner_operation_create, owner_operation_create_at_path, ScopedOperationResult,
 };
 use super::wiki_publication_driver::drive;
+use super::wiki_publication_native_reads::{NativeClock, NativeJournal};
 use super::wiki_publication_record::WikiPublicationRecord;
 use super::wiki_publication_runtime::{coordinate_parts, now, NativeWikiPublication};
 use crate::app_state::owner_scope::{assert_current, OwnerScopeToken};
-use crate::owner_operations::{NewOperation, OperationKind, OperationStatus, OperationUpdate};
+use crate::owner_operations::{
+    CreateResult, NewOperation, OperationKind, OperationStatus, OperationUpdate,
+};
 use crate::wiki_worker::{generate_wiki_pages, WikiGeneration};
 use crew_wiki::snapshot_v1_build::{build_cadence_update, build_snapshot, SnapshotBuild};
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 
@@ -68,6 +71,78 @@ async fn generate_native_wiki(
     .map_err(|_| "Wiki generation worker failed.".to_string())?
 }
 
+/// Inputs shared by the shipping prepare path and native acceptance.
+///
+/// `WikiGeneration` is the completed source capture, plan, and deterministic
+/// draft set. This seam turns that one generation into the exact signed graph
+/// before it enters the durable operation journal, so acceptance cannot drift
+/// into a test-only graph builder.
+pub(super) struct WikiPublicationBuildInput {
+    pub(super) owner: String,
+    pub(super) repo_d: String,
+    pub(super) generation: WikiGeneration,
+    pub(super) cadence: String,
+    pub(super) expected_revision: Option<String>,
+    pub(super) created_at: u64,
+    pub(super) keys: nostr::Keys,
+}
+
+/// Build the exact signed publication from one completed Wiki generation.
+pub(super) fn build_publication_from_generation(
+    input: WikiPublicationBuildInput,
+) -> Result<crew_wiki::snapshot_v1_build::SnapshotPublication, String> {
+    build_snapshot(SnapshotBuild {
+        owner: &input.owner,
+        repo_d: &input.repo_d,
+        snapshot: &input.generation.snapshot,
+        plan: &input.generation.plan,
+        drafts: &input.generation.drafts,
+        cadence: &input.cadence,
+        snapshot_id: None,
+        expected_revision: input.expected_revision.as_deref(),
+        created_at: input.created_at,
+        keys: &input.keys,
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Persist one generated publication through the same immutable reservation
+/// boundary used by the renderer command. It performs no relay I/O.
+pub(super) async fn reserve_generated_publication_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: OwnerScopeToken,
+    operation_id: String,
+    coordinate: String,
+    input: WikiPublicationBuildInput,
+) -> Result<ScopedOperationResult<CreateResult>, String> {
+    let publication = build_publication_from_generation(input)?;
+    let cadence = publication
+        .head
+        .tags
+        .iter()
+        .find(|tag| tag.as_slice().first().is_some_and(|name| name == "cadence"))
+        .and_then(|tag| tag.as_slice().get(1))
+        .map(String::as_str)
+        .unwrap_or("manual")
+        .to_owned();
+    let record = record_from_publication(publication, coordinate.clone(), &cadence)?;
+    let payload = serde_json::to_value(record)
+        .map_err(|_| "Wiki publication recovery serialization failed.".to_string())?;
+    owner_operation_create_at_path(
+        app,
+        path,
+        expected,
+        NewOperation {
+            id: operation_id,
+            kind: OperationKind::WikiPublication,
+            resource_key: coordinate,
+            payload,
+        },
+    )
+    .await
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "result", rename_all = "kebab-case")]
 pub(crate) enum WikiPublicationPrepareResult {
@@ -109,11 +184,12 @@ pub(crate) struct WikiPublicationJob {
 #[path = "wiki_publication_projection.rs"]
 mod projection;
 
+pub(super) use projection::current_row_at_path;
 use projection::{
-    as_prepare_result, committed_regeneration_job, current_row, fenced, foreground_decision,
-    job_from_operation, job_from_projection, ForegroundDecision,
+    as_prepare_result, committed_regeneration_job, fenced, foreground_decision, job_from_operation,
+    job_from_projection, ForegroundDecision,
 };
-pub(super) use projection::{cancel_intent, wiki_operation_summaries, wiki_operations};
+pub(super) use projection::{cancel_intent, wiki_operation_summaries_at_path, wiki_operations};
 
 // The Cancel guard's predicate and its exact refusal text are consumed by the
 // recovery regression suite, not by the shipping library: `cancel_intent` is
@@ -218,19 +294,15 @@ pub(crate) async fn wiki_publication_prepare(
         .max(current_time);
     let cadence = after_head.as_ref().map(current_cadence).unwrap_or("manual");
     let expected_revision = after_head.as_ref().map(|event| event.id.to_hex());
-    let publication = build_snapshot(SnapshotBuild {
-        owner,
-        repo_d,
-        snapshot: &generation.snapshot,
-        plan: &generation.plan,
-        drafts: &generation.drafts,
-        cadence,
-        snapshot_id: None,
-        expected_revision: expected_revision.as_deref(),
+    let publication = build_publication_from_generation(WikiPublicationBuildInput {
+        owner: owner.to_owned(),
+        repo_d: repo_d.to_owned(),
+        generation,
+        cadence: cadence.to_owned(),
+        expected_revision,
         created_at,
-        keys: runtime.keys(),
-    })
-    .map_err(|error| error.to_string())?;
+        keys: runtime.keys().clone(),
+    })?;
     let record = record_from_publication(publication, coordinate.clone(), cadence)?;
     let payload = serde_json::to_value(record)
         .map_err(|_| "Wiki publication recovery serialization failed.".to_string())?;
@@ -351,6 +423,31 @@ pub(crate) async fn wiki_publication_regenerate(
     repo_path: Option<String>,
     workspace_mode: Option<String>,
 ) -> Result<ScopedOperationResult<WikiPublicationPrepareResult>, String> {
+    wiki_publication_regenerate_with_context(
+        app,
+        expected,
+        id,
+        revision,
+        repo_path,
+        workspace_mode,
+        (NativeJournal::FromApp, NativeClock::System),
+    )
+    .await
+}
+
+/// Regenerate one exact retired publication through a selected native journal.
+/// The renderer wrapper supplies the trusted app-data path; acceptance supplies
+/// the reopened SQLite path while keeping the same generation and successor
+/// transaction seams.
+async fn wiki_publication_regenerate_with_context<R: Runtime>(
+    app: AppHandle<R>,
+    expected: OwnerScopeToken,
+    id: String,
+    revision: u64,
+    repo_path: Option<String>,
+    workspace_mode: Option<String>,
+    context: (NativeJournal, NativeClock),
+) -> Result<ScopedOperationResult<WikiPublicationPrepareResult>, String> {
     // The requested revision is the *pre*-retirement one. Bind it to the
     // revision a committed retirement would have produced before doing any
     // work, so an overflowing request can never be silently accepted.
@@ -358,10 +455,11 @@ pub(crate) async fn wiki_publication_regenerate(
         .checked_add(1)
         .filter(|value| *value <= i64::MAX as u64)
         .ok_or("Wiki publication revision overflow.".to_string())?;
-    let journal = super::owner_operations::journal_path(&app)?;
+    let (journal, clock) = context;
+    let journal_path = journal.resolve(&app)?;
     if let Some(job) = committed_regeneration_job(
         app.clone(),
-        journal.clone(),
+        journal_path.clone(),
         expected.clone(),
         id.clone(),
         revision,
@@ -374,8 +472,9 @@ pub(crate) async fn wiki_publication_regenerate(
             value: WikiPublicationPrepareResult::Created { job },
         });
     }
-    let predecessor = match load_owner_operation_for_dispatch(
+    let predecessor = match super::owner_operations::load_owner_operation_for_dispatch_at_path(
         app.clone(),
+        journal_path.clone(),
         expected.clone(),
         id.clone(),
         revision,
@@ -389,7 +488,7 @@ pub(crate) async fn wiki_publication_regenerate(
             // reporting a revision conflict the caller cannot act on.
             if let Some(job) = committed_regeneration_job(
                 app.clone(),
-                journal.clone(),
+                journal_path.clone(),
                 expected.clone(),
                 id.clone(),
                 revision,
@@ -433,9 +532,14 @@ pub(crate) async fn wiki_publication_regenerate(
     if owner_hex != predecessor.scope.owner {
         return Err("Wiki publication owner scope does not match its coordinate.".into());
     }
-    let runtime =
-        NativeWikiPublication::new(app.clone(), expected.clone(), &predecessor.resource_key)
-            .await?;
+    let runtime = NativeWikiPublication::new_with_context(
+        app.clone(),
+        expected.clone(),
+        &predecessor.resource_key,
+        journal.clone(),
+        clock.clone(),
+    )
+    .await?;
     runtime.repository_head().await?;
     let before_head = runtime.current_head().await?;
     let generation = generate_native_wiki(
@@ -452,25 +556,22 @@ pub(crate) async fn wiki_publication_regenerate(
     }
     let cadence = after_head.as_ref().map(current_cadence).unwrap_or("manual");
     let expected_revision = after_head.as_ref().map(|event| event.id.to_hex());
-    let current_time = u64::try_from(now()?).map_err(|_| "System clock is before the epoch")?;
+    let current_time =
+        u64::try_from(clock.now()?).map_err(|_| "System clock is before the epoch")?;
     let created_at = after_head
         .as_ref()
         .map(|head| head.created_at.as_secs().saturating_add(1))
         .unwrap_or(0)
         .max(current_time);
-    let publication = build_snapshot(SnapshotBuild {
-        owner: &owner_hex,
-        repo_d: &repo_d,
-        snapshot: &generation.snapshot,
-        plan: &generation.plan,
-        drafts: &generation.drafts,
-        cadence,
-        snapshot_id: None,
-        expected_revision: expected_revision.as_deref(),
+    let publication = build_publication_from_generation(WikiPublicationBuildInput {
+        owner: owner_hex.clone(),
+        repo_d: repo_d.clone(),
+        generation,
+        cadence: cadence.to_owned(),
+        expected_revision,
         created_at,
-        keys: runtime.keys(),
-    })
-    .map_err(|error| error.to_string())?;
+        keys: runtime.keys().clone(),
+    })?;
     if publication.snapshot_id == predecessor_record.snapshot_id
         || publication.manifest.id == predecessor_record.manifest.id
         || publication.pages.iter().any(|event| {
@@ -507,8 +608,9 @@ pub(crate) async fn wiki_publication_regenerate(
     super::wiki_publication_worker::start(app.clone());
     super::wiki_publication_worker::reserve(&app, &expected, &predecessor.resource_key);
     let successor_id = uuid::Uuid::new_v4().to_string();
-    let result = replace_wiki_with_successor(
+    let result = super::owner_operations::replace_wiki_with_successor_at_path(
         app.clone(),
+        journal_path.clone(),
         expected.clone(),
         predecessor.id.clone(),
         predecessor.revision,
@@ -535,7 +637,7 @@ pub(crate) async fn wiki_publication_regenerate(
             // caller into signing a third graph.
             if let Some(job) = committed_regeneration_job(
                 app.clone(),
-                journal,
+                journal_path.clone(),
                 expected.clone(),
                 predecessor.id.clone(),
                 revision,
@@ -626,25 +728,57 @@ async fn dispatch_row(
     explicit_retry: bool,
     force_read_only: bool,
 ) -> Result<ScopedOperationResult<WikiPublicationJob>, String> {
+    dispatch_row_with_context(
+        app,
+        expected,
+        id,
+        revision,
+        explicit_retry,
+        force_read_only,
+        (NativeJournal::FromApp, NativeClock::System),
+    )
+    .await
+}
+
+/// Dispatch one exact row with an explicit native journal context. Production
+/// commands use the trusted app-data path above; acceptance reopens the same
+/// SQLite file across fresh native app instances.
+pub(super) async fn dispatch_row_with_context<R: Runtime>(
+    app: AppHandle<R>,
+    expected: OwnerScopeToken,
+    id: String,
+    revision: u64,
+    explicit_retry: bool,
+    force_read_only: bool,
+    context: (NativeJournal, NativeClock),
+) -> Result<ScopedOperationResult<WikiPublicationJob>, String> {
+    let (journal, clock) = context;
+    let path = journal.resolve(&app)?;
     // `resource_key` is immutable for a journal row, so reading it before the
     // lock is safe; every state that decides the action is reloaded inside it.
-    let (preloaded, _) = current_row(&app, &expected, &id).await?;
+    let (preloaded, _) = current_row_at_path(app.clone(), path.clone(), &expected, &id).await?;
     if preloaded.kind != OperationKind::WikiPublication {
         return Err("Operation is not a Wiki publication.".into());
     }
     let resource_key = preloaded.resource_key.clone();
     super::wiki_publication_worker::reserve(&app, &expected, &resource_key);
     let value = super::wiki_publication_worker::serialized(&app, async {
-        let (current, record) = current_row(&app, &expected, &id).await?;
+        let (current, record) =
+            current_row_at_path(app.clone(), path.clone(), &expected, &id).await?;
         if current.resource_key != resource_key {
             return Err("recovery operation changed; reload".into());
         }
         match foreground_decision(current, revision, record.cancel_requested)? {
             ForegroundDecision::Settled(operation) => Ok(*operation),
             ForegroundDecision::Drive(operation) => {
-                let runtime =
-                    NativeWikiPublication::new(app.clone(), expected.clone(), &resource_key)
-                        .await?;
+                let runtime = NativeWikiPublication::new_with_context(
+                    app.clone(),
+                    expected.clone(),
+                    &resource_key,
+                    journal.clone(),
+                    clock.clone(),
+                )
+                .await?;
                 drive(
                     &runtime,
                     *operation,
@@ -688,11 +822,45 @@ pub(crate) async fn wiki_publication_cancel(
     id: String,
     revision: u64,
 ) -> Result<ScopedOperationResult<WikiPublicationJob>, String> {
-    let (_, operation) =
-        load_owner_operation_for_dispatch(app.clone(), expected.clone(), id, revision).await?;
+    wiki_publication_cancel_with_context(
+        app,
+        expected,
+        id,
+        revision,
+        (NativeJournal::FromApp, NativeClock::System),
+    )
+    .await
+}
+
+/// Cancel one exact publication through an explicitly selected native journal.
+/// This is the same durable precondition and relay-head check as the renderer
+/// command; the acceptance driver uses it after reopening a fresh app.
+pub(super) async fn wiki_publication_cancel_with_context<R: Runtime>(
+    app: AppHandle<R>,
+    expected: OwnerScopeToken,
+    id: String,
+    revision: u64,
+    context: (NativeJournal, NativeClock),
+) -> Result<ScopedOperationResult<WikiPublicationJob>, String> {
+    let (journal, clock) = context;
+    let path = journal.resolve(&app)?;
+    let (_, operation) = super::owner_operations::load_owner_operation_for_dispatch_at_path(
+        app.clone(),
+        path.clone(),
+        expected.clone(),
+        id,
+        revision,
+    )
+    .await?;
     let mut record = cancel_intent(&operation)?;
-    let runtime =
-        NativeWikiPublication::new(app.clone(), expected.clone(), &operation.resource_key).await?;
+    let runtime = NativeWikiPublication::new_with_context(
+        app.clone(),
+        expected.clone(),
+        &operation.resource_key,
+        journal,
+        clock,
+    )
+    .await?;
     let current_head = runtime.current_head().await?;
     let expected_head = if record.expected_revision == "absent" {
         None
@@ -716,8 +884,9 @@ pub(crate) async fn wiki_publication_cancel(
     }
     let payload = serde_json::to_value(record)
         .map_err(|_| "Wiki publication recovery serialization failed.".to_string())?;
-    let result = owner_operation_update(
+    let result = super::owner_operations::owner_operation_update_at_path(
         app.clone(),
+        path,
         expected.clone(),
         operation.id,
         operation.revision,
@@ -730,6 +899,7 @@ pub(crate) async fn wiki_publication_cancel(
             reconciled: safe_before_head,
             payload,
         },
+        false,
     )
     .await?;
     super::wiki_publication_worker::wake(&app);

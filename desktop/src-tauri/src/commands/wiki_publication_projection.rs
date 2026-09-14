@@ -14,7 +14,8 @@ use crate::commands::wiki_publication_record::{
     WikiPublicationProgress, WikiPublicationReconciliation, WikiPublicationRecord,
 };
 use crate::owner_operations::{CreateResult, Operation, OperationKind, OperationSummary};
-use tauri::AppHandle;
+use std::path::PathBuf;
+use tauri::{AppHandle, Runtime};
 
 pub(super) fn job_from_operation(operation: &Operation) -> Result<WikiPublicationJob, String> {
     job_from_operation_with_validation(operation, true)
@@ -95,12 +96,26 @@ pub(in crate::commands) async fn wiki_operation_summaries(
     expected: OwnerScopeToken,
     include_terminal: bool,
 ) -> Result<Vec<OperationSummary>, String> {
+    let path = crate::commands::owner_operations::journal_path(&app)?;
+    wiki_operation_summaries_at_path(app, path, expected, include_terminal).await
+}
+
+/// Choose Wiki rows through an explicitly selected trusted journal path.
+/// Native restart acceptance uses this sibling seam to reopen the same SQLite
+/// file after constructing a fresh app instance.
+pub(in crate::commands) async fn wiki_operation_summaries_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: OwnerScopeToken,
+    include_terminal: bool,
+) -> Result<Vec<OperationSummary>, String> {
     let mut after = None;
     let mut latest = std::collections::HashMap::<String, OperationSummary>::new();
     let mut complete = false;
     for _ in 0..MAX_OPERATION_PAGES {
-        let page = crate::commands::owner_operations::owner_operation_list(
+        let page = crate::commands::owner_operations::owner_operation_list_at_path(
             app.clone(),
+            path.clone(),
             expected.clone(),
             after,
             OPERATION_PAGE_SIZE,
@@ -145,13 +160,30 @@ pub(in crate::commands) async fn wiki_operations(
     expected: OwnerScopeToken,
     include_terminal: bool,
 ) -> Result<Vec<Operation>, String> {
-    let summaries =
-        wiki_operation_summaries(app.clone(), expected.clone(), include_terminal).await?;
+    let path = crate::commands::owner_operations::journal_path(&app)?;
+    wiki_operations_at_path(app, path, expected, include_terminal).await
+}
+
+/// Load the bounded Wiki rows through an explicitly selected journal path.
+pub(in crate::commands) async fn wiki_operations_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: OwnerScopeToken,
+    include_terminal: bool,
+) -> Result<Vec<Operation>, String> {
+    let summaries = wiki_operation_summaries_at_path(
+        app.clone(),
+        path.clone(),
+        expected.clone(),
+        include_terminal,
+    )
+    .await?;
     let mut result = Vec::with_capacity(summaries.len());
     for summary in summaries {
         result.push(
-            crate::commands::owner_operations::owner_operation_load(
+            crate::commands::owner_operations::owner_operation_load_at_path(
                 app.clone(),
+                path.clone(),
                 expected.clone(),
                 summary.id,
                 None,
@@ -279,8 +311,20 @@ pub(super) async fn current_row(
     expected: &OwnerScopeToken,
     id: &str,
 ) -> Result<(Operation, WikiPublicationRecord), String> {
-    let current = crate::commands::owner_operations::owner_operation_load(
-        app.clone(),
+    let path = crate::commands::owner_operations::journal_path(app)?;
+    current_row_at_path(app.clone(), path, expected, id).await
+}
+
+/// Load and validate one Wiki row through an explicitly selected journal path.
+pub(in crate::commands) async fn current_row_at_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: PathBuf,
+    expected: &OwnerScopeToken,
+    id: &str,
+) -> Result<(Operation, WikiPublicationRecord), String> {
+    let current = crate::commands::owner_operations::owner_operation_load_at_path(
+        app,
+        path,
         expected.clone(),
         id.to_owned(),
         None,
@@ -304,8 +348,8 @@ pub(super) async fn current_row(
 /// Re-assert the owner/workspace fence on both the success and failure paths.
 /// A result produced under a replaced identity must never be reported as the
 /// current scope's outcome, and a transport failure is no exception.
-pub(super) async fn fenced<T>(
-    app: AppHandle,
+pub(super) async fn fenced<R: Runtime, T>(
+    app: AppHandle<R>,
     expected: &OwnerScopeToken,
     result: Result<T, String>,
 ) -> Result<T, String> {
