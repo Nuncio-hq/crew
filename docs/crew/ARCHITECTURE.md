@@ -804,7 +804,10 @@ owned by its selected staged profile. Claude reads the current user's native
 Keychain entry (`Claude Code-credentials`) through the stable `/usr/bin/security`
 helper, with a five-second deadline, cancellation, and bounded captured streams.
 Captured credential output is never logged. Only the unexpired access token is
-passed in the child environment; the refresh token is never copied. Codex reads
+passed in the child environment; the refresh token is never copied. Codex disables
+shell execution/snapshots, agent delegation, image tools and web search in the
+disposable invocation. Installed CLI request capture verifies the advertised
+tool catalog separately from generation or native acceptance. Codex reads
 the host `CODEX_HOME/auth.json` and writes a private child file containing the
 access, identity, account, and exact `last_refresh` fields plus the parser
 required empty refresh field; API keys and refresh tokens are omitted. Missing,

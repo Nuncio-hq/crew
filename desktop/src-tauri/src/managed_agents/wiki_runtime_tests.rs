@@ -159,14 +159,24 @@ fn omitted_model_omits_cli_override_and_explicit_model_is_forwarded() {
 }
 
 #[test]
-fn codex_command_disables_shell_tool_and_snapshot_features() {
+fn codex_command_disables_tools_that_can_leave_the_captured_snapshot() {
     let args = command_args(codex_default());
+    for feature in [
+        "shell_tool",
+        "shell_snapshot",
+        "multi_agent",
+        "view_image",
+        "image_generation",
+    ] {
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--disable" && pair[1] == feature),
+            "missing guard: {feature}"
+        );
+    }
     assert!(args
         .windows(2)
-        .any(|pair| pair[0] == "--disable" && pair[1] == "shell_tool"));
-    assert!(args
-        .windows(2)
-        .any(|pair| pair[0] == "--disable" && pair[1] == "shell_snapshot"));
+        .any(|pair| pair[0] == "-c" && pair[1] == "web_search=\"disabled\""));
 }
 
 #[test]
