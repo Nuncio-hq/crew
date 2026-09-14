@@ -563,7 +563,9 @@ citations both open a dismissible verified-source pane; the pane hides the
 table of contents, returns focus to its activating control, and is scoped to
 the exact owner, repository, path, and line range recorded on the page.
 Native Update reads one verified prior publication and captures the new source
-once. It reuses a page body only when source hashes and membership, page/section
+once. A no-op also requires identical section membership and logical page order.
+Detached Git snapshots match the absent branch tag emitted by the publisher;
+an attached/detached transition still invalidates reuse. It reuses a page body only when source hashes and membership, page/section
 metadata, language, source kind, branch, and the signed `wiki-steering-hash`
 match. The runtime is created lazily for changed pages; an unchanged snapshot
 makes no runtime calls and settles through the same durable generation claim.

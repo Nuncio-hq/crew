@@ -974,6 +974,7 @@ The production Wiki generation seam is covered by the native
 
 ```text
 cargo test --manifest-path desktop/src-tauri/Cargo.toml wiki_runtime --lib
+cargo test --manifest-path desktop/src-tauri/Cargo.toml wiki_worker::incremental_tests --lib
 cargo test --manifest-path desktop/src-tauri/Cargo.toml bounded_command --lib
 ```
 

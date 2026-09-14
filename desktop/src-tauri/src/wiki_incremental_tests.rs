@@ -1,4 +1,4 @@
-use super::generate_planned_pages;
+use super::{all_pages_reused, generate_planned_pages};
 use crew_wiki::generate::Generator;
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::PageDraft;
@@ -176,6 +176,42 @@ fn unchanged_verified_snapshot_reuses_every_page_without_constructing_generator(
 }
 
 #[test]
+fn unchanged_detached_snapshot_reuses_every_page_without_generator_calls() {
+    let mut detached_snapshot = snapshot('a', "fn zero() {}\n", Some("fn one() {}\n"), None);
+    detached_snapshot.branch.clear();
+    let old_plan = plan("en", true);
+    let previous = publication(&detached_snapshot, &old_plan);
+
+    assert!(all_pages_reused(&detached_snapshot, &old_plan, &previous));
+    let run = run(&detached_snapshot, &old_plan, &previous);
+
+    assert!(run.calls.is_empty());
+    assert_eq!(run.factories, 0);
+    assert_eq!(
+        run.drafts
+            .iter()
+            .map(|draft| draft.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["# old page-0\n", "# old page-1\n"]
+    );
+}
+
+#[test]
+fn changed_git_branch_invalidates_reuse() {
+    let old_snapshot = snapshot('a', "fn zero() {}\n", Some("fn one() {}\n"), None);
+    let old_plan = plan("en", true);
+    let previous = publication(&old_snapshot, &old_plan);
+    let mut new_snapshot = old_snapshot.clone();
+    new_snapshot.branch = "release".into();
+
+    assert!(!all_pages_reused(&new_snapshot, &old_plan, &previous));
+    let run = run(&new_snapshot, &old_plan, &previous);
+
+    assert_eq!(run.calls, vec!["page-0", "page-1"]);
+    assert_eq!(run.factories, 1);
+}
+
+#[test]
 fn one_changed_source_generates_only_the_dependent_page() {
     let old_snapshot = snapshot('a', "fn zero() {}\n", Some("fn one() {}\n"), None);
     let old_plan = plan("en", true);
@@ -256,4 +292,42 @@ fn removed_page_is_absent_from_the_next_generation_and_manifest() {
         serde_json::from_str(&next.manifest.content).expect("manifest");
     assert_eq!(manifest.7.len(), 1);
     assert_eq!(manifest.7[0].0, "page-0");
+}
+
+#[test]
+fn same_snapshot_with_removed_page_rejects_noop_but_reuses_remaining_body() {
+    let old_snapshot = snapshot('a', "fn zero() {}\n", Some("fn one() {}\n"), None);
+    let old_plan = plan("en", true);
+    let previous = publication(&old_snapshot, &old_plan);
+    let new_plan = plan("en", false);
+
+    assert!(!all_pages_reused(&old_snapshot, &new_plan, &previous));
+    let run = run(&old_snapshot, &new_plan, &previous);
+
+    assert!(run.calls.is_empty());
+    assert_eq!(run.factories, 0);
+    assert_eq!(run.drafts.len(), 1);
+    assert_eq!(run.drafts[0].content, "# old page-0\n");
+}
+
+#[test]
+fn same_snapshot_with_reordered_pages_rejects_noop_but_reuses_bodies() {
+    let old_snapshot = snapshot('a', "fn zero() {}\n", Some("fn one() {}\n"), None);
+    let old_plan = plan("en", true);
+    let previous = publication(&old_snapshot, &old_plan);
+    let mut reordered_plan = old_plan.clone();
+    reordered_plan.sections[0].pages.reverse();
+
+    assert!(!all_pages_reused(&old_snapshot, &reordered_plan, &previous));
+    let run = run(&old_snapshot, &reordered_plan, &previous);
+
+    assert!(run.calls.is_empty());
+    assert_eq!(run.factories, 0);
+    assert_eq!(
+        run.drafts
+            .iter()
+            .map(|draft| draft.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["# old page-1\n", "# old page-0\n"]
+    );
 }

@@ -419,6 +419,8 @@ fn reusable_drafts(
     } else {
         "git"
     };
+    let expected_branch =
+        (source_kind == "git" && !snapshot.branch.is_empty()).then_some(snapshot.branch.as_str());
     let mut reusable = BTreeMap::new();
     for section in &plan.sections {
         let section_matches = manifest
@@ -444,9 +446,7 @@ fn reusable_drafts(
                 || reference.6 != plan.language
                 || !source_membership_matches(&page.source_files, &reference.7, snapshot)
                 || event_tag(event, "source-kind") != Some(source_kind)
-                || (source_kind == "git"
-                    && event_tag(event, "branch") != Some(snapshot.branch.as_str()))
-                || (source_kind == "folder" && event_tag(event, "branch").is_some())
+                || event_tag(event, "branch") != expected_branch
                 || event.content.trim().is_empty()
             {
                 continue;
@@ -470,14 +470,32 @@ fn reusable_drafts(
     reusable
 }
 
-/// Whether every page in a newly captured plan can be reused from a verified
-/// publication. This keeps the no-op decision on the same production reuse
-/// predicate as partial generation.
+/// Whether the captured TOC and every page body match a verified publication.
+/// The no-op decision shares partial generation's reuse predicate and also
+/// requires unchanged section membership and logical page order.
 pub(crate) fn all_pages_reused(
     snapshot: &RepoSnapshot,
     plan: &WikiPlan,
     previous: &SnapshotPublication,
 ) -> bool {
+    let Ok(manifest) = serde_json::from_str::<SnapshotManifest>(&previous.manifest.content) else {
+        return false;
+    };
+    // Reusable bodies alone do not make the publication unchanged: its TOC
+    // must also retain the exact section membership and logical page order.
+    if manifest.6.len() != plan.sections.len()
+        || manifest.6.iter().zip(&plan.sections).any(|(old, next)| {
+            old.0 != next.id
+                || old.1 != next.title
+                || !old
+                    .2
+                    .iter()
+                    .map(String::as_str)
+                    .eq(next.pages.iter().map(|page| page.slug.as_str()))
+        })
+    {
+        return false;
+    }
     let page_count: usize = plan
         .sections
         .iter()
