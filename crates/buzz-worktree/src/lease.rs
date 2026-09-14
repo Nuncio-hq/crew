@@ -15,7 +15,7 @@ use fs4::fs_std::FileExt;
 
 use crate::error::LeaseError;
 use crate::identity::validate_root_event_id;
-use crate::paths::{lease_dir, lease_lock_path, LEASE_SCHEMA_VERSION};
+use crate::paths::{lease_dir, lease_lock_path, worktree_metadata_lock_path, LEASE_SCHEMA_VERSION};
 
 /// Shared (active-turn) lease guard. Releases on drop.
 #[derive(Debug)]
@@ -57,6 +57,32 @@ impl Drop for ExclusiveLease {
     }
 }
 
+/// Cross-process exclusive lease for Git's shared worktree metadata.
+///
+/// Git writes each worktree's administrative files under one common directory,
+/// but concurrent `git worktree add` processes can observe another process's
+/// partially-written metadata. Callers hold this lease only for the short
+/// create/attach/reattach mutation and its verification; agent turns remain
+/// coordinated by the root and path leases.
+#[derive(Debug)]
+pub struct RepositoryMetadataLease {
+    _file: File,
+    path: PathBuf,
+}
+
+impl RepositoryMetadataLease {
+    /// Path of the underlying lock file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for RepositoryMetadataLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self._file);
+    }
+}
+
 /// Non-blocking shared lease for an active Project turn.
 pub fn try_acquire_shared(
     common_git: &Path,
@@ -91,6 +117,36 @@ pub fn try_acquire_exclusive(
             path,
             source: error,
         }),
+    }
+}
+
+/// Non-blocking exclusive lease for mutations to shared Git worktree metadata.
+pub fn try_acquire_repository_metadata(
+    common_git: &Path,
+) -> Result<RepositoryMetadataLease, LeaseError> {
+    let path = worktree_metadata_lock_path(common_git);
+    let parent = path.parent().ok_or_else(|| LeaseError::Io {
+        path: path.clone(),
+        source: std::io::Error::new(ErrorKind::InvalidInput, "common Git path has no parent"),
+    })?;
+    fs::create_dir_all(parent).map_err(|source| LeaseError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|source| LeaseError::Io {
+            path: path.clone(),
+            source,
+        })?;
+    match FileExt::try_lock_exclusive(&file) {
+        Ok(()) => Ok(RepositoryMetadataLease { _file: file, path }),
+        Err(error) if is_lock_conflict(&error) => Err(LeaseError::Busy),
+        Err(source) => Err(LeaseError::Io { path, source }),
     }
 }
 
@@ -237,5 +293,19 @@ mod tests {
                 supported: LEASE_SCHEMA_VERSION
             }
         ));
+    }
+
+    #[test]
+    fn repository_metadata_lease_serializes_holders() {
+        let temp = TempDir::new().unwrap();
+        let common = temp.path();
+        let first = try_acquire_repository_metadata(common).expect("first metadata lease");
+        let err = try_acquire_repository_metadata(common).expect_err("second lease is busy");
+        assert!(matches!(err, LeaseError::Busy));
+        assert_eq!(first.path(), worktree_metadata_lock_path(common));
+        drop(first);
+        let second =
+            try_acquire_repository_metadata(common).expect("metadata lease releases on drop");
+        drop(second);
     }
 }

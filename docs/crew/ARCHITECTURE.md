@@ -177,6 +177,11 @@ own binding checks; a new path is not an instruction to mutate an active session
 Workspace preparation failures and missing/busy workspaces have explicit
 outcomes. The implementation lives in `thread_workspace/`, `pool.rs`, and
 `crates/buzz-worktree`; inspect those seams before altering isolation or cleanup.
+ACP preparation and native worktree removal/pruning share a cross-process
+metadata lease keyed by the canonical common Git directory. ACP waits at most
+five seconds before a retryable preparation failure; native cleanup reports
+contention before mutating Git state. Root/path authorization still applies,
+and independent thread turns run concurrently after preparation.
 Provider-specific behavior requires current verification, not inference from
 the original feasibility experiments.
 

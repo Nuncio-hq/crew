@@ -2,6 +2,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 #[cfg(test)]
@@ -30,6 +31,8 @@ const CONTEXT_URL_PREFIX: &str = "buzz://project-workspace?";
 const ROOT_CLAIM_DIRECTORY: &str = "buzz-thread-workspace-roots";
 const ROOT_CLAIM_READ_ATTEMPTS: usize = 10;
 const BRANCH_ROOT_CONFIG_RETRY_DELAYS_MS: [u64; 5] = [10, 20, 40, 80, 160];
+const WORKTREE_METADATA_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const WORKTREE_METADATA_LOCK_RETRY: Duration = Duration::from_millis(25);
 const IN_PROGRESS_MARKERS: [&str; 7] = [
     "MERGE_HEAD",
     "CHERRY_PICK_HEAD",
@@ -586,6 +589,20 @@ pub async fn ensure_planned_thread_worktree(
     let workspace_base = &plan.workspace_base;
     let claim_root = plan.claim_exclusive_root;
 
+    // Git stores every linked worktree's administrative files below one
+    // common directory. Acquire the lease before verification because an
+    // already-created isolated worktree may still need its root claim/config
+    // completed; hold it through the short metadata mutation and verification
+    // window while independent agent turns remain concurrent afterward.
+    let _metadata_lease = if matches!(
+        plan.checkout_kind,
+        CheckoutKind::IsolatedWorktree | CheckoutKind::SharedBranch
+    ) {
+        Some(acquire_worktree_metadata_lock(common_git).await?)
+    } else {
+        None
+    };
+
     if let Some(metadata) = verified_metadata(
         repo_root,
         worktree_path,
@@ -789,6 +806,29 @@ pub async fn ensure_planned_thread_worktree(
     .await?
     .context("created worktree failed repository verification")?;
     Ok((metadata, EnsureKind::Created))
+}
+
+async fn acquire_worktree_metadata_lock(
+    common_git: &Path,
+) -> Result<buzz_worktree::RepositoryMetadataLease> {
+    tokio::time::timeout(WORKTREE_METADATA_LOCK_TIMEOUT, async {
+        loop {
+            match buzz_worktree::try_acquire_repository_metadata(common_git) {
+                Ok(lease) => return Ok(lease),
+                Err(buzz_worktree::LeaseError::Busy) => {
+                    tokio::time::sleep(WORKTREE_METADATA_LOCK_RETRY).await;
+                }
+                Err(error) => return Err(anyhow::Error::new(error)),
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "timed out waiting for the repository worktree metadata lock at {}",
+            common_git.display()
+        )
+    })?
 }
 
 /// Ensure the deterministic worktree for a thread exists and return verified metadata.
