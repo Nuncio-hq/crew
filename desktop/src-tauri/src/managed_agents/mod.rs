@@ -61,6 +61,8 @@ mod recap_ownership_native;
 pub(crate) mod recap_service;
 #[allow(dead_code)]
 pub(crate) mod recap_state;
+#[allow(dead_code)]
+pub(crate) mod private_ask;
 pub(crate) mod reconcile;
 mod relay_mesh;
 mod repos;
