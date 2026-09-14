@@ -221,7 +221,7 @@ pub(super) async fn prepare(
     String,
 > {
     use super::owner_operations::owner_operation_create_at_path;
-    use super::wiki_publication_commands::{prepare_registered, WikiPublicationPrepareResult};
+    use super::wiki_publication_commands::prepare_registered;
     use super::wiki_publication_runtime::coordinate_parts;
     use crate::commands::resolve_wiki_runtime_selection;
     use crate::owner_operations::CreateResult;
@@ -261,6 +261,24 @@ pub(super) async fn prepare(
         },
     )
     .await;
+    settle_prepare_result(app, journal, expected, &operation, result).await
+}
+
+/// Settle the foreground result against the authoritative journal revision.
+async fn settle_prepare_result<R: Runtime>(
+    app: AppHandle<R>,
+    journal: PathBuf,
+    expected: OwnerScopeToken,
+    operation: &Operation,
+    result: Result<
+        ScopedOperationResult<super::wiki_publication_commands::WikiPublicationPrepareResult>,
+        String,
+    >,
+) -> Result<
+    ScopedOperationResult<super::wiki_publication_commands::WikiPublicationPrepareResult>,
+    String,
+> {
+    use super::wiki_publication_commands::WikiPublicationPrepareResult;
     let terminal = match &result {
         Ok(value) if matches!(value.value, WikiPublicationPrepareResult::Noop { .. }) => Some(None),
         Err(error) => Some(Some(error.as_str())),
@@ -271,7 +289,7 @@ pub(super) async fn prepare(
             app.clone(),
             journal.clone(),
             expected.clone(),
-            &operation,
+            operation,
             error,
         )
         .await
@@ -286,10 +304,19 @@ pub(super) async fn prepare(
                 None,
             )
             .await?;
-            if !current.value.reconciled && WikiGenerationRecord::read(&current.value)?.is_some() {
-                return Err(format!(
-                    "Wiki generation failed to record its terminal state: {finish_error}"
-                ));
+            if let Some(record) = WikiGenerationRecord::read(&current.value)? {
+                if current.value.status == OperationStatus::Canceled {
+                    // A no-op computed before Cancel is not authoritative:
+                    // the terminal journal revision won the same CAS.
+                    return Err(record
+                        .error
+                        .unwrap_or_else(|| "Wiki generation canceled before publication.".into()));
+                }
+                if !current.value.reconciled {
+                    return Err(format!(
+                        "Wiki generation failed to record its terminal state: {finish_error}"
+                    ));
+                }
             }
         }
     }

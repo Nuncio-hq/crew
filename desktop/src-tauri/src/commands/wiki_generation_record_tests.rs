@@ -236,3 +236,69 @@ async fn wiki_generation_cancel_signals_only_after_durable_cas() {
         .is_err());
     assert!(!replacement.token.load(Ordering::Acquire));
 }
+
+#[tokio::test]
+async fn wiki_generation_noop_cannot_override_a_durable_cancel() {
+    use crate::commands::wiki_publication_commands::WikiPublicationPrepareResult;
+    let app = tauri::test::mock_builder()
+        .manage(build_app_state())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .expect("mock app");
+    let handle = app.handle().clone();
+    let captured = capture(handle.clone()).await.expect("scope");
+    let coordinate = fixture::coordinate(&captured.keys, "cancel-before-noop");
+    let dir = tempfile::tempdir().expect("temp");
+    let path = dir
+        .path()
+        .canonicalize()
+        .expect("canonical")
+        .join("operations/recovery.db");
+    let created = owner_operation_create_at_path(
+        handle.clone(),
+        path.clone(),
+        captured.token.clone(),
+        WikiGenerationRecord::new_operation(uuid::Uuid::new_v4().to_string(), coordinate)
+            .expect("intent"),
+    )
+    .await
+    .expect("create");
+    let original = match created.value {
+        CreateResult::Created(operation) => operation,
+        _ => panic!("new"),
+    };
+    cancel(
+        handle.clone(),
+        path.clone(),
+        captured.token.clone(),
+        &original,
+    )
+    .await
+    .expect("cancel wins");
+    // Same finalization used by prepare: its no-op was computed before Cancel
+    // committed, and must now yield to the durable terminal revision.
+    let result = settle_prepare_result(
+        handle.clone(),
+        path.clone(),
+        captured.token.clone(),
+        &original,
+        Ok(ScopedOperationResult {
+            token: captured.token.clone(),
+            value: WikiPublicationPrepareResult::Noop {
+                head_id: "previous-head".into(),
+                source_revision: "unchanged-source".into(),
+            },
+        }),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(ref error) if error.contains("canceled")),
+        "a canceled job must never return successful Noop"
+    );
+    let saved = owner_operation_load_at_path(handle, path, captured.token, original.id, None)
+        .await
+        .expect("read")
+        .value;
+    assert_eq!(saved.status, OperationStatus::Canceled);
+    assert!(saved.reconciled);
+    assert_eq!(saved.revision, 1);
+}
