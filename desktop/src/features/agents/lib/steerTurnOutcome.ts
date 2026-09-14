@@ -9,6 +9,12 @@ export type SteerTurnOutcome =
   | "expired"
   | "unconfirmed";
 
+/** Correlated strict steer outcome plus the adapter's actionable detail. */
+export type SteerTurnOutcomeResult = Readonly<{
+  outcome: SteerTurnOutcome;
+  error?: string;
+}>;
+
 /** Wait for the exact selected-run steer result, with a bounded UI wait. */
 export async function awaitSteerTurnOutcome({
   requestId,
@@ -28,13 +34,13 @@ export async function awaitSteerTurnOutcome({
   subscribe: (listener: (frame: ControlResultFrame) => void) => () => void;
   sendSteer: () => Promise<void>;
   scheduleTimeout: (onTimeout: () => void) => () => void;
-}): Promise<SteerTurnOutcome> {
+}): Promise<SteerTurnOutcomeResult> {
   let settled = false;
   let unsubscribe = () => {};
   let cancelTimeout = () => {};
-  let resolveResult: (outcome: SteerTurnOutcome) => void = () => {};
+  let resolveResult: (result: SteerTurnOutcomeResult) => void = () => {};
   let rejectResult: (error: unknown) => void = () => {};
-  const result = new Promise<SteerTurnOutcome>((resolve, reject) => {
+  const result = new Promise<SteerTurnOutcomeResult>((resolve, reject) => {
     resolveResult = resolve;
     rejectResult = reject;
   });
@@ -42,11 +48,12 @@ export async function awaitSteerTurnOutcome({
     unsubscribe();
     cancelTimeout();
   };
-  const settle = (outcome: SteerTurnOutcome) => {
+  const settle = (outcome: SteerTurnOutcome, error?: string | null) => {
     if (settled) return;
     settled = true;
     cleanup();
-    resolveResult(outcome);
+    const detail = error?.trim();
+    resolveResult(detail ? { outcome, error: detail } : { outcome });
   };
   const fail = (error: unknown) => {
     if (settled) return;
@@ -74,7 +81,7 @@ export async function awaitSteerTurnOutcome({
       frame.status === "expired" ||
       frame.status === "unconfirmed"
     ) {
-      settle(frame.status);
+      settle(frame.status, frame.error);
     }
   });
   // The publication result only proves relay acceptance. A bounded wait for

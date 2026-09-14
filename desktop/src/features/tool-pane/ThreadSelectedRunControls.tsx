@@ -187,7 +187,7 @@ export function ThreadSelectedRunControls({
     const requestId = crypto.randomUUID();
     let notAttempted = false;
     try {
-      const outcome = await awaitSteerTurnOutcome({
+      const result = await awaitSteerTurnOutcome({
         requestId,
         channelId: target.channelId,
         conversationId: target.conversationId,
@@ -216,11 +216,14 @@ export function ThreadSelectedRunControls({
         },
       });
       if (!gate.current) return;
-      setFeedback({ gate, text: steerFeedback(outcome) });
-      if (outcome === "appended") setSteerDraft("");
+      setFeedback({
+        gate,
+        text: steerFeedback(result.outcome, result.error),
+      });
+      if (result.outcome === "appended") setSteerDraft("");
       // Only an unconfirmed send is replay-unsafe. The adapter's terminal
       // outcomes prove that this request can be retried safely if needed.
-      gate.claimed = outcome === "unconfirmed";
+      gate.claimed = result.outcome === "unconfirmed";
     } catch (error) {
       if (!gate.current) return;
       gate.claimed = !notAttempted;
@@ -283,7 +286,7 @@ export function ThreadSelectedRunControls({
   );
 }
 
-function steerFeedback(outcome: SteerTurnOutcome): string {
+function steerFeedback(outcome: SteerTurnOutcome, reason?: string): string {
   switch (outcome) {
     case "appended":
       return "Steer appended to the selected run.";
@@ -294,7 +297,9 @@ function steerFeedback(outcome: SteerTurnOutcome): string {
     case "expired":
       return "Steer expired before the selected run reached a round boundary. You can retry.";
     case "rejected":
-      return "The selected runtime rejected Steer. You can retry.";
+      return reason
+        ? `The selected runtime rejected Steer (${reason}). You can retry.`
+        : "The selected runtime rejected Steer. You can retry.";
     case "unconfirmed":
       return "Steer is unconfirmed. Check the selected run before retrying.";
   }

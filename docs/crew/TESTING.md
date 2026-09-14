@@ -1172,15 +1172,17 @@ native owner capture, shared transport, and bounded loopback HTTP receiver.
 The required cases are zero connections on stale scope/malformed target and
 identity import ABA during admission; captured event/NIP-98 owner and decrypted
 exact target on acceptance; unknown on mismatched ACK/refusal/disconnect; and
-preserved accepted outcome when identity changes after send. Native execution
-remains pending its allocated build slot; source registration is not RED/GREEN
-or installed-runtime evidence. The shared transport's existing tests also remain
-required and unchanged.
+preserved accepted outcome when identity changes after send. These tests exercise
+the native command and encrypted transport against a bounded loopback receiver; they do not establish installed UI/runtime acceptance.
+The shared transport's existing tests also remain required and unchanged.
 
 
 `ThreadSelectedRunControls.test.mjs` binds the real component and correlated
 outcome helper, including same-tick duplicate claims, ownership refresh versus
 revocation, exact turn/request results, stale completion, and unknown delivery.
+A correlated rejection must display its specific reason, while a missing or blank
+reason uses the fallback. Unconfirmed delivery remains disabled after feedback
+and cannot publish again.
 `ThreadActivityRunControls.test.mjs` composes the actual Activity tab, run picker,
 selected control and outcome helper with external store/native boundaries mocked.
 It requires explicit choice, exact native token/target publication, no successor

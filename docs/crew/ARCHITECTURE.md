@@ -821,10 +821,13 @@ arbitrates bounded expiry against that append, so an expired request cannot be
 appended later. The receiver remains attached across an optional plan
 continuation and is cleared when the task returns to the pool. Strict outcomes
 are `appended`, `stale_target`, `rejected`, `busy`, and `expired`; an uncertain
-publication remains unconfirmed and is never replayed automatically. Only a
-confirmed `not_attempted` publication unlocks retry. The transcript remains
-mounted alongside these controls. This source composition has Node proof;
-native batch, full CI, review and staging acceptance remain gates.
+publication remains unconfirmed and is never replayed automatically. Publication
+feedback unlocks retry only for confirmed `not_attempted`; a correlated adapter
+terminal outcome also releases the claim. A correlated rejection
+keeps the adapter's specific reason visible, with generic feedback when no
+reason is supplied. Unconfirmed delivery keeps its claim and never enables a
+blind retry. The transcript remains mounted alongside these controls; installed
+workflow acceptance remains tracked by #354/#357.
 
 ## Installed Wiki runtime authentication (#363)
 
