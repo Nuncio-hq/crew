@@ -5468,7 +5468,7 @@ done
         assert_eq!(usage.turn_output_tokens, Some(3));
         assert_eq!(usage.turn_cost_usd, Some(0.5));
         assert_eq!(usage.cumulative_cost_usd, Some(0.5));
-        drop(client);
+        client.shutdown().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
