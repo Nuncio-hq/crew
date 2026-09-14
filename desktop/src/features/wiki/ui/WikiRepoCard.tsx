@@ -2,6 +2,7 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { setTerminalPanelMode } from "@/features/terminal/terminalPanelStore";
 import {
   wikiCanCancelRecovery,
+  isFailedWikiGeneration,
   isCanceledWikiGeneration,
   wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
@@ -86,6 +87,7 @@ export function WikiRepoCard({
   const canReconcile = affordance !== "none" && Boolean(onRecoveryReconcile);
   const canRegenerate = affordance === "regenerate" && Boolean(onRegenerate);
   const canceledGeneration = isCanceledWikiGeneration(generating);
+  const failedGeneration = isFailedWikiGeneration(generating);
   // The failure banner offers the durable publication action when there is
   // one. A durable row whose only way forward is Regenerate must not offer a
   // plain "Retry" here: the unique native claim blocks a fresh Generate, and
@@ -210,6 +212,16 @@ export function WikiRepoCard({
               "Wiki generation was canceled before publication. Generate again from source."}
           </p>
         ) : null}
+        {failedGeneration ? (
+          <p
+            className="text-2xs text-destructive"
+            data-testid="wiki-generation-failed"
+            role="alert"
+          >
+            {generating?.error ??
+              "Wiki generation failed before publication. Generate again from source."}
+          </p>
+        ) : null}
         {freshness === "fresh" && updatedAt ? (
           <div className="text-2xs text-muted-foreground">
             ⏱ {formatAge(updatedAt)}
@@ -260,7 +272,10 @@ export function WikiRepoCard({
               {generating?.phase === "generation"
                 ? "Native generation"
                 : "Native recovery"}
-              : {generating?.nativeStatus ?? "pending"}
+              :{" "}
+              {failedGeneration
+                ? "failed"
+                : (generating?.nativeStatus ?? "pending")}
               {generating?.phase !== "generation" &&
               generating?.attempts !== undefined
                 ? ` · ${generating.attempts}/5 attempts`

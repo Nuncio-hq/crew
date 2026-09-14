@@ -9,6 +9,9 @@
 use super::discovery::bounded_command::{
     output_with_policy, output_with_policy_and_stdin, BoundedFailure, BoundedPolicy, OutputBudget,
 };
+use super::wiki_runtime_output::normalize_generated_page;
+#[cfg(test)]
+use super::wiki_runtime_output::validate_generated_links;
 use super::wiki_runtime_prompt::build_prompt;
 use super::wiki_runtime_validation::{
     clear_report, report_path, validate_profile_config, validate_report,
@@ -301,6 +304,7 @@ impl WikiRuntimeGenerator {
         generator.claude_oauth_token = super::wiki_runtime_auth::stage_runtime_auth(
             generator.selection.runtime_id.trim(),
             &generator.state_dir,
+            &generator.cancel,
         )?;
         generator.require_hermes_usage_report = generator.selection.runtime_id == "hermes";
         generator.temp_state = Some(state);
@@ -795,9 +799,8 @@ impl Generator for WikiRuntimeGenerator {
             // different provider or model answered the page.
             WikiError::Generate(format!("{}: {error}", self.diagnostic()))
         })?;
-        validate_generated_links(page, snapshot, &output)
-            .map_err(|error| WikiError::Generate(format!("{}: {error}", self.diagnostic())))?;
-        Ok(output)
+        normalize_generated_page(page, snapshot, &output)
+            .map_err(|error| WikiError::Generate(format!("{}: {error}", self.diagnostic())))
     }
 }
 
@@ -886,77 +889,6 @@ fn validate_value(value: &str) -> Result<(), ()> {
     } else {
         Ok(())
     }
-}
-
-/// Reject model-authored navigation outside the captured source revision.
-/// The signed snapshot already carries complete source references, so a page
-/// may link to an exact `buzz://file` range from its planned files; arbitrary
-/// external, filesystem, or command links are never accepted from runtime
-/// output. Plain prose and code blocks may still contain URL-looking text.
-fn validate_generated_links(
-    page: &PlannedPage,
-    snapshot: &RepoSnapshot,
-    markdown: &str,
-) -> Result<(), WikiRuntimeFailure> {
-    let mut remaining = markdown;
-    while let Some((_, after_open)) = remaining.split_once("](") {
-        let Some((target, after_target)) = after_open.split_once(')') else {
-            return Err(WikiRuntimeFailure::InvalidOutput);
-        };
-        let target = target
-            .trim()
-            .strip_prefix('<')
-            .and_then(|target| target.strip_suffix('>'))
-            .unwrap_or(target);
-        if target.starts_with('#') {
-            remaining = after_target;
-            continue;
-        }
-        let parsed = url::Url::parse(target).map_err(|_| WikiRuntimeFailure::InvalidOutput)?;
-        if parsed.scheme() != "buzz" || parsed.host_str() != Some("file") {
-            return Err(WikiRuntimeFailure::InvalidOutput);
-        }
-        let mut path = None;
-        let mut lines = None;
-        for (key, value) in parsed.query_pairs() {
-            match key.as_ref() {
-                "path" if path.is_none() => path = Some(value.into_owned()),
-                "lines" if lines.is_none() => lines = Some(value.into_owned()),
-                _ => return Err(WikiRuntimeFailure::InvalidOutput),
-            }
-        }
-        let path = path.ok_or(WikiRuntimeFailure::InvalidOutput)?;
-        if !page.source_files.iter().any(|source| source == &path) {
-            return Err(WikiRuntimeFailure::InvalidOutput);
-        }
-        let content = snapshot
-            .contents
-            .get(&path)
-            .ok_or(WikiRuntimeFailure::InvalidOutput)?;
-        let line_count = if content.is_empty() {
-            0
-        } else {
-            content.split_terminator('\n').count() as u64
-        };
-        let lines = lines.ok_or(WikiRuntimeFailure::InvalidOutput)?;
-        let (start, end) = lines
-            .split_once('-')
-            .ok_or(WikiRuntimeFailure::InvalidOutput)
-            .and_then(|(start, end)| {
-                Ok((
-                    start
-                        .parse::<u64>()
-                        .map_err(|_| WikiRuntimeFailure::InvalidOutput)?,
-                    end.parse::<u64>()
-                        .map_err(|_| WikiRuntimeFailure::InvalidOutput)?,
-                ))
-            })?;
-        if start == 0 || end < start || end > line_count {
-            return Err(WikiRuntimeFailure::InvalidOutput);
-        }
-        remaining = after_target;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

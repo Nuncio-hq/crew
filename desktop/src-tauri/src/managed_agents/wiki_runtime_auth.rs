@@ -6,18 +6,29 @@
 //! `CODEX_HOME`; that file contains no API key and no refresh token. Hermes
 //! owns authentication in its staged profile and needs no handoff here.
 
+#[cfg(any(test, all(feature = "system-keyring", target_os = "macos")))]
+use super::discovery::bounded_command::{
+    output_with_policy, BoundedFailure, BoundedPolicy, OutputBudget,
+};
 use super::wiki_runtime::WikiRuntimeFailure;
 use base64::Engine;
 use serde_json::{Map, Value};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(any(test, all(feature = "system-keyring", target_os = "macos")))]
+use std::process::{Command, Stdio};
+use std::sync::atomic::AtomicBool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CODEX_AUTH_FILE_LIMIT: u64 = 64 * 1024;
 #[cfg(any(test, all(feature = "system-keyring", target_os = "macos")))]
 const CLAUDE_CREDENTIALS_LIMIT: usize = 64 * 1024;
 const CREDENTIAL_VALUE_LIMIT: usize = 32 * 1024;
+#[cfg(all(feature = "system-keyring", target_os = "macos"))]
+const CLAUDE_AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(all(feature = "system-keyring", target_os = "macos"))]
+const CLAUDE_AUTH_STDERR_LIMIT: u64 = 16 * 1024;
 #[cfg(all(feature = "system-keyring", target_os = "macos"))]
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
@@ -30,10 +41,11 @@ const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 pub(crate) fn stage_runtime_auth(
     runtime_id: &str,
     state_dir: &Path,
+    cancelled: &AtomicBool,
 ) -> Result<Option<String>, WikiRuntimeFailure> {
     match runtime_id {
         "hermes" => Ok(None),
-        "claude" => read_claude_access_token().map(Some),
+        "claude" => read_claude_access_token(cancelled).map(Some),
         "codex" => {
             let source = codex_auth_path()?;
             let source_bytes = read_bounded_file(&source, CODEX_AUTH_FILE_LIMIT)?;
@@ -226,7 +238,7 @@ fn write_private_json(destination: &Path, value: Value) -> Result<(), WikiRuntim
     result
 }
 
-fn read_claude_access_token() -> Result<String, WikiRuntimeFailure> {
+fn read_claude_access_token(cancelled: &AtomicBool) -> Result<String, WikiRuntimeFailure> {
     #[cfg(all(feature = "system-keyring", target_os = "macos"))]
     {
         let account =
@@ -238,16 +250,62 @@ fn read_claude_access_token() -> Result<String, WikiRuntimeFailure> {
         {
             return Err(WikiRuntimeFailure::AuthenticationUnavailable);
         }
-        let entry = keyring::Entry::new(CLAUDE_KEYCHAIN_SERVICE, &account)
-            .map_err(|_| WikiRuntimeFailure::AuthenticationUnavailable)?;
-        let raw = entry
-            .get_password()
-            .map_err(|_| WikiRuntimeFailure::AuthenticationUnavailable)?;
-        parse_claude_credentials(raw.as_bytes())
+        // Avoid keyring::Entry::get_password here: its native
+        // SecKeychainFindGenericPassword call can wait indefinitely for
+        // SecurityAgent. The stable security CLI is run through the bounded
+        // child runner below, and its captured streams never enter a log.
+        let mut command = Command::new("/usr/bin/security");
+        command.args([
+            "find-generic-password",
+            "-s",
+            CLAUDE_KEYCHAIN_SERVICE,
+            "-a",
+            &account,
+            "-w",
+        ]);
+        read_claude_credentials_with_command(command, cancelled, claude_auth_policy())
     }
     #[cfg(not(all(feature = "system-keyring", target_os = "macos")))]
     {
+        let _ = cancelled;
         Err(WikiRuntimeFailure::AuthenticationUnavailable)
+    }
+}
+
+#[cfg(all(feature = "system-keyring", target_os = "macos"))]
+fn claude_auth_policy() -> BoundedPolicy {
+    BoundedPolicy {
+        timeout: CLAUDE_AUTH_TIMEOUT,
+        budget: OutputBudget::PerStream {
+            stdout: CLAUDE_CREDENTIALS_LIMIT as u64,
+            stderr: CLAUDE_AUTH_STDERR_LIMIT,
+        },
+    }
+}
+
+#[cfg(any(test, all(feature = "system-keyring", target_os = "macos")))]
+fn read_claude_credentials_with_command(
+    mut command: Command,
+    cancelled: &AtomicBool,
+    policy: BoundedPolicy,
+) -> Result<String, WikiRuntimeFailure> {
+    command.stdin(Stdio::null());
+    let output = output_with_policy(command, policy, cancelled)
+        .map_err(map_claude_process_failure)?
+        .output;
+    if !output.status.success() {
+        return Err(WikiRuntimeFailure::AuthenticationUnavailable);
+    }
+    parse_claude_credentials(&output.stdout)
+}
+
+#[cfg(any(test, all(feature = "system-keyring", target_os = "macos")))]
+fn map_claude_process_failure(failure: BoundedFailure) -> WikiRuntimeFailure {
+    match failure {
+        BoundedFailure::AggregateLimit
+        | BoundedFailure::StdoutLimit
+        | BoundedFailure::StderrLimit => WikiRuntimeFailure::AuthenticationLimit,
+        failure => WikiRuntimeFailure::Process(failure),
     }
 }
 
@@ -443,5 +501,127 @@ mod tests {
         let token = parse_claude_credentials(credentials.to_string().as_bytes()).expect("token");
         assert_eq!(token, "access-token");
         assert!(!token.contains("refresh-token"));
+    }
+
+    #[cfg(unix)]
+    fn fake_security(script: &str) -> (tempfile::TempDir, PathBuf) {
+        let fixture = tempfile::tempdir().expect("temp");
+        let executable = fixture.path().join("security");
+        fs::write(&executable, script).expect("fake security");
+        let mut permissions = fs::metadata(&executable)
+            .expect("fake metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&executable, permissions).expect("fake permissions");
+        (fixture, executable)
+    }
+
+    #[cfg(unix)]
+    fn fake_claude_policy(timeout: Duration, stdout: u64) -> BoundedPolicy {
+        BoundedPolicy {
+            timeout,
+            budget: OutputBudget::PerStream {
+                stdout,
+                stderr: 1024,
+            },
+        }
+    }
+
+    #[cfg(unix)]
+    fn unexpired_claude_json() -> String {
+        let expires_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_millis() as i64
+            + 60_000;
+        serde_json::json!({
+            "claudeAiOauth": {
+                "accessToken": "synthetic-access-token",
+                "expiresAt": expires_at
+            }
+        })
+        .to_string()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_credential_process_uses_the_production_bounded_reader() {
+        let payload = unexpired_claude_json();
+        let script = format!("#!/bin/sh\nprintf '%s' '{payload}'\n");
+        let (_fixture, executable) = fake_security(&script);
+        let token = read_claude_credentials_with_command(
+            Command::new(executable),
+            &AtomicBool::new(false),
+            fake_claude_policy(Duration::from_secs(2), CLAUDE_CREDENTIALS_LIMIT as u64),
+        )
+        .expect("synthetic credentials");
+        assert_eq!(token, "synthetic-access-token");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_credential_process_timeout_is_bounded_and_redacted() {
+        let (_fixture, executable) = fake_security("#!/bin/sh\nexec sleep 30\n");
+        let started = Instant::now();
+        let error = read_claude_credentials_with_command(
+            Command::new(executable),
+            &AtomicBool::new(false),
+            fake_claude_policy(Duration::from_millis(50), 1024),
+        )
+        .expect_err("hung keychain helper must fail");
+        assert_eq!(error, WikiRuntimeFailure::Process(BoundedFailure::Deadline));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "credential helper hung"
+        );
+        assert!(!format!("{error:?}").contains("synthetic"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_credential_process_honors_cancellation_before_spawn() {
+        let (_fixture, executable) = fake_security("#!/bin/sh\nexit 0\n");
+        let cancelled = AtomicBool::new(true);
+        let error = read_claude_credentials_with_command(
+            Command::new(executable),
+            &cancelled,
+            fake_claude_policy(Duration::from_secs(2), 1024),
+        )
+        .expect_err("cancelled credential helper must fail");
+        assert_eq!(
+            error,
+            WikiRuntimeFailure::Process(BoundedFailure::Cancelled)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_credential_process_nonzero_exit_does_not_parse_or_log_output() {
+        let (_fixture, executable) = fake_security(
+            "#!/bin/sh\nprintf 'SECRET_CREDENTIAL_OUTPUT'\nprintf 'SECRET_DIAGNOSTIC' >&2\nexit 23\n",
+        );
+        let error = read_claude_credentials_with_command(
+            Command::new(executable),
+            &AtomicBool::new(false),
+            fake_claude_policy(Duration::from_secs(2), 1024),
+        )
+        .expect_err("failed keychain helper must fail");
+        assert_eq!(error, WikiRuntimeFailure::AuthenticationUnavailable);
+        let diagnostics = format!("{error:?}");
+        assert!(!diagnostics.contains("SECRET_CREDENTIAL_OUTPUT"));
+        assert!(!diagnostics.contains("SECRET_DIAGNOSTIC"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_credential_process_oversized_output_is_rejected_before_parse() {
+        let (_fixture, executable) = fake_security("#!/bin/sh\nprintf '%2048s' x\n");
+        let error = read_claude_credentials_with_command(
+            Command::new(executable),
+            &AtomicBool::new(false),
+            fake_claude_policy(Duration::from_secs(2), 1024),
+        )
+        .expect_err("oversized credential output must fail");
+        assert_eq!(error, WikiRuntimeFailure::AuthenticationLimit);
     }
 }

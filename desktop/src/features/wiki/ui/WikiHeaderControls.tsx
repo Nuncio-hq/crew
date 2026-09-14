@@ -7,6 +7,7 @@ import {
   repoKey,
   wikiCanCancelRecovery,
   wikiFreshness,
+  isFailedWikiGeneration,
   isCanceledWikiGeneration,
   wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
@@ -94,10 +95,11 @@ export function WikiHeaderControls({
       ? wikiRecoveryActionLabel(affordance)
       : null;
   const canceledGeneration = isCanceledWikiGeneration(recoveryJob);
+  const failedGeneration = isFailedWikiGeneration(recoveryJob);
   // A prepare rejection can repeat the durable terminal message already
   // rendered below. Keep one user-facing copy while preserving other errors.
   const duplicateGenerationError =
-    canceledGeneration &&
+    (canceledGeneration || failedGeneration) &&
     Boolean(recoveryJob?.error) &&
     generateError === recoveryJob?.error;
   const sourceBranch = defaultBranchCommit(repoState)?.branch ?? toc?.branch;
@@ -215,9 +217,7 @@ export function WikiHeaderControls({
         >
           <span className="text-muted-foreground">
             {recoveryJob.phase === "generation"
-              ? recoveryJob.status === "generating"
-                ? wikiGenerationStatusLabel(recoveryJob)
-                : `Generation: ${recoveryJob.nativeStatus ?? "pending"}`
+              ? wikiGenerationStatusLabel(recoveryJob)
               : `Recovery: ${recoveryJob.nativeStatus ?? "pending"}`}
           </span>
           {canceledGeneration ? (
@@ -228,6 +228,16 @@ export function WikiHeaderControls({
             >
               {recoveryJob.error ??
                 "Wiki generation was canceled before publication. Generate again from source."}
+            </span>
+          ) : null}
+          {failedGeneration ? (
+            <span
+              className="text-destructive"
+              data-testid="wiki-generation-failed"
+              role="alert"
+            >
+              {recoveryJob.error ??
+                "Wiki generation failed before publication. Generate again from source."}
             </span>
           ) : null}
           {affordance === "regenerate" ? (

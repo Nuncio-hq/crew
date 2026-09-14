@@ -191,6 +191,17 @@ function canceledGenerationJob() {
   };
 }
 
+function failedGenerationJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "canceled",
+    reconciled: true,
+    cancelRequested: true,
+    lastError: "Wiki runtime returned invalid page output.",
+  };
+}
+
 function missingSourceJob() {
   return {
     ...generationJob(),
@@ -908,6 +919,42 @@ test("a terminal canceled generation stays visible and permits Generate", async 
     assert.equal(screen.queryByRole("button", { name: "Cancel job" }), null);
     assert.equal(screen.queryByRole("button", { name: "Reconcile" }), null);
     assert.equal(screen.getByTestId("wiki-generate-crew").disabled, false);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a terminal runtime generation error is labeled failed and permits Generate", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: failedGenerationJob(),
+    openDetail: false,
+  });
+  try {
+    await waitFor(() => screen.getByTestId("wiki-generation-failed"));
+    assert.match(
+      screen.getByTestId("wiki-generation-failed").textContent,
+      /Wiki runtime returned invalid page output\./,
+    );
+    assert.equal(screen.queryByTestId("wiki-generation-canceled"), null);
+    assert.equal(screen.getByTestId("wiki-generate-crew").disabled, false);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId(`wiki-repo-card-${REPO_D}`).querySelector("button"),
+      );
+    });
+    await waitFor(() => screen.getByTestId("wiki-recovery-header"));
+    assert.match(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generation: failed/,
+    );
+    assert.doesNotMatch(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generation: canceled|Generating Wiki…/,
+    );
+    assert.equal(screen.queryByRole("button", { name: "Cancel" }), null);
+    assert.equal(screen.getByTestId("wiki-generate-mirror").disabled, false);
   } finally {
     mounted.dispose();
   }

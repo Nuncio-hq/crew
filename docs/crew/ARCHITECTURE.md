@@ -563,7 +563,15 @@ citations both open a dismissible verified-source pane; the pane hides the
 table of contents, returns focus to its activating control, and is scoped to
 the exact owner, repository, path, and line range recorded on the page.
 Native Update reads one verified prior publication and captures the new source
-once. A no-op also requires identical section membership and logical page order.
+once. Installed runtime output is normalized before publication: a complete
+Markdown-labelled outer fence is removed, while exact planned relative file
+links become verified `buzz://file` links to that captured file's full range.
+Markdown code spans and blocks remain literal, using the repository's Markdown
+parser to distinguish examples from navigation. Unknown files and external navigation remain rejected; empty output and output
+expanded beyond the runtime byte limit are not published. Terminal runtime errors
+are shown as failed generation; cancellation and interrupted recovery retain the
+canceled label and all terminal cases allow a fresh Generate. A no-op also requires
+identical section membership and logical page order.
 Detached Git snapshots match the absent branch tag emitted by the publisher;
 an attached/detached transition still invalidates reuse. It reuses a page body only when source hashes and membership, page/section
 metadata, language, source kind, branch, and the signed `wiki-steering-hash`
@@ -793,8 +801,10 @@ has Node proof; native batch, full CI, review and staging acceptance remain gate
 The installed Wiki adapter uses disposable runtime state and hands off only
 the existing subscription access credential. Hermes authentication remains
 owned by its selected staged profile. Claude reads the current user's native
-Keychain entry (`Claude Code-credentials`) and passes only its unexpired access
-token in the child environment; the refresh token is never copied. Codex reads
+Keychain entry (`Claude Code-credentials`) through the stable `/usr/bin/security`
+helper, with a five-second deadline, cancellation, and bounded captured streams.
+Captured credential output is never logged. Only the unexpired access token is
+passed in the child environment; the refresh token is never copied. Codex reads
 the host `CODEX_HOME/auth.json` and writes a private child file containing the
 access, identity, account, and exact `last_refresh` fields plus the parser
 required empty refresh field; API keys and refresh tokens are omitted. Missing,

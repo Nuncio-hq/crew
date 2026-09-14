@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   defaultBranchCommit,
+  isFailedWikiGeneration,
   isCanceledWikiGeneration,
   parseWikiPage,
   parseWikiToc,
@@ -279,11 +280,20 @@ test("a canceled native generation keeps its message and unlocks Generate", () =
   assert.equal(isCanceledWikiGeneration(canceled), true);
   assert.equal(wikiRecoveryAffordance(canceled), "none");
   assert.equal(wikiCanCancelRecovery(canceled), false);
-  assert.equal(
-    wikiGenerationStatusLabel(canceled),
-    "Generating Wiki…",
-    "the durable terminal row retains the generation phase for its message",
-  );
+  assert.equal(wikiGenerationStatusLabel(canceled), "Generation: canceled");
+});
+
+test("a terminal runtime generation error is failed, not canceled", () => {
+  const failed = job({
+    phase: "generation",
+    nativeStatus: "canceled",
+    reconciled: true,
+    error: "Wiki runtime returned invalid page output.",
+  });
+
+  assert.equal(isCanceledWikiGeneration(failed), false);
+  assert.equal(isFailedWikiGeneration(failed), true);
+  assert.equal(wikiGenerationStatusLabel(failed), "Generation: failed");
 });
 
 test("both Wiki recovery surfaces use the shared affordance helper", () => {

@@ -160,7 +160,19 @@ export function isCanceledWikiGeneration(
   return Boolean(
     job?.phase === "generation" &&
       job.nativeStatus === "canceled" &&
-      job.reconciled,
+      job.reconciled &&
+      (!job.error || isGenerationCancellationMessage(job.error)),
+  );
+}
+
+/** True for a terminal pre-publication runtime failure. */
+export function isFailedWikiGeneration(job: WikiJobState | undefined): boolean {
+  return Boolean(
+    job?.phase === "generation" &&
+      job.nativeStatus === "canceled" &&
+      job.reconciled &&
+      Boolean(job.error) &&
+      !isCanceledWikiGeneration(job),
   );
 }
 
@@ -168,6 +180,11 @@ export function isCanceledWikiGeneration(
 export function wikiGenerationStatusLabel(
   job: WikiJobState | undefined,
 ): string {
+  if (job?.phase === "generation" && job.reconciled) {
+    return isFailedWikiGeneration(job)
+      ? "Generation: failed"
+      : `Generation: ${job.nativeStatus ?? "canceled"}`;
+  }
   switch (job?.phase) {
     case "generation":
       return "Generating Wiki…";
@@ -186,6 +203,12 @@ export function wikiGenerationStatusLabel(
         ? `Generating… ${job.done}/${job.total} pages`
         : "Generating Wiki…";
   }
+}
+
+function isGenerationCancellationMessage(error: string): boolean {
+  return /^Wiki generation (?:was )?(?:canceled|interrupted) before publication\./u.test(
+    error,
+  );
 }
 
 function tagValue(event: RelayEvent, name: string): string | undefined {

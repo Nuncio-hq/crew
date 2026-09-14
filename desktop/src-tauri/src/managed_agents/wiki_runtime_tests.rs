@@ -890,3 +890,94 @@ fn codex_style_runtime_receives_the_complete_prompt_on_stdin() {
         .expect("generated from stdin");
     assert_eq!(output, "stdin-ok");
 }
+
+#[cfg(unix)]
+#[test]
+fn generated_markdown_unwraps_only_a_complete_markdown_envelope() {
+    for (raw, expected) in [
+        (
+            "```markdown\n# Retry budget\n\n```rust\nlet attempts = 6;\n```\n```\n",
+            "# Retry budget\n\n```rust\nlet attempts = 6;\n```",
+        ),
+        ("```md\n# Retry budget\n```", "# Retry budget"),
+        (
+            "# Retry budget\n\n```rust\nlet attempts = 6;\n```\n",
+            "# Retry budget\n\n```rust\nlet attempts = 6;\n```\n",
+        ),
+        (
+            "```rust\nlet attempts = 6;\n```",
+            "```rust\nlet attempts = 6;\n```",
+        ),
+    ] {
+        let script = format!("#!/bin/sh\ncat <<'CREW_PAGE'\n{raw}\nCREW_PAGE\n");
+        let (fixture, executable) = fake_runtime(&script);
+        let generator = WikiRuntimeGenerator::with_executable(
+            claude_default(),
+            executable,
+            fixture.path().join("state"),
+        )
+        .expect("generator");
+        let (page, snapshot) = page_snapshot("source");
+        // The fake shell adds a terminal newline; only the Markdown envelope
+        // is removed. Existing page prose and inner code blocks survive.
+        let actual = generator.generate(&page, &snapshot, "en").expect("page");
+        assert_eq!(actual.trim_end(), expected.trim_end());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_markdown_rejects_an_empty_envelope() {
+    let (fixture, executable) = fake_runtime("#!/bin/sh\nprintf '```markdown\n\n```\n'\n");
+    let generator = WikiRuntimeGenerator::with_executable(
+        claude_default(),
+        executable,
+        fixture.path().join("state"),
+    )
+    .expect("generator");
+    let (page, snapshot) = page_snapshot("source");
+    assert!(generator.generate(&page, &snapshot, "en").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_relative_source_links_bind_to_the_captured_file() {
+    let (fixture, executable) =
+        fake_runtime("#!/bin/sh\nprintf '# Retry budget\n\nSee [source](src/lib.rs).\n'\n");
+    let generator = WikiRuntimeGenerator::with_executable(
+        codex_default(),
+        executable,
+        fixture.path().join("state"),
+    )
+    .expect("generator");
+    let (page, snapshot) = page_snapshot("first\nsecond\n");
+    let output = generator.generate(&page, &snapshot, "en").expect("page");
+    assert!(output.contains("[source](buzz://file?path=src%2Flib.rs&lines=1-2)"));
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_relative_source_links_reject_files_outside_the_plan() {
+    let (fixture, executable) =
+        fake_runtime("#!/bin/sh\nprintf '# Retry budget\n\nSee [source](../private.txt).\n'\n");
+    let generator = WikiRuntimeGenerator::with_executable(
+        codex_default(),
+        executable,
+        fixture.path().join("state"),
+    )
+    .expect("generator");
+    let (page, snapshot) = page_snapshot("source");
+    assert!(generator.generate(&page, &snapshot, "en").is_err());
+}
+
+#[test]
+fn normalized_source_links_respect_runtime_output_limit() {
+    let (page, snapshot) = page_snapshot("source");
+    let link = "[s](src/lib.rs)";
+    let output = link.repeat(WIKI_RUNTIME_OUTPUT_LIMIT as usize / link.len());
+    assert!(output.len() as u64 <= WIKI_RUNTIME_OUTPUT_LIMIT);
+    assert_eq!(
+        normalize_generated_page(&page, &snapshot, &output),
+        Err(WikiRuntimeFailure::InvalidOutput)
+    );
+}

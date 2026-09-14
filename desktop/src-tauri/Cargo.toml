@@ -102,6 +102,7 @@ nostr = { version = "0.44", features = ["nip44", "nip49"] }
 getrandom = "0.2"
 zeroize = "1"
 percent-encoding = "2"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 reqwest = { version = "0.13", features = ["json", "query", "stream", "blocking"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 url = "2"
