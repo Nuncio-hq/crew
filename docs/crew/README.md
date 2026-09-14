@@ -41,6 +41,13 @@ Supporting runbooks that are also living but narrow:
 [`RELEASING.md`](RELEASING.md), [`GUIDES/`](GUIDES/),
 [`templates/`](templates/).
 
+## Shared design reference
+
+[CompanyOS blueprint](../../design/companyos/README.md) is the one maintained
+interactive reference (D-078). Review it before CompanyOS UI implementation.
+It separates accepted layout, proposed behavior, and simulated examples; the
+living documents above remain authoritative for product and architecture.
+
 ## Records (append-only directories)
 
 Dated evidence, not current product contracts. Existing records remain

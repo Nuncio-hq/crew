@@ -1600,7 +1600,7 @@ See spike 0054.
 
 ## D-070 — Client acceptance (Gate C); CI green ≠ Accept
 
-- **Status:** Accepted
+- **Status:** Accepted; CoS-specific ownership in item 3 generalized by D-076
 - **Date:** 2026-08-19
 - **Issue:** #234
 
@@ -1649,7 +1649,7 @@ Spike 0055 PASS. Gate C DoD still applies (D-070).
 
 ## D-072 — CoS is channel intake; specialists called by name
 
-- **Status:** Accepted
+- **Status:** Partially superseded by D-076: CoS is optional, not the founder's only contact
 - **Date:** 2026-08-19
 - **Issue:** #232
 
@@ -1766,3 +1766,112 @@ upstream's `session_owners` model from `buzz-acp`.
    chunk backlog. Constraints: keep the 120/min quota ceiling, the byte
    budget and drop accounting; add a falsifiable test; docs only until the
    Focus-grain work picks it up (see `PRODUCT.md`, "Watching agents work").
+
+## D-076 — CompanyOS direction; department delegation and verified coding delivery first
+
+- **Status:** Accepted product direction; implementation is not implied
+- **Date:** 2026-09-08
+- **Source:** Founder clarification and first-workflow selection in this task
+- **Supersedes:** D-072's mandatory single-CoS intake and D-070 item 3's
+  CoS-specific handoff ownership. Named calls, channel permissions, and
+  founder acceptance remain in force.
+
+The current, authoritative product brief is [`PRODUCT.md`](PRODUCT.md).
+The founder confirmed:
+
+1. One app for personal, client, and company work, including coding and
+   non-code work. Clients, deadlines, email, X growth, advertising, browser,
+   and simulator integration belong to the intended scope.
+2. Functional department hierarchy: the founder can talk directly to
+   Marketing, a CTO, or another lead, who dispatches specialists and owns
+   the evidence-backed handoff. A CoS is one possible intake role.
+3. Autonomy follows agreed brainstorming and planning. Agents queue and
+   carry out that work, including agreed issue work, testing, and performance
+   investigation. This does not authorize unlimited proactive work.
+4. Verification skills are central: agents must establish that the outcome
+   is correct, explain evidence and limits, and repair failures within scope.
+   CI green does not replace founder acceptance.
+5. Slack-style conversation remains welcome. Thread volume and the lifecycle
+   of coding and non-code work need better management; a task, conversation,
+   runtime session, and worktree must not be treated as the same thing.
+6. Hermes remains the primary employee runtime under D-025. Keep the generic
+   Buzz/ACP boundary rather than a parallel Hermes-only company protocol.
+7. First priority is the complete coding loop: agreed project → delegation
+   and queue → implementation and verification → handoff to the founder.
+8. Before implementing the user-facing experience, use one maintained HTML
+   product reference combining the journey, screenshots or interactive
+   prototypes, and review notes, following the founder's The13 / HeardBack /
+   Didit method. Review screens and behavior together; keep accepted decisions,
+   proposals, and simulated functionality distinct. See the workflow for handoff.
+
+The department schema, queue mechanics, retention/cleanup policy, and first
+integration design remain open. This decision does not reinstate the removed
+Org roster (D-069), override navigation rules (D-065/D-066), or approve the
+earlier Gmail/EA/`#inbox` proposal as an implementation plan. Runtime prompts
+and UI need separate verification against this direction; this is a docs change.
+
+## D-077 — Real-data staging on dev-server, isolated from the daily relay
+
+- **Status:** Accepted testing policy; staging provisioning remains pending
+- **Date:** 2026-09-08
+- **Source:** Founder confirmation after live dev-server inspection
+
+The daily relay and the proposed staging environment share dev-server as
+a host, not writable data. Local Crew builds and test agents connect to a
+separate staging relay over Tailscale. Staging is restored from a deliberate
+snapshot baseline, reused through a fix/retest cycle; test writes never flow
+back to the daily system. Fast fixture-based tests remain separate.
+
+Reuse relevant installed NuncioCrew settings through isolated test copies,
+not shared live app-data, agent sessions, Hermes profiles, or workspaces.
+Verify destinations and tool authority before agents run. Live write testing
+requires explicit scope; missing staging does not authorize it.
+
+[`TESTING.md`](TESTING.md#test-environments-and-real-data-staging-d-077)
+owns the operational policy; `ARCHITECTURE.md` owns deployment topology and
+`STATE.md` records readiness. This decision documents the agreed approach;
+it neither creates staging nor authorizes a destructive setup on the daily stack.
+
+
+## D-078 — Codex-style workspace layout and one maintained design blueprint
+
+- **Status:** Accepted layout direction; prototype interactions remain proposals
+- **Date:** 2026-09-08
+- **Source:** Founder-selected annotated Codex screenshot and explicit layout request
+- **Supersedes:** D-066's prohibition on Projects in the sidebar for the future UI.
+  D-065's removal of a separate Workbench picker remains in force.
+
+The founder requested a redesign prototype with three left-sidebar groups:
+workspace navigation, Projects, and direct
+agent conversations. The main area holds channel chat and threads. The
+accepted direction is described in `PRODUCT.md`; the running app has not
+been changed by this decision.
+
+Maintain the single reference at `design/companyos/`, with an HTML entry,
+interactive states, source screenshots and adjacent agent-readable rules.
+The new artifact is justified as the reusable visual/interaction blueprint;
+existing living docs retain product, architecture and workflow authority.
+Do not create per-feature prototype forks or copy contracts across documents.
+
+Projects-to-channels/repositories mapping, right-hand tools, default behavior,
+shortcuts and review-state transitions shown in v0.1 are proposals. The
+prototype must distinguish these from accepted layout and from shipped
+behavior. It uses simulated data, not the daily relay or real agent processes.
+
+
+**2026-09-09 prototype refinement.** The founder requested Project-scoped
+Wiki navigation: Inbox, Agents and Workflows remain at the top; expanded
+Projects show Wiki and channels. Shared channels remain reachable through
+Browse channels in the workspace menu. This updates the future layout
+placement above and D-061/D-067's global Wiki entry for this prototype; the
+shipped Wiki routes, event kinds and company-handbook content remain unchanged.
+The company handbook's entry in the new layout still needs a product decision.
+
+The requested interactive review flow is read → ask → inspect cited source →
+editable task draft → explicit start in a channel, with a return link. Questions
+stay private by default. The single maintained blueprint now demonstrates it,
+including access/update failures, with sample answers and generation timers.
+This records the requested review direction, not acceptance of its detailed
+implementation or evidence that production QA/search/history/dispatch is wired.
+Reuse the existing Crew Wiki engine and Buzz channel/thread models when the
+reviewed design is implemented; do not copy prototype state into production.

@@ -23,10 +23,13 @@ thread-per-session and #7337 busy-owner hold are **not** adopted
 
 ## Desktop
 
-Channel-first IA (Inbox + channels + DMs; no Projects/Workbench/Org nav).
-Thread Workbench route exists but has no door — Focus grain work is
-[#344](https://github.com/Nuncio-hq/crew/issues/344) (S1 doors → S2
-sub-second done → S3 Tool Pane → S4 reconcile). Tool Pane (PR · Browser · Sim) in thread focus. Crew
+Shipped: channel-first IA (Inbox + channels + DMs; no Projects/Workbench/Org nav).
+Next UI direction: Codex-style sidebar + central conversations (D-078);
+[blueprint](../../design/companyos/README.md) is simulated, implementation pending.
+Legacy Workbench routes redirect to Inbox or the channel thread (D-065).
+Further Focus/layout integration is
+[#344](https://github.com/Nuncio-hq/crew/issues/344); its old Workbench-door
+plan and latency diagnosis need reconciliation with D-065/D-078 and current batching before implementation. Tool Pane (PR · Browser · Sim) in thread focus. Crew
 Dark theme, text-only zoom, 1000-line ratchet. Mention send flow follows
 upstream's composer-revision security model with Crew context in
 `crewSendContext.ts`. Desktop unit suite: 7358 tests passing.
@@ -43,29 +46,27 @@ mirror desktop. No org/wiki UI. 1000-line policy.
 
 ## Relay / DB
 
-**Primary relay: the founder's dev-server over Tailscale,
-`ws://100.86.143.13:3000`** (Buzz Relay 0.2.1, this repo's build; knows
-kind 46043). The hosted `wss://lilgroup.communities.buzz.xyz` is
-**deprecated** — no longer a target for acceptance; remove it from agents
-and the community list once the dev-server relay is confirmed healthy.
+Host inventory verified over SSH on 2026-09-08: daily `buzz-relay` is a
+host process on dev-server; PostgreSQL 17, Redis 7 and MinIO run there in
+Docker. NIP-11 responds and advertises relay version 0.2.1. Endpoint and
+topology: [`ARCHITECTURE.md`](ARCHITECTURE.md). This inventory did not retest
+the previously reported harness AUTH/reconnect failure (#338).
 
-Status 2026-09-08: the dev-server relay answers NIP-11 and completes the
-WebSocket handshake, then **closes the socket right after sending the
-`AUTH` challenge**. No harness has connected since 2026-09-01 04:05 UTC;
-15 `buzz-acp` processes started 2026-09-01 are still retrying (566 failed
-reconnects on 09-04, 192 on 09-07, 2,328 on 09-08, zero successes).
-Founder is checking the relay on the dev-server (identity / auth config
-change after 09-01 is the leading suspect). Tracked in
-[#338](https://github.com/Nuncio-hq/crew/issues/338).
+Snapshot staging on the same dev-server is agreed (D-077), **not yet
+provisioned or verified**. No staging endpoint is assigned. Agents must use
+the environment policy in [`TESTING.md`](TESTING.md), not the daily relay
+as a fallback for missing test data.
 
 Stock Buzz relay with Crew kinds (30680 inert, 30623 wiki, 24201 overlay).
 Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 
 ## Known gaps
 
-- Dev-server relay rejects harness AUTH since 09-04 (#338); Hermes has not
-  been re-verified on it (#337). The harness reconnect loop has no
-  terminal state (2k+ attempts/day) — bug, see #338.
+- D-076 records the coding delivery loop as the first CompanyOS priority;
+  department delegation and end-to-end verified delivery are product targets,
+  not claims of shipped behavior. See [`PRODUCT.md`](PRODUCT.md).
+- Previously reported dev-server AUTH/reconnect failure (#338) and Hermes
+  readiness (#337) still need verification; an NIP-11 response does not prove either.
 - Desktop Smoke / Integration E2E lanes are advisory only (D-032, D-047);
   post-0.5.23 drift tracked in
   [#346](https://github.com/Nuncio-hq/crew/issues/346) (mention-recipients

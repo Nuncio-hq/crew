@@ -17,9 +17,9 @@ Do not mark done from CI or tool logs alone (issue #234 / D-070).
 3. Expected: <observable outcome>
 
 ### Evidence
-- <screenshot / clip / crew-evidence link>
-- Reality ladder: Mock E2E | Local app | Multi-session
-- CI: <green link or “not comparable”>
+- <evidence tied to acceptance criteria: workflow result, test, measurements, or visual capture>
+- Environment: <Mock E2E | Local app | Multi-session | relevant non-code context>
+- Checks: <what ran, outcome, and CI link when applicable>
 
 ### Honest limit
 - <e.g. mock-only; one agent; not load-tested>

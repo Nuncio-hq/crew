@@ -331,18 +331,23 @@ the existing ACP path (#169). Do **not** call by role label. Do **not** ask
 the founder to press Wake. Channel roles still decide what that named person
 may do once awake (D-043 / D-044). See D-071 / spike 0055.
 
-## CoS intake (issue #232)
+## Optional CoS intake (issue #232; D-076)
 
 On an office channel, assign CoS the **intake** role and Dev the **code**
-role (canvas; D-043 / D-044). Oscar @CoS only. CoS may prototype small;
+role (canvas; D-043 / D-044). In this setup Oscar can ask CoS, who may prototype small;
 feature work → call Dev by name (#230 / D-071). Gate C before Accept
 (D-070). Template: [`templates/COS-INTAKE.md`](templates/COS-INTAKE.md).
-See D-072.
+This is one intake example, not the required entry point for all work.
+The founder may speak directly with a department lead, who owns delegation
+and the handoff. See [`PRODUCT.md`](PRODUCT.md) and D-076, which supersedes
+D-072's mandatory single-contact rule. The existing prompt behavior must be
+verified before claiming the broader department flow works.
 
 ## Officer loop — removed with Org product (#233 / D-069)
 
-Do **not** run ORG-CHECK, teach the org chart, or route work through a
-manager tree. Channel roles (D-043 / D-044) say what a named person may
-do in the room. CoS calls specialists **by name** (#230 / #232). Peer
-chat stays flat. `KIND_ORG_ROSTER` may still exist on the relay for sync;
-it is not how Crew companies run.
+Do **not** run ORG-CHECK or revive the removed roster-based officer loop.
+Channel roles (D-043 / D-044) say what a named person may do in the room;
+leads call specialists **by name** (#230 / #232). D-076's functional
+department hierarchy is a product direction over these seams, not permission
+to restore the old officer protocol. `KIND_ORG_ROSTER` may still exist on
+the relay for sync; it is not the company authority model.
