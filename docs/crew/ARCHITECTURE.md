@@ -394,10 +394,14 @@ uses an explicit `recap_native_command` catalog value because ordinary ACP
 discovery remains `hermes-acp` first. Other candidates use the existing
 `underlying_cli` metadata. The native
 CLI candidate and its model/profile selection contract are inventory, not proof
-of one-shot support. `classify_recap` currently returns only failure states;
-there is no positive capability cache, generation command, or runnable recap UI.
-[#356](https://github.com/Nuncio-hq/crew/issues/356) remains dependent on a proven
-runtime combination. Ordinary agent/ACP readiness is a separate contract.
+of one-shot support. `classify_recap` currently returns only failure states; there is no positive
+capability cache or registered generation service in this checkout. The Crew
+frontend now exposes the typed `get_recap_settings`, `save_recap_settings`,
+`get_thread_recap`, `generate_thread_recap`, and `cancel_thread_recap` seam in
+Settings and thread Context. Until #351/#356 registers those commands and a
+certified runtime combination exists, command errors project an explicit
+Off/unavailable state and Generate remains disabled; no recap generation is
+claimed. Ordinary agent/ACP readiness is a separate contract.
 
 The default-off source slice contains a fixed Claude candidate argv/parser,
 private disposable-state ownership, and the existing bounded discovery process

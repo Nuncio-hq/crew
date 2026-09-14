@@ -39,7 +39,17 @@ async fn handshake_fixture(
         }
         ws.close(None).await.unwrap();
     });
-    let result = do_connect(&url, &Keys::generate(), None).await;
+    let result = do_connect(
+        &url,
+        &Keys::generate(),
+        None,
+        AuthAttemptContext {
+            sequence: 1,
+            id: Uuid::new_v4().to_string(),
+            started_at_ms: 1,
+        },
+    )
+    .await;
     server.await.unwrap();
     result
 }
@@ -90,9 +100,11 @@ async fn unrelated_positive_ok_cannot_hide_exact_auth_denial() {
         Some((false, "blocked: fixture identity")),
     )
     .await;
-    assert!(
-        matches!(result, Err(RelayError::AuthDenied(ref message)) if message == "blocked: fixture identity")
-    );
+    assert!(matches!(
+        result,
+        Err(RelayError::AuthDenied(ref info))
+            if info.classification == TransportAuthClassification::OtherDenial
+    ));
 }
 
 #[tokio::test]
@@ -121,6 +133,25 @@ async fn exact_auth_denial_is_terminal_but_dependency_error_is_retryable() {
         assert!(matches!(error, RelayError::AuthDenied(_)));
         assert_eq!(is_terminal_connect_error(&error), terminal);
     }
+}
+
+#[test]
+fn auth_denial_discards_relay_text_at_the_error_boundary() {
+    let error = RelayError::AuthDenied(AuthDeniedInfo::from_ack(
+        "a".repeat(64),
+        "blocked: you are banned from this community",
+        3,
+    ));
+    assert_eq!(error.to_string(), "Auth denied");
+    assert!(is_terminal_connect_error(&error));
+    let RelayError::AuthDenied(info) = error else {
+        unreachable!("fixture must construct an auth denial");
+    };
+    assert_eq!(
+        info.classification,
+        TransportAuthClassification::CommunityBanned
+    );
+    assert!(!format!("{info:?}").contains("blocked: you are banned"));
 }
 
 #[tokio::test]
