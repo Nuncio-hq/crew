@@ -492,6 +492,19 @@ compatible build rather than restoring a stale v1 database. See [the recovery
 runbook](TESTING.md#wiki-journal-v3-recovery) and
 [D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
+Initial Wiki generation reserves the existing Wiki publication claim before
+starting a runtime. Its tagged `generation_version: 1` payload has no signed
+pages and cannot enter the publication driver. A successful generation replaces
+that payload with the verified signed graph using the same operation ID and
+revision-checked update. Cancel settles the draft before signaling its temporary
+runtime; a late completion cannot overwrite the canceled row. The native recovery
+worker preserves a registered foreground generation and settles an interrupted
+one with an explicit error once its process is gone. Restart never launches a new
+runtime implicitly. This is a consumer payload extension within journal v3;
+older consumers reject the draft rather than publishing it. Generation failure
+or cancellation occurs before relay effects and releases the local claim so an
+explicit Generate can capture fresh source.
+
 #363 owns the installed-runtime generation seam and immutable Git/folder
 snapshot handoff. The Wiki library and page header open a shared Generate/Update
 Wiki dialog with the linked source, installed runtime, and Wiki-only profile/model

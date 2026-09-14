@@ -65,6 +65,14 @@ pub(crate) fn cancel_generation(key: &str) -> bool {
         })
 }
 
+/// True only while this process owns the exact generation registration.
+pub(crate) fn generation_is_active(key: &str) -> Result<bool, String> {
+    generation_cancels()
+        .lock()
+        .map(|cancels| cancels.contains_key(key))
+        .map_err(|_| "Wiki generation cancellation registry unavailable.".to_string())
+}
+
 /// Remove a completed generation without clearing a newer replacement.
 pub(crate) fn finish_generation_cancel(key: &str, token: &Arc<AtomicBool>) {
     if let Ok(mut cancels) = generation_cancels().lock() {
