@@ -4,8 +4,10 @@ import test from "node:test";
 
 import {
   defaultBranchCommit,
+  isCanceledWikiGeneration,
   wikiCanCancelRecovery,
   wikiFreshness,
+  wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
   wikiRecoveryAffordance,
 } from "./wikiEvents.ts";
@@ -200,6 +202,43 @@ test("terminal and non-durable rows expose no publication action or Cancel", () 
     wikiCanCancelRecovery(job({ cancelRequested: true })),
     false,
     "an already cancelled row has nothing left to stop",
+  );
+});
+
+test("initial native generation exposes only Cancel and no page count", () => {
+  const generation = job({
+    phase: "generation",
+    nativeStatus: "preparing",
+    reconciled: false,
+    done: 0,
+    total: 0,
+  });
+
+  assert.equal(wikiGenerationStatusLabel(generation), "Generating Wiki…");
+  assert.equal(wikiRecoveryAffordance(generation), "none");
+  assert.equal(wikiCanCancelRecovery(generation), true);
+  assert.doesNotMatch(wikiGenerationStatusLabel(generation), /0\/0/);
+  assert.equal(
+    wikiGenerationStatusLabel({ ...generation, phase: "preparing" }),
+    "Preparing Wiki publication…",
+  );
+});
+
+test("a canceled native generation keeps its message and unlocks Generate", () => {
+  const canceled = job({
+    phase: "generation",
+    nativeStatus: "canceled",
+    reconciled: true,
+    error: "Wiki generation was interrupted before publication.",
+  });
+
+  assert.equal(isCanceledWikiGeneration(canceled), true);
+  assert.equal(wikiRecoveryAffordance(canceled), "none");
+  assert.equal(wikiCanCancelRecovery(canceled), false);
+  assert.equal(
+    wikiGenerationStatusLabel(canceled),
+    "Generating Wiki…",
+    "the durable terminal row retains the generation phase for its message",
   );
 });
 

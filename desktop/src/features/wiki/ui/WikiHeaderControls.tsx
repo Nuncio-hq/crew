@@ -6,6 +6,8 @@ import {
   repoKey,
   wikiCanCancelRecovery,
   wikiFreshness,
+  isCanceledWikiGeneration,
+  wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
   wikiRecoveryAffordance,
   type WikiCadence,
@@ -90,6 +92,7 @@ export function WikiHeaderControls({
     affordance === "retry" || affordance === "resume"
       ? wikiRecoveryActionLabel(affordance)
       : null;
+  const canceledGeneration = isCanceledWikiGeneration(recoveryJob);
   return (
     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-2xs text-muted-foreground">
       <span
@@ -203,8 +206,22 @@ export function WikiHeaderControls({
           data-testid="wiki-recovery-header"
         >
           <span className="text-muted-foreground">
-            Recovery: {recoveryJob.nativeStatus ?? "pending"}
+            {recoveryJob.phase === "generation"
+              ? recoveryJob.status === "generating"
+                ? wikiGenerationStatusLabel(recoveryJob)
+                : `Generation: ${recoveryJob.nativeStatus ?? "pending"}`
+              : `Recovery: ${recoveryJob.nativeStatus ?? "pending"}`}
           </span>
+          {canceledGeneration ? (
+            <span
+              className="text-attention"
+              data-testid="wiki-generation-canceled"
+              role="status"
+            >
+              {recoveryJob.error ??
+                "Wiki generation was canceled before publication. Generate again from source."}
+            </span>
+          ) : null}
           {affordance === "regenerate" ? (
             <span className="text-attention">
               Immutable snapshot retired; regenerate from source.

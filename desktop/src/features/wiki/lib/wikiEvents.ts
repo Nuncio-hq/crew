@@ -66,6 +66,8 @@ export type WikiJobState = {
   operationRevision?: number;
   nativeStatus?: string;
   reconciled?: boolean;
+  /** Native progress phase. `generation` has no signed graph or page count. */
+  phase?: string;
   attempts?: number;
   retryAt?: number;
   headAttempted?: boolean;
@@ -107,6 +109,9 @@ export function wikiRecoveryAffordance(
   job: WikiJobState | undefined,
 ): WikiRecoveryAffordance {
   if (!job?.operationId || job.reconciled) return "none";
+  // Initial source generation owns a durable row before a signed publication
+  // graph exists. There is nothing to retry, reconcile, or resume yet.
+  if (job.phase === "generation") return "none";
   if (job.retiredDependencyId) return "regenerate";
   if (job.cancelRequested || job.reconcileOnly) return "resume";
   return "retry";
@@ -139,10 +144,45 @@ export function wikiRecoveryActionLabel(
  * successor flow depends on.
  */
 export function wikiCanCancelRecovery(job: WikiJobState | undefined): boolean {
+  if (!job?.operationId || job.reconciled || job.cancelRequested) return false;
+  if (job.phase === "generation") return true;
   const affordance = wikiRecoveryAffordance(job);
-  return (
-    (affordance === "retry" || affordance === "resume") && !job?.cancelRequested
+  return affordance === "retry" || affordance === "resume";
+}
+
+/** True for the terminal native row left by a canceled or interrupted draft. */
+export function isCanceledWikiGeneration(
+  job: WikiJobState | undefined,
+): boolean {
+  return Boolean(
+    job?.phase === "generation" &&
+      job.nativeStatus === "canceled" &&
+      job.reconciled,
   );
+}
+
+/** Human-readable progress that never invents a 0/0 page count. */
+export function wikiGenerationStatusLabel(
+  job: WikiJobState | undefined,
+): string {
+  switch (job?.phase) {
+    case "generation":
+      return "Generating Wiki…";
+    case "preparing":
+      return "Preparing Wiki publication…";
+    case "pages":
+      return job.total > 0
+        ? `Publishing Wiki pages… ${job.done}/${job.total} pages`
+        : "Publishing Wiki pages…";
+    case "manifest":
+      return "Publishing Wiki manifest…";
+    case "head":
+      return "Publishing Wiki index…";
+    default:
+      return job && job.total > 0
+        ? `Generating… ${job.done}/${job.total} pages`
+        : "Generating Wiki…";
+  }
 }
 
 function tagValue(event: RelayEvent, name: string): string | undefined {

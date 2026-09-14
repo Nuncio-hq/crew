@@ -181,6 +181,91 @@ test("a pre-prepare empty list cannot erase a newer local pending job", () => {
   assert.equal(getWikiJobs().get(repo)?.status, "generating");
 });
 
+test("an old pre-prepare row stays optimistic, then a later poll adopts its durable identity", () => {
+  resetWikiStore();
+  const owner = "7".repeat(64);
+  const repo = `${owner}:crew`;
+  const capturedScope = scope(owner, 1);
+  setWikiJobScope(repo, capturedScope);
+  const startedGeneration = getWikiStoreGeneration();
+  setWikiJob({
+    ...job(repo, capturedScope, null, undefined, undefined),
+    status: "generating",
+    phase: "generation",
+    total: 0,
+  });
+
+  const durable = {
+    ...job(
+      repo,
+      capturedScope,
+      null,
+      "99999999-9999-4999-8999-999999999999",
+      0,
+    ),
+    status: "generating",
+    nativeStatus: "preparing",
+    phase: "generation",
+    total: 0,
+  };
+  hydrateWikiJobs([durable], capturedScope, startedGeneration);
+  assert.equal(
+    getWikiJobs().get(repo)?.operationId,
+    undefined,
+    "the list that began before prepare must not erase the optimistic marker",
+  );
+
+  hydrateWikiJobs([durable], capturedScope);
+  assert.equal(
+    getWikiJobs().get(repo)?.operationId,
+    durable.operationId,
+    "a later poll must expose the durable identity used by Cancel",
+  );
+});
+
+test("a post-marker poll preserves an old terminal row fence before adopting a new draft", () => {
+  resetWikiStore();
+  const owner = "8".repeat(64);
+  const repo = `${owner}:crew`;
+  const capturedScope = scope(owner, 1);
+  setWikiJobScope(repo, capturedScope);
+  setWikiJob({
+    ...job(repo, capturedScope, null, undefined, undefined),
+    status: "generating",
+    phase: "generation",
+    total: 0,
+  });
+
+  const startedAfterOptimistic = getWikiStoreGeneration();
+  const oldTerminal = {
+    ...job(repo, capturedScope, "old complete row", "old-operation", 4),
+    status: "idle",
+    nativeStatus: "complete",
+    reconciled: true,
+  };
+  hydrateWikiJobs([oldTerminal], capturedScope, startedAfterOptimistic);
+  assert.equal(
+    getWikiJobs().get(repo)?.operationId,
+    undefined,
+    "an older reconciled row must not replace the pending generation marker",
+  );
+
+  const newDraft = {
+    ...job(repo, capturedScope, null, "new-operation", 0),
+    status: "generating",
+    nativeStatus: "preparing",
+    reconciled: false,
+    phase: "generation",
+    total: 0,
+  };
+  hydrateWikiJobs([newDraft], capturedScope);
+  assert.equal(
+    getWikiJobs().get(repo)?.operationId,
+    "new-operation",
+    "the real unresolved draft must replace the marker so Cancel is reachable",
+  );
+});
+
 test("a late list cannot overwrite a new scope generation with the same operation id", () => {
   resetWikiStore();
   const owner = "e".repeat(64);

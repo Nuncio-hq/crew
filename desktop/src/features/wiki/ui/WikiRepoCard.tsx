@@ -2,6 +2,8 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { setTerminalPanelMode } from "@/features/terminal/terminalPanelStore";
 import {
   wikiCanCancelRecovery,
+  isCanceledWikiGeneration,
+  wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
   wikiRecoveryAffordance,
   type WikiFreshness,
@@ -80,6 +82,7 @@ export function WikiRepoCard({
       : null;
   const canReconcile = affordance !== "none" && Boolean(onRecoveryReconcile);
   const canRegenerate = affordance === "regenerate" && Boolean(onRegenerate);
+  const canceledGeneration = isCanceledWikiGeneration(generating);
   // The failure banner offers the durable publication action when there is
   // one. A durable row whose only way forward is Regenerate must not offer a
   // plain "Retry" here: the unique native claim blocks a fresh Generate, and
@@ -181,11 +184,21 @@ export function WikiRepoCard({
               ? "The previous immutable snapshot is retired. Choose Regenerate from source to create a new snapshot."
               : affordance === "resume"
                 ? "Publication was canceled with an unresolved attempt. Resume publication to submit the saved snapshot, or Reconcile to check it."
-                : `Generating… ${generating?.done ?? 0}/${generating?.total ?? 0} pages`}
+                : wikiGenerationStatusLabel(generating)}
             {generating?.costNote ? (
               <div className="mt-1">{generating.costNote}</div>
             ) : null}
           </div>
+        ) : null}
+        {canceledGeneration ? (
+          <p
+            className="text-2xs text-attention"
+            data-testid="wiki-generation-canceled"
+            role="status"
+          >
+            {generating?.error ??
+              "Wiki generation was canceled before publication. Generate again from source."}
+          </p>
         ) : null}
         {freshness === "fresh" && updatedAt ? (
           <div className="text-2xs text-muted-foreground">
@@ -234,8 +247,12 @@ export function WikiRepoCard({
             data-testid="wiki-recovery-controls"
           >
             <p className="mb-2 text-muted-foreground">
-              Native recovery: {generating?.nativeStatus ?? "pending"}
-              {generating?.attempts !== undefined
+              {generating?.phase === "generation"
+                ? "Native generation"
+                : "Native recovery"}
+              : {generating?.nativeStatus ?? "pending"}
+              {generating?.phase !== "generation" &&
+              generating?.attempts !== undefined
                 ? ` · ${generating.attempts}/5 attempts`
                 : ""}
             </p>

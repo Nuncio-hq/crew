@@ -139,6 +139,39 @@ function retiredJob() {
   };
 }
 
+function generationJob() {
+  return {
+    id: "generation-operation",
+    revision: 0,
+    resourceKey: `30617:${OWNER}:${REPO_D}`,
+    status: "preparing",
+    reconciled: false,
+    snapshotId: "",
+    sourceRevision: "",
+    cadence: "manual",
+    pages: 0,
+    attempts: 0,
+    progress: "generation",
+    headAttempted: false,
+    cancelRequested: false,
+    reconcileOnly: false,
+    retiredDependencyId: null,
+    retryAt: 0,
+    lastError: null,
+  };
+}
+
+function canceledGenerationJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "canceled",
+    reconciled: true,
+    cancelRequested: true,
+    lastError: "Wiki generation was interrupted before publication.",
+  };
+}
+
 function installTauriInvoke(handler) {
   const bridge = { invoke: handler, transformCallback: () => 1 };
   globalThis.__TAURI_INTERNALS__ = bridge;
@@ -172,6 +205,7 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
   const expected = scope();
   const originalFetchEvents = relayClient.fetchEvents;
   relayClient.fetchEvents = async () => [];
+  let listedJob = options.job ?? retiredJob();
   installTauriInvoke(async (command, args) => {
     calls.push({ command, args });
     if (command === "owner_operation_scope") return expected;
@@ -221,7 +255,11 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
     if (command === "wiki_publication_prepare")
       throw new Error("fixture stops after launch");
     if (command === "wiki_publication_list") {
-      return { token: expected, value: options.noJob ? [] : [retiredJob()] };
+      return { token: expected, value: options.noJob ? [] : [listedJob] };
+    }
+    if (command === "wiki_publication_cancel") {
+      listedJob = canceledGenerationJob();
+      return { token: expected, value: listedJob };
     }
     if (command === "wiki_publication_regenerate") {
       // The captured arguments are the contract under test; refusing here
@@ -262,17 +300,19 @@ async function mountDetail(localWorkspacePath, calls, options = {}) {
   );
 
   const card = await screen.findByTestId(`wiki-repo-card-${REPO_D}`);
-  await act(async () => {
-    fireEvent.click(card.querySelector("button"));
-  });
-  await waitFor(() => {
-    assert.ok(
-      options.noJob
-        ? screen.queryByTestId("wiki-generate-mirror")
-        : screen.queryByTestId("wiki-recovery-header"),
-      "the detail view must render the durable recovery row",
-    );
-  });
+  if (options.openDetail !== false) {
+    await act(async () => {
+      fireEvent.click(card.querySelector("button"));
+    });
+    await waitFor(() => {
+      assert.ok(
+        options.noJob
+          ? screen.queryByTestId("wiki-generate-mirror")
+          : screen.queryByTestId("wiki-recovery-header"),
+        "the detail view must render the durable recovery row",
+      );
+    });
+  }
 
   return {
     client,
@@ -488,6 +528,104 @@ test("a failed runtime save keeps the dialog open and never launches generation"
       calls.some(({ command }) => command === "wiki_publication_prepare"),
       false,
     );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("initial native generation shows clear progress and only the real Cancel action", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: generationJob(),
+    openDetail: false,
+  });
+  try {
+    await waitFor(() => {
+      assert.match(
+        screen.getByTestId("wiki-generating").textContent,
+        /Generating Wiki…/,
+      );
+    });
+    assert.equal(screen.queryByText("0/0"), null);
+    assert.ok(screen.getByRole("button", { name: "Cancel job" }));
+    assert.doesNotMatch(
+      screen.getByTestId("wiki-recovery-controls").textContent,
+      /attempts/,
+    );
+    assert.equal(
+      screen.queryByRole("button", { name: "Retry publication" }),
+      null,
+    );
+    assert.equal(
+      screen.queryByRole("button", { name: "Resume publication" }),
+      null,
+    );
+    assert.equal(screen.queryByRole("button", { name: "Reconcile" }), null);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId(`wiki-repo-card-${REPO_D}`).querySelector("button"),
+      );
+    });
+    await waitFor(() => screen.getByTestId("wiki-recovery-header"));
+    assert.match(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generating Wiki…/,
+    );
+    assert.ok(screen.getByRole("button", { name: "Cancel" }));
+    assert.equal(screen.queryByRole("button", { name: "Reconcile" }), null);
+    assert.equal(
+      screen.queryByRole("button", { name: "Retry publication" }),
+      null,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    await waitFor(() => {
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_cancel"),
+      );
+      assert.ok(screen.getByTestId("wiki-generation-canceled"));
+    });
+    const cancel = calls.find(
+      ({ command }) => command === "wiki_publication_cancel",
+    );
+    assert.equal(cancel.args.id, generationJob().id);
+    assert.equal(cancel.args.revision, generationJob().revision);
+    assert.match(
+      screen.getByTestId("wiki-generation-canceled").textContent,
+      /interrupted before publication/,
+    );
+    assert.match(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generation: canceled/,
+    );
+    assert.doesNotMatch(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generating Wiki…/,
+    );
+    assert.equal(
+      screen.getByTestId("wiki-generate-mirror").disabled,
+      false,
+      "a terminal canceled draft permits a new Generate",
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a terminal canceled generation stays visible and permits Generate", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: canceledGenerationJob(),
+    openDetail: false,
+  });
+  try {
+    await waitFor(() => screen.getByTestId("wiki-generation-canceled"));
+    assert.equal(screen.queryByRole("button", { name: "Cancel job" }), null);
+    assert.equal(screen.queryByRole("button", { name: "Reconcile" }), null);
+    assert.equal(screen.getByTestId("wiki-generate-crew").disabled, false);
   } finally {
     mounted.dispose();
   }

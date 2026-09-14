@@ -210,7 +210,19 @@ function shouldKeepCurrent(
       (current.operationRevision ?? 0) >= (incoming.operationRevision ?? 0)
     );
   }
-  return current.status === "generating";
+  // The optimistic pre-prepare marker has no durable identity. A poll that
+  // started after that marker must ignore an older reconciled row, which can
+  // still be returned before native reserves the new claim, while adopting a
+  // new unresolved row so its operation ID (and Cancel action) becomes
+  // visible. The changedSinceRead branch above still retains this marker for
+  // a list that began before prepare created the row.
+  if (!current.operationId && incoming.operationId) {
+    return current.status === "generating" && Boolean(incoming.reconciled);
+  }
+  // A durable in-flight operation remains authoritative over a poll for a
+  // different operation. Explicit recovery/regeneration callbacks replace it
+  // through setWikiJob, where their identity fence is stronger.
+  return Boolean(current.operationId) && current.status === "generating";
 }
 
 export function subscribeWikiJobs(listener: () => void): () => void {
