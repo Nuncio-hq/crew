@@ -956,7 +956,7 @@ for (const scenario of [
             .__DELETE_EFFECTS__ ?? [],
       );
     if (scenario === "offline") {
-      await expect.poll(effects).toEqual(["delete", "remove-member"]);
+      await expect.poll(effects).toEqual(["delete"]);
       await expect(page.getByTestId("user-profile-panel")).toHaveCount(0);
     } else {
       await expect.poll(effects).toEqual(["shutdown"]);
@@ -971,9 +971,7 @@ for (const scenario of [
       });
       await page.getByTestId("user-profile-delete-agent-row").click();
       await page.getByTestId("agent-delete-confirm-action").click();
-      await expect
-        .poll(effects)
-        .toEqual(["shutdown", "shutdown", "delete", "remove-member"]);
+      await expect.poll(effects).toEqual(["shutdown", "shutdown", "delete"]);
       await expect(page.getByTestId("user-profile-panel")).toHaveCount(0);
     }
   });

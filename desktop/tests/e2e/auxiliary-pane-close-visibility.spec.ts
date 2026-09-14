@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
-import { installMockBridge } from "../helpers/bridge";
+import { installMockBridge, openChannelBrowser } from "../helpers/bridge";
 
 type MockMessageWindow = Window & {
   __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
@@ -53,7 +53,13 @@ test.describe("auxiliary pane close visibility", () => {
   }) => {
     await installMockBridge(page);
     await page.goto("/");
-    await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+    await openChannelBrowser(page);
+    await expect(page.getByTestId("channel-browser-dialog")).toBeVisible();
+    await page
+      .getByTestId(`browse-channel-${CHANNEL_NAME}`)
+      .getByRole("button")
+      .first()
+      .click();
     await expect(page.getByTestId("chat-title")).toHaveText(CHANNEL_NAME);
     await waitForMockLiveSubscription(page, CHANNEL_NAME);
 
