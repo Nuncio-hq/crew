@@ -13,6 +13,7 @@ BEGIN
         FROM pg_class c
         WHERE c.oid = 'events'::regclass
            OR c.oid IN (SELECT inhrelid FROM pg_inherits WHERE inhparent = 'events'::regclass)
+        ORDER BY (c.oid = 'events'::regclass) DESC, c.oid
     LOOP
         EXECUTE format('DROP TRIGGER IF EXISTS contact_classify_original_v1 ON %s', relation_name);
         EXECUTE format('DROP TRIGGER IF EXISTS contact_guard_original_v1 ON %s', relation_name);
