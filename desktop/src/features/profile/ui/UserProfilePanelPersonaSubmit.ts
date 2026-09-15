@@ -11,14 +11,21 @@ import type {
   UpdatePersonaInput,
 } from "@/shared/api/types";
 
+export type ProfilePersonaSubmitOptions = {
+  /** Explicit instance binding selected in the definition dialog. */
+  hermesProfile?: string | null;
+};
+
 type SubmitProfilePersonaDialogOptions = {
   createManagedAgentForPersona: (
     persona: AgentPersona,
+    options?: ProfilePersonaSubmitOptions,
   ) => Promise<CreateManagedAgentResponse>;
   createPersona: (input: CreatePersonaInput) => Promise<AgentPersona>;
   input: CreatePersonaInput | UpdatePersonaInput;
   managedAgent: ManagedAgent | undefined;
   onDone: () => void;
+  options?: ProfilePersonaSubmitOptions;
   previousPersona?: AgentPersona;
   runtimes?: readonly AcpRuntimeCatalogEntry[];
   updateManagedAgent: (
@@ -69,6 +76,7 @@ export async function submitProfilePersonaDialog({
   input,
   managedAgent,
   onDone,
+  options,
   previousPersona,
   runtimes,
   updateManagedAgent,
@@ -90,6 +98,7 @@ export async function submitProfilePersonaDialog({
       const persona = await updatePersona(input);
       const agentUpdate = managedAgent
         ? personaManagedAgentUpdate(managedAgent, persona, {
+            hermesProfile: options?.hermesProfile,
             previousPersona,
             runtimes,
           })
@@ -104,7 +113,7 @@ export async function submitProfilePersonaDialog({
     } else {
       const persona = await createPersona(input);
       try {
-        const created = await createManagedAgentForPersona(persona);
+        const created = await createManagedAgentForPersona(persona, options);
         if (created.spawnError) {
           toast.error(
             `${persona.displayName} was created, but it did not start: ${created.spawnError}`,

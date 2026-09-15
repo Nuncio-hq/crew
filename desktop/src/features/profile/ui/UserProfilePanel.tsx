@@ -68,7 +68,10 @@ import { AgentConfigurationFocusedView } from "@/features/profile/ui/UserProfile
 import { UserProfileAgentSettingsMenuSlot } from "@/features/profile/ui/UserProfileAgentActions";
 import { useProfileAgentDeletion } from "@/features/profile/ui/UserProfilePanelDeletion";
 import { useProfileFieldBuckets } from "@/features/profile/ui/UserProfilePanelFields";
-import { submitProfilePersonaDialog } from "@/features/profile/ui/UserProfilePanelPersonaSubmit";
+import {
+  submitProfilePersonaDialog,
+  type ProfilePersonaSubmitOptions,
+} from "@/features/profile/ui/UserProfilePanelPersonaSubmit";
 import {
   type CardMintTarget,
   UserProfilePersonaDialogs,
@@ -422,7 +425,10 @@ export function UserProfilePanel({
     });
 
   const createManagedAgentForPersona = React.useCallback(
-    async (personaToStart: AgentPersona) => {
+    async (
+      personaToStart: AgentPersona,
+      options?: ProfilePersonaSubmitOptions,
+    ) => {
       const runtimes = await availableRuntimesForStart(availableRuntimesQuery);
       const { runtime, warnings } = resolveStartRuntimeForDefinition(
         personaToStart,
@@ -438,6 +444,8 @@ export function UserProfilePanel({
         personaToStart,
         runtime,
       );
+      const profile = options?.hermesProfile?.trim();
+      if (profile) input.hermesProfile = profile;
 
       const created = await createAgentMutation.mutateAsync(input);
       void managedAgentsQuery.refetch();
@@ -515,7 +523,10 @@ export function UserProfilePanel({
     });
 
   const handleSubmitPersona = React.useCallback(
-    async (input: CreatePersonaInput | UpdatePersonaInput) => {
+    async (
+      input: CreatePersonaInput | UpdatePersonaInput,
+      options?: ProfilePersonaSubmitOptions,
+    ) => {
       await submitProfilePersonaDialog({
         createManagedAgentForPersona,
         createPersona: createPersonaMutation.mutateAsync,
@@ -525,6 +536,7 @@ export function UserProfilePanel({
           setPersonaDialogState(null);
           void personasQuery.refetch();
         },
+        options,
         previousPersona: resolvedPersona,
         runtimes: acpRuntimesQuery.data ?? [],
         updateManagedAgent: updateManagedAgentMutation.mutateAsync,
