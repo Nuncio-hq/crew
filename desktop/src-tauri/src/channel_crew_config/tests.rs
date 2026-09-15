@@ -451,17 +451,29 @@ async fn channel_crew_recovery_announcement_failure_stays_durable_and_bounded() 
     );
     let sends = fixture.sends.lock().unwrap().clone();
     assert_eq!(sends.first(), Some(&expected.canvas.id.to_hex()));
+    assert!(
+        sends.len() >= 2,
+        "manual retry must publish the announcement"
+    );
     assert!(sends
         .iter()
         .skip(1)
         .all(|id| id == &expected.announcement.id.to_hex()));
-    let canvas_ids = fixture
-        .events
-        .lock()
-        .unwrap()
+    let events = fixture.events.lock().unwrap().clone();
+    let canvas_ids = events
         .iter()
         .filter(|event| event.kind.as_u16() == 40100)
         .map(|event| event.id.to_hex())
         .collect::<Vec<_>>();
     assert_eq!(canvas_ids, vec![expected.canvas.id.to_hex()]);
+    let announcement_ids = events
+        .iter()
+        .filter(|event| event.kind.as_u16() == 9)
+        .map(|event| event.id.to_hex())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        announcement_ids,
+        vec![expected.announcement.id.to_hex()],
+        "manual retry must persist the original announcement ID",
+    );
 }
