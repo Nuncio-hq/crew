@@ -806,6 +806,10 @@ send cannot retroactively turn that attempt into `not_attempted`.
 
 The source-stage Activity run picker uses existing live observer session/turn
 identities and captures the native owner token before enabling selection.
+A turn may start before its runtime session exists. A later `session_resolved`
+frame fills an empty session identity only for the same active agent, channel,
+conversation and turn; it never replaces an already bound session. The live-run
+projection is invalidated when that identity becomes available.
 No run is selected implicitly. Ending or replacing a selected run retains its
 identity as unavailable rather than targeting its successor. Stop requires the
 same current channel/conversation/session/turn and target ownership at click;

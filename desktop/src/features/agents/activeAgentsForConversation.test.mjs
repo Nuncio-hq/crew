@@ -152,3 +152,82 @@ test("getActiveTurnSummariesForConversation cache invalidates on turn end", () =
   assert.notEqual(before, after);
   assert.deepEqual(after, []);
 });
+
+test("session resolution backfills the run identity after turn start", () => {
+  // The harness emits turn_started before session creation completes. The
+  // later session_resolved event carries the exact session for this turn.
+  syncAgentTurnsFromEvents("agent-a", [
+    started("thread-a", "turn-a", {
+      sessionId: null,
+      timestamp: "2026-07-31T00:00:00.000Z",
+    }),
+  ]);
+  const pending = getActiveTurnSummariesForConversation("thread-a");
+  assert.deepEqual(pending[0]?.runs, []);
+  syncAgentTurnsFromEvents("agent-a", [
+    started("thread-a", "turn-a", {
+      seq: 2,
+      kind: "session_resolved",
+      sessionId: "session-a",
+      timestamp: "2026-07-31T00:00:01.000Z",
+      payload: { sessionId: "session-a" },
+    }),
+  ]);
+
+  assert.deepEqual(getActiveTurnSummariesForConversation("thread-a")[0]?.runs, [
+    {
+      sessionId: "session-a",
+      turnId: "turn-a",
+      triggeringEventIds: [],
+    },
+  ]);
+});
+
+test("session backfill never crosses scope or retargets a resolved turn", () => {
+  syncAgentTurnsFromEvents("agent-a", [
+    started("thread-a", "turn-a", { sessionId: null }),
+    started("thread-a", "turn-b", {
+      seq: 2,
+      sessionId: "session-b",
+      timestamp: "2026-07-31T00:00:01.000Z",
+    }),
+    started("thread-b", "turn-other", {
+      seq: 3,
+      sessionId: "session-other",
+      timestamp: "2026-07-31T00:00:02.000Z",
+    }),
+  ]);
+
+  syncAgentTurnsFromEvents("agent-a", [
+    started("thread-b", "turn-a", {
+      seq: 4,
+      channelId: "channel-b",
+      kind: "session_resolved",
+      sessionId: "session-wrong-scope",
+      timestamp: "2026-07-31T00:00:03.000Z",
+      payload: { sessionId: "session-wrong-scope" },
+    }),
+    started("thread-a", "turn-b", {
+      seq: 5,
+      kind: "session_resolved",
+      sessionId: "session-replaced",
+      timestamp: "2026-07-31T00:00:04.000Z",
+      payload: { sessionId: "session-replaced" },
+    }),
+  ]);
+
+  assert.deepEqual(getActiveTurnSummariesForConversation("thread-a")[0]?.runs, [
+    {
+      sessionId: "session-b",
+      turnId: "turn-b",
+      triggeringEventIds: [],
+    },
+  ]);
+  assert.deepEqual(getActiveTurnSummariesForConversation("thread-b")[0]?.runs, [
+    {
+      sessionId: "session-other",
+      turnId: "turn-other",
+      triggeringEventIds: [],
+    },
+  ]);
+});

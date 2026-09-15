@@ -1177,6 +1177,12 @@ the native command and encrypted transport against a bounded loopback receiver; 
 The shared transport's existing tests also remain required and unchanged.
 
 
+`activeAgentsForConversation.test.mjs` exercises the real observer store and
+live-run projection with `turn_started` before `session_resolved`, matching the
+installed harness ordering. It verifies late session binding and rejects
+cross-scope or already-bound-session replacement. This supplements the mocked
+Activity controls below; a store projection pass is not native UI proof.
+
 `ThreadSelectedRunControls.test.mjs` binds the real component and correlated
 outcome helper, including same-tick duplicate claims, ownership refresh versus
 revocation, exact turn/request results, stale completion, and unknown delivery.
