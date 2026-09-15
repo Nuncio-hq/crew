@@ -360,8 +360,9 @@ different role moves that agent, and removing an in-use role requires explicit
 reference cleanup.
 The existing raw `set_canvas` command remains a separate review/edit path without
 an expected-head guard. Existing ACP sessions keep their cached canvas until
-explicit restart; configuration saves do not hot-refresh those sessions. Full
-#350 relay and fresh/existing session acceptance remains outstanding.
+explicit restart; configuration saves do not hot-refresh those sessions. The
+current candidate has technical native-UI and fresh/existing session-comparison
+evidence for #350. Founder acceptance and release #357 remain separate gates.
 
 The v0.6 prototype management flow reuses the canvas distinction between role definitions and holder assignments, including unassigned definitions. Its agent add/edit design maps to managed-agent create/update and Hermes profile discovery: Hermes binds a profile without editing its model. Optional initial channel joins are a separate lifecycle with acknowledgement/recovery, not an assumed atomic create. Git metadata maps to worktree registry/details and thread GitHub/forge projections; local changes against HEAD and PR changes against the base revision must remain distinct. These prototype flows are not connected to the commands yet.
 
