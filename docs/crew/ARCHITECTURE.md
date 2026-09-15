@@ -265,6 +265,10 @@ latency: baseline/candidate timing and real-data screenshots await #348/#338.
 Validated receipts already match the exact agent, triggering event, session
 and turn when projecting a healthy thread's Ready to review badge. This is
 distinct from observer-driven live control targets and founder acceptance.
+Receipt-backed UI subscriptions observe the store's stable generation before
+deriving aggregate review state. A receipt may arrive while its turn is still
+active; an unchanged store must not produce a new external-store snapshot on
+every read and cause a render loop in the channel's thread summary.
 Error, disconnected and stalled attention retain their existing precedence.
 During harness finalization, a task record can outlive its control receiver.
 Cancel and model-switch report a sent signal only when the receiver accepts

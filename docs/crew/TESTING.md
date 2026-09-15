@@ -1187,6 +1187,12 @@ installed harness ordering. It verifies late session binding and rejects
 cross-scope or already-bound-session replacement. This supplements the mocked
 Activity controls below; a store projection pass is not native UI proof.
 
+`agentReceiptStore.snapshot.test.mjs` mounts the production thread status chip
+and delivers a matching receipt before the active turn completes. It guards
+against unstable external-store snapshots causing a render loop; the receipt
+store suites separately cover run authority and aggregated review state. This
+is a React regression check, not installed workflow acceptance.
+
 `ThreadSelectedRunControls.test.mjs` binds the real component and correlated
 outcome helper, including same-tick duplicate claims, ownership refresh versus
 revocation, exact turn/request results, stale completion, and unknown delivery.
