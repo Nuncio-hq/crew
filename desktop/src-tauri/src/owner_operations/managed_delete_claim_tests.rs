@@ -157,6 +157,46 @@ fn unresolved_delete_claim_is_global_across_communities() {
 }
 
 #[test]
+fn local_managed_agent_delete_accepts_unpinned_relay_fence() {
+    let (_dir, mut store) = fixture();
+    let pubkey = "a".repeat(64);
+    let mut operation = request(&pubkey);
+    operation.payload["fence"]["relay_url"] = json!("");
+
+    assert!(matches!(
+        store.create(&scope('a', "https://one.example"), operation, 1),
+        Ok(CreateResult::Created(_))
+    ));
+}
+
+#[test]
+fn persona_delete_accepts_unpinned_relay_fences_for_local_agents() {
+    let (_dir, mut store) = fixture();
+    let pubkey = "b".repeat(64);
+    let mut operations = cascade_batch(&pubkey, "persona-unpinned-relay");
+    for operation in &mut operations {
+        operation.payload["fence"]["relay_url"] = json!("");
+        if let Some(targets) = operation
+            .payload
+            .get_mut("cascade")
+            .and_then(|cascade| cascade.get_mut("targets"))
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for target in targets {
+                target["fence"]["relay_url"] = json!("");
+            }
+        }
+    }
+
+    let operations = store
+        .create_managed_agent_delete_batch(&scope('a', "https://one.example"), operations, 1)
+        .unwrap_or_else(|error| {
+            panic!("local persona deletion should accept unpinned relay fences: {error:?}")
+        });
+    assert_eq!(operations.len(), 2);
+}
+
+#[test]
 fn malformed_global_claim_fails_closed() {
     let (dir, mut store) = fixture();
     let pubkey = "c".repeat(64);

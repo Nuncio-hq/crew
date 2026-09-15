@@ -181,7 +181,6 @@ fn validate_cascade(
             || target.fence.name.len() > 256
             || target.fence.created_at.is_empty()
             || target.fence.created_at.len() > 256
-            || target.fence.relay_url.is_empty()
             || target.fence.relay_url.len() > 2048
             || target
                 .fence
@@ -255,7 +254,6 @@ pub(crate) fn validate_record(operation: &Operation) -> Result<(), StoreError> {
         || payload.fence.name.len() > 256
         || payload.fence.created_at.is_empty()
         || payload.fence.created_at.len() > 256
-        || payload.fence.relay_url.is_empty()
         || payload.fence.relay_url.len() > 2048
         || payload
             .fence
