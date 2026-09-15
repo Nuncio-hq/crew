@@ -231,6 +231,52 @@ async fn prune_with_no_broken_worktrees_succeeds() {
 }
 
 #[tokio::test]
+async fn metadata_lease_holder_refuses_prune_and_retry_removes_stale_registration() {
+    let fixture = Fixture::new();
+    let stale_worktree = fixture.managed_root.join("crew-bbbbbbbbbbbb");
+    git(
+        &fixture.repository,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "buzz/bbbbbbbbbbbb",
+            stale_worktree.to_str().expect("UTF-8"),
+            "HEAD",
+        ],
+    );
+    let stale_path = stale_worktree.to_string_lossy().into_owned();
+    fs::remove_dir_all(&stale_worktree).expect("remove stale checkout");
+    assert!(
+        git_output(&fixture.repository, &["worktree", "list", "--porcelain"]).contains(&stale_path),
+        "fixture must retain a prunable registration"
+    );
+
+    let metadata_lease =
+        buzz_worktree::try_acquire_repository_metadata(&fixture.common_git).expect("metadata");
+    let result = prune_project_worktrees(fixture.repo())
+        .await
+        .expect("busy prune returns a refusal");
+    assert_eq!(result.status, ThreadWorkspaceActionStatus::Refused);
+    assert!(result.message.to_lowercase().contains("metadata"));
+    assert!(result.message.to_lowercase().contains("try again"));
+    assert!(
+        git_output(&fixture.repository, &["worktree", "list", "--porcelain"]).contains(&stale_path),
+        "busy prune must preserve the stale registration"
+    );
+
+    drop(metadata_lease);
+    let result = prune_project_worktrees(fixture.repo())
+        .await
+        .expect("prune succeeds after release");
+    assert_eq!(result.status, ThreadWorkspaceActionStatus::Completed);
+    assert!(
+        !git_output(&fixture.repository, &["worktree", "list", "--porcelain"])
+            .contains(&stale_path)
+    );
+}
+
+#[tokio::test]
 async fn exclusive_lease_holder_refuses_eviction() {
     let fixture = Fixture::new();
     let shared =
@@ -352,6 +398,21 @@ fn git_status_porcelain(cwd: &std::path::Path) -> String {
         .output()
         .expect("status");
     assert!(output.status.success());
+    String::from_utf8(output.stdout).expect("utf8")
+}
+
+fn git_output(cwd: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .expect("git starts");
+    assert!(
+        output.status.success(),
+        "git failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8(output.stdout).expect("utf8")
 }
 

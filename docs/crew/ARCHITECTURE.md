@@ -177,6 +177,11 @@ own binding checks; a new path is not an instruction to mutate an active session
 Workspace preparation failures and missing/busy workspaces have explicit
 outcomes. The implementation lives in `thread_workspace/`, `pool.rs`, and
 `crates/buzz-worktree`; inspect those seams before altering isolation or cleanup.
+ACP preparation and native worktree removal/pruning share a cross-process
+metadata lease keyed by the canonical common Git directory. ACP waits at most
+five seconds before a retryable preparation failure; native cleanup reports
+contention before mutating Git state. Root/path authorization still applies,
+and independent thread turns run concurrently after preparation.
 Provider-specific behavior requires current verification, not inference from
 the original feasibility experiments.
 
@@ -493,12 +498,50 @@ compatible build rather than restoring a stale v1 database. See [the recovery
 runbook](TESTING.md#wiki-journal-v3-recovery) and
 [D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
+While the Wiki library is mounted, automatic refresh uses the same scoped
+native generation/publication path as manual Update. A single effect-owned
+timeout wakes the next eligible on-push debounce or daily/weekly deadline even
+when query data stays unchanged. Scope, repository, job or input changes and
+unmount cancel that timeout; unresolved durable claims still block new work.
+One library-owned Buzz live subscription listens for kind 30618 from the known
+repository owners or current relay self. Matching events only request a scoped
+native snapshot reread; event payloads never become generation authority.
+Subscription readiness and reconnect also reread, closing the initial history
+gap. Bursts coalesce, and an event arriving during a read forces a trailing
+read. Failures expose Retry live updates and pause cadence until recovery;
+they do not start a refresh loop. Leaving the library retires the listener.
+
+Initial Wiki generation reserves the existing Wiki publication claim before
+starting a runtime. Its tagged `generation_version: 1` payload has no signed
+pages and cannot enter the publication driver. A successful generation replaces
+that payload with the verified signed graph using the same operation ID and
+revision-checked update. Cancel settles the draft before signaling its temporary
+runtime; a late completion cannot overwrite the canceled row. The native recovery
+worker preserves a registered foreground generation and settles an interrupted
+one with an explicit error once its process is gone. Restart never launches a new
+runtime implicitly. This is a consumer payload extension within journal v3;
+older consumers reject the draft rather than publishing it. Generation failure
+or cancellation occurs before relay effects and releases the local claim so an
+explicit Generate can capture fresh source.
+
 #363 owns the installed-runtime generation seam and immutable Git/folder
-snapshot handoff. Native publication resolves an owner/community/repository
+snapshot handoff. The Wiki library and page header open a shared Generate/Update
+Wiki dialog with the linked source, installed runtime, and Wiki-only profile/model
+preference. Start saves that scoped preference before invoking native preparation;
+a failed save keeps the dialog open and starts no runtime. Cancel or Escape before
+Start dismisses the draft. Runtime labels load independently of opening the dialog,
+and catalog refreshes preserve an edited draft. The picker reuses Buzz's complete
+runtime catalog: Hermes uses its existing CLI availability; Codex requires an
+installed underlying CLI independently of ACP adapter readiness; Claude remains
+visible when its CLI is installed but is disabled for Wiki until compatibility is
+verified. Library navigation resolves the
+containing Project from the existing project query rather than using a repository
+ID as a project route. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
 caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
-profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Claude/Codex
-receive an explicit model selection. For Hermes Agent v0.21.2 (source HEAD
+profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Codex receives
+an optional model override, and a null model omits `--model` and
+requests the isolated runtime default. For Hermes Agent v0.21.2 (source HEAD
 `eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads profile dotenv,
 external secret sources, and managed dotenv before its startup guard reapplies
 safe mode; its `hermes_cli/oneshot.py` path still loads the selected profile
@@ -509,27 +552,66 @@ malformed/non-mapping config with a fixed error. It also rejects profile
 `HERMES_MANAGED_DIR`, invalid or ambiguous dotenv bytes, and every enabled
 external secret source. Accepted dotenv bytes remain unchanged, a missing
 `.env` is created empty, and `HERMES_MANAGED_DIR` is bound to a fresh empty
-directory under the disposable state root. Missing or failed runtime
-execution is a failed generation with no heuristic or HTTP fallback; the
-unsigned legacy preview remains deterministic for compatibility. The adapter's
-state, prompt input, stdout/stderr, deadline, and cancellation are bounded, and
+directory under the disposable state root. Each installed Hermes page request
+writes its native usage report inside that directory. Successful generation
+requires a completed API call and valid effective provider/model identifiers;
+values declared by the staged profile must match exactly, so a fallback cannot
+be reported as the selected model. Missing or failed runtime execution is a
+failed generation with no heuristic or HTTP fallback; the unsigned legacy
+preview remains deterministic for compatibility. The adapter's state, prompt
+input, stdout/stderr, telemetry, deadline, and cancellation are bounded, and
 selection is independent from employee sessions and recap settings. The source
-guard, config gate, and profile-binding boundary are covered by production
-seam tests in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
-they do not certify a native Hermes launch, provider/auth path,
-effective model, or installed tool isolation. The #363 installed-runtime
+guard, config gate, profile-binding, and effective-runtime boundary are covered
+by production seam tests in
+`desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
+they also bind the installed command builder to the shared native containment
+policy: macOS wraps the runtime in the fixed `sandbox-exec` process-fork denial,
+Windows retains the bounded runner's Job Object, and unsupported Unix platforms
+fail before disposable runtime setup. The fork-denial regression proves the
+production command builder denies the fixture fork, but these tests do
+not certify a native Hermes launch, provider/auth path, effective model, or full
+installed tool isolation; Claude Wiki generation remains deferred until its
+compatibility is verified. The #363 installed-runtime
 acceptance must run in the #348 staging environment; #348 owns that environment
 and #363 owns the runtime acceptance result. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
 selected page and bounded scroll position under the captured owner/community,
-parent Project, repository coordinate, and door; when a saved page is gone, it
-selects a surviving page and explains the fallback. Source file controls are
+parent Project, repository coordinate, and door. A publication refresh may
+replace signed page event IDs and V1 `p1-<hash>` address slugs. Navigation uses
+the signed `wiki-slug` logical name (legacy pages fall back to their address slug)
+to preserve selection across snapshots, while TOC links and source reads retain
+the exact publication address and event ID. When the saved logical name is gone,
+it selects a surviving page and
+explains the fallback. Arrow-key navigation belongs to focused TOC page buttons
+and moves focus with the selected page. Runtime dialogs, editable controls,
+modified keys, and composition retain their own keyboard behavior. Source file controls are
 fail-closed: they require a native grant in the current scope and an exact
 recorded page reference, and never open current checkout bytes or arbitrary
 line ranges when that evidence is unavailable. The source list and Markdown
 citations both open a dismissible verified-source pane; the pane hides the
 table of contents, returns focus to its activating control, and is scoped to
 the exact owner, repository, path, and line range recorded on the page.
+Native Update reads one verified prior publication and captures the new source
+once. Installed runtime output is normalized before publication: a complete
+Markdown-labelled outer fence is removed, while exact planned relative file
+links become verified `buzz://file` links to that captured file's full range.
+Markdown code spans and blocks remain literal, using the repository's Markdown
+parser to distinguish examples from navigation. Unknown files and external navigation remain rejected; empty output and output
+expanded beyond the runtime byte limit are not published. Terminal runtime errors
+are shown as failed generation; cancellation and interrupted recovery retain the
+canceled label and all terminal cases allow a fresh Generate. A no-op also requires
+identical section membership and logical page order.
+Detached Git snapshots match the absent branch tag emitted by the publisher;
+an attached/detached transition still invalidates reuse. It reuses a page body only when source hashes and membership, page/section
+metadata, language, source kind, branch, and the signed `wiki-steering-hash`
+match. The runtime is created lazily for changed pages; an unchanged snapshot
+makes no runtime calls and settles through the same durable generation claim.
+New publications sign the complete steering-file digest (or `absent`) on the
+TOC. Older heads without that digest regenerate once before reuse is possible.
+Removed pages are omitted from the new manifest; the previous complete Wiki
+remains readable until publication commits. Explicit recovery regeneration
+builds fresh pages without reuse.
+
 Native reads still require the selected root and live snapshot checks, and real
 cross-client acceptance remains a separate gate. Repository announcements bind
 their identity through signed kind 30617, author, and `d`; they need no self-`a`
@@ -742,3 +824,25 @@ and stale view completion cannot settle a newer request. Only a confirmed
 `not_attempted` publication unlocks retry; an unknown send remains unconfirmed.
 The transcript remains mounted alongside these controls. This source composition
 has Node proof; native batch, full CI, review and staging acceptance remain gates.
+
+## Installed Wiki runtime authentication (#363)
+
+The installed Wiki adapter uses disposable runtime state and hands off only
+the existing subscription access credential. Hermes authentication remains
+owned by its selected staged profile. Claude reads the current user's native
+Keychain entry (`Claude Code-credentials`) through the stable `/usr/bin/security`
+helper, with a five-second deadline, cancellation, and bounded captured streams.
+Captured credential output is never logged. Only the unexpired access token is
+passed in the child environment; the refresh token is never copied. Codex disables
+shell execution/snapshots, agent delegation, image tools and web search in the
+disposable invocation. Installed CLI request capture verifies the advertised
+tool catalog separately from generation or native acceptance. Codex reads
+the host `CODEX_HOME/auth.json` and writes a private child file containing the
+access, identity, account, and exact `last_refresh` fields plus the parser
+required empty refresh field; API keys and refresh tokens are omitted. Missing,
+malformed, oversized, or expired credentials fail before launch. The child
+configs use fresh state and no user settings. Claude uses restricted mode,
+strict MCP config, and an empty tool list; Codex retains read-only sandboxing
+and explicit shell feature disables. These flags are launch controls, not proof
+of Codex snapshot-only or complete tool isolation; installed generation and
+credential renewal remain acceptance requirements.

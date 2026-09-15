@@ -26,7 +26,7 @@ const stubs = new Map([
   ],
   [
     "@/features/wiki/lib/wikiStore",
-    "export const activateWikiJobScope = () => true; export const getWikiJobs = () => new Map(); export const setWikiJobScope = () => {}; export const setWikiJob = job => globalThis.wikiTest.jobs.push(job);",
+    "export const activateWikiJobScope = () => true; export const getWikiJobs = () => globalThis.wikiTest.currentJobs; export const setWikiJobScope = () => {}; export const setWikiJob = job => { globalThis.wikiTest.jobs.push(job); globalThis.wikiTest.currentJobs.set(job.repoKey, job); };",
   ],
 ]);
 
@@ -88,6 +88,7 @@ function fixture({ prepare, dispatch, dispatchError } = {}) {
   const state = {
     expected,
     jobs: [],
+    currentJobs: new Map(),
     calls: [],
     invalidations: 0,
     query: {
@@ -186,6 +187,65 @@ test("prepare failure leaves the production job failed and never dispatches", as
   );
   assert.equal(state.jobs.at(-1).status, "failed");
   assert.equal(state.jobs.at(-1).error, "source workspace is unavailable");
+});
+
+test("a prepare error does not overwrite a newer canceled generation row", async () => {
+  const state = fixture();
+  const terminal = {
+    ...job({
+      status: "canceled",
+      reconciled: true,
+      revision: 1,
+      progress: "generation",
+      snapshotId: "",
+      sourceRevision: "",
+      pages: 0,
+      lastError: "Wiki generation was interrupted before publication.",
+    }),
+  };
+  state.invoke = async (command, args) => {
+    if (command === "owner_operation_scope") return state.expected;
+    state.calls.push({ command, args });
+    if (command === "wiki_publication_prepare") {
+      // Model a status poll that won the race after native canceled the draft
+      // but before the foreground prepare call surfaced its error.
+      state.currentJobs.set(repoKey, {
+        repoKey,
+        scope: expected,
+        operationId: terminal.id,
+        operationRevision: terminal.revision,
+        nativeStatus: terminal.status,
+        reconciled: terminal.reconciled,
+        phase: terminal.progress,
+        status: "idle",
+        done: 0,
+        total: 0,
+        error: terminal.lastError,
+        costNote: "Native governed Wiki publication",
+      });
+      throw new Error("source workspace was interrupted");
+    }
+    throw new Error("unexpected dispatch");
+  };
+
+  await assert.rejects(
+    useWikiGenerate().mutationFn(input),
+    /source workspace was interrupted/,
+  );
+
+  const current = state.currentJobs.get(repoKey);
+  assert.equal(current.nativeStatus, "canceled");
+  assert.equal(current.reconciled, true);
+  assert.equal(current.status, "idle");
+  assert.equal(
+    current.error,
+    "Wiki generation was interrupted before publication.",
+  );
+  assert.equal(
+    state.jobs.at(-1).status,
+    "generating",
+    "the prepare error must not append a failed projection over the terminal poll",
+  );
 });
 
 test("dispatch errors remain visible after the durable prepare succeeds", async () => {
@@ -338,4 +398,23 @@ test("typed immutable-retired proof remains visible for explicit regeneration", 
   assert.equal(projected?.operationId, job().id);
   assert.equal(projected?.operationRevision, job().revision);
   assert.equal(projected?.reconciled, false);
+});
+
+test("native generation projection carries phase and unknown page totals", () => {
+  const projected = wikiPublicationJobState(
+    job({
+      status: "preparing",
+      reconciled: false,
+      snapshotId: "",
+      sourceRevision: "",
+      pages: 0,
+      progress: "generation",
+    }),
+    expected,
+  );
+
+  assert.equal(projected?.phase, "generation");
+  assert.equal(projected?.done, 0);
+  assert.equal(projected?.total, 0);
+  assert.equal(projected?.status, "generating");
 });

@@ -2,6 +2,9 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { setTerminalPanelMode } from "@/features/terminal/terminalPanelStore";
 import {
   wikiCanCancelRecovery,
+  isFailedWikiGeneration,
+  isCanceledWikiGeneration,
+  wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
   wikiRecoveryAffordance,
   type WikiFreshness,
@@ -19,6 +22,8 @@ export function WikiRepoCard({
   name,
   owner,
   repoD,
+  repoPath,
+  branch,
   description,
   freshness,
   generating,
@@ -26,6 +31,7 @@ export function WikiRepoCard({
   probe,
   readStatus,
   onOpen,
+  onManageWorkspace,
   onGenerate,
   onRetry,
   onRecoveryRetry,
@@ -39,6 +45,8 @@ export function WikiRepoCard({
   name: string;
   owner: string;
   repoD: string;
+  repoPath?: string | null;
+  branch?: string | null;
   description?: string;
   freshness: WikiFreshness | "generating" | "failed";
   generating?: WikiJobState;
@@ -46,6 +54,8 @@ export function WikiRepoCard({
   probe?: WikiRepoProbe;
   readStatus?: WikiRepositoryReadStatus;
   onOpen: () => void;
+  /** Open the containing Project's workspace management surface. */
+  onManageWorkspace?: () => void;
   onGenerate?: () => void;
   onRetry?: () => void;
   onRecoveryRetry?: () => void;
@@ -76,6 +86,8 @@ export function WikiRepoCard({
       : null;
   const canReconcile = affordance !== "none" && Boolean(onRecoveryReconcile);
   const canRegenerate = affordance === "regenerate" && Boolean(onRegenerate);
+  const canceledGeneration = isCanceledWikiGeneration(generating);
+  const failedGeneration = isFailedWikiGeneration(generating);
   // The failure banner offers the durable publication action when there is
   // one. A durable row whose only way forward is Regenerate must not offer a
   // plain "Retry" here: the unique native claim blocks a fresh Generate, and
@@ -83,9 +95,7 @@ export function WikiRepoCard({
   const failedAction =
     onRecoveryRetry && publicationAction
       ? { label: publicationAction, run: onRecoveryRetry }
-      : !durable && onGenerate
-        ? { label: "Retry", run: onGenerate }
-        : null;
+      : null;
   return (
     <div
       className="rounded-xl border border-border bg-card p-4"
@@ -140,31 +150,42 @@ export function WikiRepoCard({
           </p>
         ) : null}
         {missingLocalCopy ? (
-          <p
-            className="text-2xs text-muted-foreground"
-            data-testid="wiki-missing-local"
-          >
-            {missingLocalCopy}
-          </p>
+          <div data-testid="wiki-missing-local">
+            <p className="text-2xs text-muted-foreground">{missingLocalCopy}</p>
+            {onManageWorkspace ? (
+              <button
+                className="mt-2 rounded-md border border-input bg-card px-2 py-1 text-2xs text-foreground"
+                data-testid={`wiki-manage-workspace-${name}`}
+                onClick={onManageWorkspace}
+                type="button"
+              >
+                Manage workspace
+              </button>
+            ) : null}
+          </div>
         ) : null}
-        {onGenerate && operationScope ? (
+        {!emptyRepo && onGenerate && operationScope ? (
           <div className="mb-2">
             <WikiRuntimeSettingsControl
               expected={operationScope}
               owner={owner}
               repoD={repoD}
+              generation={{
+                repoName: name,
+                repoPath,
+                branch,
+                hasPages: updatedAt !== null,
+                pending:
+                  freshness === "generating" ||
+                  (durable && !generating?.reconciled),
+                testId:
+                  freshness === "stale"
+                    ? `wiki-regenerate-${name}`
+                    : `wiki-generate-${name}`,
+                onStart: onGenerate,
+              }}
             />
           </div>
-        ) : null}
-        {!emptyRepo && freshness === "never" && onGenerate ? (
-          <button
-            className="rounded-md bg-primary px-2 py-1 text-2xs text-primary-foreground"
-            data-testid={`wiki-generate-${name}`}
-            onClick={onGenerate}
-            type="button"
-          >
-            Generate wiki
-          </button>
         ) : null}
         {freshness === "generating" ? (
           <div
@@ -175,11 +196,31 @@ export function WikiRepoCard({
               ? "The previous immutable snapshot is retired. Choose Regenerate from source to create a new snapshot."
               : affordance === "resume"
                 ? "Publication was canceled with an unresolved attempt. Resume publication to submit the saved snapshot, or Reconcile to check it."
-                : `Generating… ${generating?.done ?? 0}/${generating?.total ?? 0} pages`}
+                : wikiGenerationStatusLabel(generating)}
             {generating?.costNote ? (
               <div className="mt-1">{generating.costNote}</div>
             ) : null}
           </div>
+        ) : null}
+        {canceledGeneration ? (
+          <p
+            className="text-2xs text-attention"
+            data-testid="wiki-generation-canceled"
+            role="status"
+          >
+            {generating?.error ??
+              "Wiki generation was canceled before publication. Generate again from source."}
+          </p>
+        ) : null}
+        {failedGeneration ? (
+          <p
+            className="text-2xs text-destructive"
+            data-testid="wiki-generation-failed"
+            role="alert"
+          >
+            {generating?.error ??
+              "Wiki generation failed before publication. Generate again from source."}
+          </p>
         ) : null}
         {freshness === "fresh" && updatedAt ? (
           <div className="text-2xs text-muted-foreground">
@@ -193,16 +234,6 @@ export function WikiRepoCard({
           >
             Freshness unavailable
           </div>
-        ) : null}
-        {freshness === "stale" && onGenerate ? (
-          <button
-            className="rounded-md bg-attention/20 px-2 py-1 text-2xs text-attention"
-            data-testid={`wiki-regenerate-${name}`}
-            onClick={onGenerate}
-            type="button"
-          >
-            Stale · Regenerate
-          </button>
         ) : null}
         {freshness === "failed" ? (
           <div data-testid="wiki-failed">
@@ -238,8 +269,15 @@ export function WikiRepoCard({
             data-testid="wiki-recovery-controls"
           >
             <p className="mb-2 text-muted-foreground">
-              Native recovery: {generating?.nativeStatus ?? "pending"}
-              {generating?.attempts !== undefined
+              {generating?.phase === "generation"
+                ? "Native generation"
+                : "Native recovery"}
+              :{" "}
+              {failedGeneration
+                ? "failed"
+                : (generating?.nativeStatus ?? "pending")}
+              {generating?.phase !== "generation" &&
+              generating?.attempts !== undefined
                 ? ` · ${generating.attempts}/5 attempts`
                 : ""}
             </p>

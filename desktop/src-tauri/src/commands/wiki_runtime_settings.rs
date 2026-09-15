@@ -103,11 +103,11 @@ fn load_from_path(
     {
         return Err("Wiki runtime settings belong to a different scope.".into());
     }
-    stored
+    let selection = stored
         .selection
-        .validate()
+        .normalized()
         .map_err(|error| format!("Stored Wiki runtime selection is invalid: {error}"))?;
-    Ok(Some(stored.selection))
+    Ok(Some(selection))
 }
 
 fn write_to_path(
@@ -116,12 +116,16 @@ fn write_to_path(
     coordinate: &str,
     selection: &WikiRuntimeSelection,
 ) -> Result<(), String> {
+    let selection = selection
+        .clone()
+        .normalized()
+        .map_err(|error| format!("Invalid Wiki runtime selection: {error}"))?;
     let payload = serde_json::to_vec_pretty(&StoredWikiRuntimeSelection {
         version: SETTINGS_VERSION,
         owner: expected.scope.owner.clone(),
         community: expected.scope.community.clone(),
         coordinate: coordinate.to_owned(),
-        selection: selection.clone(),
+        selection,
     })
     .map_err(|_| "Wiki runtime settings could not be encoded.".to_string())?;
     if payload.len() as u64 > SETTINGS_BYTES_LIMIT {
@@ -147,8 +151,8 @@ pub(crate) async fn resolve_wiki_runtime_selection<R: Runtime>(
     validate_coordinate(expected, coordinate)?;
     assert_current(app.clone(), expected).await?;
     if let Some(selection) = supplied {
-        selection
-            .validate()
+        let selection = selection
+            .normalized()
             .map_err(|error| format!("Invalid Wiki runtime selection: {error}"))?;
         return Ok(selection);
     }
@@ -200,8 +204,8 @@ pub(crate) async fn wiki_runtime_settings_set<R: Runtime>(
     selection: WikiRuntimeSelection,
 ) -> Result<ScopedOperationResult<WikiRuntimeSelection>, String> {
     validate_coordinate(&expected, &coordinate)?;
-    selection
-        .validate()
+    let selection = selection
+        .normalized()
         .map_err(|error| format!("Invalid Wiki runtime selection: {error}"))?;
     assert_current(app.clone(), &expected).await?;
     let path = settings_path(&app, &expected, &coordinate)?;
@@ -286,5 +290,28 @@ mod tests {
             Some(selection)
         );
         assert!(load_from_path(&path, &second, &coordinate).is_err());
+    }
+
+    #[test]
+    fn blank_model_is_persisted_as_null_and_reloaded_without_an_override() {
+        let scope = expected('a', "https://relay.example");
+        let coordinate = format!("30617:{}:repo", scope.scope.owner);
+        let selection = WikiRuntimeSelection {
+            runtime_id: "codex".into(),
+            model: Some(" \t ".into()),
+            profile: None,
+        };
+        let directory = tempfile::tempdir().expect("settings directory");
+        let path = directory.path().join("selection.json");
+        write_to_path(&path, &scope, &coordinate, &selection).expect("save");
+        let contents = std::fs::read_to_string(&path).expect("read");
+        assert!(contents.contains("\"model\": null"));
+        assert_eq!(
+            load_from_path(&path, &scope, &coordinate)
+                .expect("load")
+                .expect("stored selection")
+                .model,
+            None
+        );
     }
 }

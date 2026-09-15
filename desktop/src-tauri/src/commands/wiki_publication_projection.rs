@@ -31,6 +31,11 @@ fn job_from_operation_with_validation(
     operation: &Operation,
     verify_graph: bool,
 ) -> Result<WikiPublicationJob, String> {
+    if let Some(record) =
+        crate::commands::wiki_generation_record::WikiGenerationRecord::read(operation)?
+    {
+        return Ok(record.job(operation));
+    }
     let owner = nostr::PublicKey::from_hex(&operation.scope.owner)
         .map_err(|_| "Wiki publication owner is invalid.".to_string())?;
     let record: WikiPublicationRecord = serde_json::from_value(operation.payload.clone())

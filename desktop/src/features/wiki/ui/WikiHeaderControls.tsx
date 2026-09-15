@@ -3,9 +3,13 @@ import {
   useWikiSetCadence,
 } from "@/features/wiki/hooks/useWikiGenerate";
 import {
+  defaultBranchCommit,
   repoKey,
   wikiCanCancelRecovery,
   wikiFreshness,
+  isFailedWikiGeneration,
+  isCanceledWikiGeneration,
+  wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
   wikiRecoveryAffordance,
   type WikiCadence,
@@ -90,6 +94,15 @@ export function WikiHeaderControls({
     affordance === "retry" || affordance === "resume"
       ? wikiRecoveryActionLabel(affordance)
       : null;
+  const canceledGeneration = isCanceledWikiGeneration(recoveryJob);
+  const failedGeneration = isFailedWikiGeneration(recoveryJob);
+  // A prepare rejection can repeat the durable terminal message already
+  // rendered below. Keep one user-facing copy while preserving other errors.
+  const duplicateGenerationError =
+    (canceledGeneration || failedGeneration) &&
+    Boolean(recoveryJob?.error) &&
+    generateError === recoveryJob?.error;
+  const sourceBranch = defaultBranchCommit(repoState)?.branch ?? toc?.branch;
   return (
     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-2xs text-muted-foreground">
       <span
@@ -112,14 +125,7 @@ export function WikiHeaderControls({
                       ? "Never generated"
                       : "Freshness unavailable"}
       </span>
-      <span>⑂ {toc?.branch || "main"}</span>
-      {canGenerate ? (
-        <WikiRuntimeSettingsControl
-          expected={operationScope}
-          owner={owner}
-          repoD={repoD}
-        />
-      ) : null}
+      <span>⑂ {sourceBranch || "Snapshot"}</span>
       {showCadence && canEditOwner ? (
         <label className="flex items-center gap-1">
           Auto:
@@ -158,25 +164,33 @@ export function WikiHeaderControls({
         </label>
       ) : null}
       {canGenerate ? (
-        <button
-          className="rounded-md border border-input bg-card px-2 py-0.5 text-foreground"
-          data-testid="wiki-generate-mirror"
-          disabled={generate.isPending || setCadence.isPending}
-          onClick={() => {
-            if (!owner || !repoD || !operationScope) return;
-            generate.mutate({
-              owner,
-              repoD,
-              repoKey: repoKey(owner, repoD),
-              repoPath,
-              workspaceMode,
-              expectedScope: operationScope,
-            });
+        <WikiRuntimeSettingsControl
+          owner={owner}
+          repoD={repoD}
+          expected={operationScope}
+          generation={{
+            repoName: repoD ?? "Repository",
+            repoPath,
+            branch: workspaceMode === "folder" ? null : sourceBranch,
+            hasPages: Boolean(toc),
+            pending:
+              generate.isPending ||
+              setCadence.isPending ||
+              recoveryJob?.status === "generating",
+            testId: "wiki-generate-mirror",
+            onStart: () => {
+              if (!owner || !repoD || !operationScope) return;
+              generate.mutate({
+                owner,
+                repoD,
+                repoKey: repoKey(owner, repoD),
+                repoPath,
+                workspaceMode,
+                expectedScope: operationScope,
+              });
+            },
           }}
-          type="button"
-        >
-          {freshness === "stale" ? "Regenerate" : "Generate"}
-        </button>
+        />
       ) : null}
       {cadenceError ? (
         <span
@@ -187,7 +201,7 @@ export function WikiHeaderControls({
           {cadenceError}
         </span>
       ) : null}
-      {generateError ? (
+      {generateError && !duplicateGenerationError ? (
         <span
           className="text-destructive"
           data-testid="wiki-generate-error"
@@ -202,8 +216,30 @@ export function WikiHeaderControls({
           data-testid="wiki-recovery-header"
         >
           <span className="text-muted-foreground">
-            Recovery: {recoveryJob.nativeStatus ?? "pending"}
+            {recoveryJob.phase === "generation"
+              ? wikiGenerationStatusLabel(recoveryJob)
+              : `Recovery: ${recoveryJob.nativeStatus ?? "pending"}`}
           </span>
+          {canceledGeneration ? (
+            <span
+              className="text-attention"
+              data-testid="wiki-generation-canceled"
+              role="status"
+            >
+              {recoveryJob.error ??
+                "Wiki generation was canceled before publication. Generate again from source."}
+            </span>
+          ) : null}
+          {failedGeneration ? (
+            <span
+              className="text-destructive"
+              data-testid="wiki-generation-failed"
+              role="alert"
+            >
+              {recoveryJob.error ??
+                "Wiki generation failed before publication. Generate again from source."}
+            </span>
+          ) : null}
           {affordance === "regenerate" ? (
             <span className="text-attention">
               Immutable snapshot retired; regenerate from source.

@@ -9,6 +9,10 @@ export const WIKI_NO_LOCAL_CHECKOUT_COPY = "No local checkout found.";
 export const WIKI_GONE_FOLDER_COPY =
   "The Project folder is gone. Pick a workspace again.";
 
+/** Native prepare's durable missing-source error. */
+export const WIKI_MISSING_LOCAL_ERROR =
+  "Source workspace is missing or not a directory.";
+
 export type WikiRepoProbeKind =
   | "ok"
   | "empty-tree"
@@ -52,7 +56,9 @@ export function classifyWikiRepoProbe(input: {
   const unbound = isUnbound(input);
   const remoteLive = remoteHasDefaultBranch(input);
   const emptyJob = input.jobError === "empty-repo";
-  const missingJob = input.jobError === "missing-local-path";
+  const missingJob =
+    input.jobError === "missing-local-path" ||
+    input.jobError === WIKI_MISSING_LOCAL_ERROR;
 
   if (missingJob || (emptyJob && (unbound || remoteLive))) {
     if (unbound) {

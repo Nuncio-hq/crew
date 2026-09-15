@@ -22,23 +22,36 @@ import { JSDOM } from "jsdom";
 // recovery affordance and drags the whole app shell into the mount.
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === "@/shared/theme/ThemeProvider") {
+      return { shortCircuit: true, url: "buzz-wiki-stub:theme" };
+    }
     if (specifier === "@/app/navigation/useAppNavigation") {
       return { shortCircuit: true, url: "buzz-wiki-stub:useAppNavigation" };
     }
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
+    if (url === "buzz-wiki-stub:theme") {
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: "export const useTheme = () => ({ isDark: true });",
+      };
+    }
     if (url === "buzz-wiki-stub:useAppNavigation") {
       return {
         format: "module",
         shortCircuit: true,
         source:
-          "export const useAppNavigation = () => ({ goProject: () => {} });\n",
+          "export const useAppNavigation = () => ({ goProject: (id, behavior) => { globalThis.__wikiProjectVisits.push(id); globalThis.__wikiProjectVisitOptions.push(behavior ?? null); } });\n",
       };
     }
     return nextLoad(url, context);
   },
 });
+
+globalThis.__wikiProjectVisits = [];
+globalThis.__wikiProjectVisitOptions = [];
 
 const OWNER = "a".repeat(64);
 const COMMUNITY = "https://relay.example";
@@ -59,6 +72,12 @@ class NoopObserver {
 Object.assign(globalThis, {
   document: dom.window.document,
   HTMLElement: dom.window.HTMLElement,
+  Node: dom.window.Node,
+  NodeFilter: dom.window.NodeFilter,
+  HTMLInputElement: dom.window.HTMLInputElement,
+  MutationObserver: dom.window.MutationObserver,
+  CustomEvent: dom.window.CustomEvent,
+  getComputedStyle: dom.window.getComputedStyle,
   IS_REACT_ACT_ENVIRONMENT: true,
   localStorage: dom.window.localStorage,
   window: dom.window,
@@ -74,7 +93,7 @@ function scope() {
   };
 }
 
-function repository(localWorkspacePath) {
+function repository(localWorkspacePath, overrides = {}) {
   return {
     id: REPO_D,
     dtag: REPO_D,
@@ -92,6 +111,91 @@ function repository(localWorkspacePath) {
     defaultBranch: "main",
     repoAddress: `30617:${OWNER}:${REPO_D}`,
     channelId: null,
+    ...overrides,
+  };
+}
+
+function repoState(branch = "release") {
+  const commit = "b".repeat(40);
+  return {
+    id: "f".repeat(64),
+    pubkey: OWNER,
+    created_at: 2,
+    kind: 30618,
+    tags: [
+      ["d", REPO_D],
+      ["HEAD", `ref: refs/heads/${branch}`],
+      [`refs/heads/${branch}`, commit],
+    ],
+    content: "",
+    sig: "1".repeat(128),
+  };
+}
+
+function wikiPageEvent(id, slug, title, content) {
+  return {
+    id,
+    pubkey: OWNER,
+    created_at: 3,
+    kind: 30623,
+    content,
+    sig: "1".repeat(128),
+    tags: [
+      ["d", `${REPO_D}/${slug}`],
+      ["a", `30617:${OWNER}:${REPO_D}`],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", "snapshot-1"],
+      ["wiki-slug", slug],
+      ["title", title],
+      ["section", "overview"],
+      ["language", "en"],
+    ],
+  };
+}
+
+function completeWikiSnapshot() {
+  const intro = wikiPageEvent(
+    "1".repeat(64),
+    "intro",
+    "Introduction",
+    "Introduction body",
+  );
+  const runtime = wikiPageEvent(
+    "2".repeat(64),
+    "runtime",
+    "Runtime",
+    "Runtime body",
+  );
+  return {
+    state: "complete",
+    head: {
+      ...intro,
+      id: "3".repeat(64),
+      content: JSON.stringify({
+        sections: [
+          {
+            id: "overview",
+            title: "Overview",
+            pages: [
+              { slug: "intro", title: "Introduction" },
+              { slug: "runtime", title: "Runtime" },
+            ],
+          },
+        ],
+      }),
+      tags: [
+        ["d", `${REPO_D}/_toc`],
+        ["a", `30617:${OWNER}:${REPO_D}`],
+        ["wiki-version", "1"],
+        ["wiki-snapshot", "snapshot-1"],
+        ["commit", "b".repeat(40)],
+        ["branch", "main"],
+        ["cadence", "manual"],
+      ],
+    },
+    manifest: null,
+    pages: [intro, runtime],
+    repo_state: repoState("main"),
   };
 }
 
@@ -118,6 +222,74 @@ function retiredJob() {
     retiredDependencyId: RETIRED_DEPENDENCY,
     retryAt: 0,
     lastError: "Wiki immutable dependency retired.",
+  };
+}
+
+function generationJob() {
+  return {
+    id: "generation-operation",
+    revision: 0,
+    resourceKey: `30617:${OWNER}:${REPO_D}`,
+    status: "preparing",
+    reconciled: false,
+    snapshotId: "",
+    sourceRevision: "",
+    cadence: "manual",
+    pages: 0,
+    attempts: 0,
+    progress: "generation",
+    headAttempted: false,
+    cancelRequested: false,
+    reconcileOnly: false,
+    retiredDependencyId: null,
+    retryAt: 0,
+    lastError: null,
+  };
+}
+
+function canceledGenerationJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "canceled",
+    reconciled: true,
+    cancelRequested: true,
+    lastError: "Wiki generation was interrupted before publication.",
+  };
+}
+
+function failedGenerationJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "canceled",
+    reconciled: true,
+    cancelRequested: true,
+    lastError: "Wiki runtime returned invalid page output.",
+  };
+}
+
+function completedGenerationJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "completed",
+    reconciled: true,
+    snapshotId: "snapshot-1",
+    sourceRevision: `git:${"b".repeat(40)}`,
+    pages: 2,
+    progress: "head",
+  };
+}
+
+function missingSourceJob() {
+  return {
+    ...generationJob(),
+    revision: 1,
+    status: "canceled",
+    reconciled: true,
+    cancelRequested: true,
+    lastError: "Source workspace is missing or not a directory.",
   };
 }
 
@@ -150,27 +322,92 @@ after(() => dom.window.close());
  * navigate into its detail view. WikiRepoCard's onOpen is unconditional, so
  * the detail view is reachable without any real Wiki graph.
  */
-async function mountDetail(localWorkspacePath, calls) {
+async function mountDetail(localWorkspacePath, calls, options = {}) {
+  localStorage.removeItem("buzz.wiki.navigation.v1");
   const expected = scope();
   const originalFetchEvents = relayClient.fetchEvents;
+  const originalSubscribeLive = relayClient.subscribeLive;
   relayClient.fetchEvents = async () => [];
+  relayClient.subscribeLive =
+    options.subscribeLive ??
+    (async (_filter, _onEvent, onStatus) => {
+      onStatus?.({ state: "open" });
+      return async () => {};
+    });
+  let listedJob = options.job ?? retiredJob();
+  const snapshot = options.snapshot ?? {
+    state: "missing",
+    head: null,
+    manifest: null,
+    pages: [],
+    repo_state: options.repoState ?? null,
+  };
   installTauriInvoke(async (command, args) => {
     calls.push({ command, args });
     if (command === "owner_operation_scope") return expected;
-    if (command === "wiki_snapshot_read") {
+    if (command === "get_relay_self") return options.relaySelf ?? null;
+    if (command === "wiki_runtime_settings_get") {
       return {
         token: expected,
-        value: {
-          state: "missing",
-          head: null,
-          manifest: null,
-          pages: [],
-          repoState: null,
+        value: options.runtimeSettings ?? {
+          runtimeId: "hermes",
+          profile: "saved-profile",
+          model: null,
         },
       };
     }
+    if (command === "wiki_snapshot_read") {
+      return {
+        token: expected,
+        value: snapshot,
+      };
+    }
+    if (command === "wiki_runtime_settings_set") {
+      if (options.saveError) throw new Error(options.saveError);
+      if (options.save) await options.save;
+      return { token: expected, value: args.selection };
+    }
+    if (command === "discover_acp_providers")
+      return (
+        options.runtimeCatalog ?? [
+          {
+            id: "hermes",
+            label: "Hermes",
+            availability: "available",
+            default_args: [],
+            source: "builtin",
+          },
+          {
+            id: "codex",
+            underlying_cli_path: "/fixture/bin/codex",
+            label: "Codex",
+            availability: "available",
+            default_args: [],
+            source: "builtin",
+          },
+        ]
+      );
+    if (command === "get_relay_http_url") return COMMUNITY;
+    if (command === "get_media_proxy_port") return null;
+    if (command === "list_hermes_profiles")
+      return ["saved-profile", "other-profile"];
+    if (command === "wiki_publication_prepare") {
+      if (options.prepare) {
+        listedJob = generationJob();
+        return await options.prepare;
+      }
+      throw new Error("fixture stops after launch");
+    }
+    if (command === "wiki_publication_dispatch") {
+      if (options.dispatch) return await options.dispatch;
+      return { token: expected, value: completedGenerationJob() };
+    }
     if (command === "wiki_publication_list") {
-      return { token: expected, value: [retiredJob()] };
+      return { token: expected, value: options.noJob ? [] : [listedJob] };
+    }
+    if (command === "wiki_publication_cancel") {
+      listedJob = canceledGenerationJob();
+      return { token: expected, value: listedJob };
     }
     if (command === "wiki_publication_regenerate") {
       // The captured arguments are the contract under test; refusing here
@@ -195,7 +432,14 @@ async function mountDetail(localWorkspacePath, calls) {
   // any repository fetch.
   client.setQueryData(
     ["projects"],
-    [{ id: "project-1", repositories: [repository(localWorkspacePath)] }],
+    [
+      {
+        id: "project-1",
+        repositories: [
+          repository(localWorkspacePath, options.repository ?? {}),
+        ],
+      },
+    ],
   );
 
   const view = render(
@@ -211,15 +455,19 @@ async function mountDetail(localWorkspacePath, calls) {
   );
 
   const card = await screen.findByTestId(`wiki-repo-card-${REPO_D}`);
-  await act(async () => {
-    fireEvent.click(card.querySelector("button"));
-  });
-  await waitFor(() => {
-    assert.ok(
-      screen.queryByTestId("wiki-recovery-header"),
-      "the detail view must render the durable recovery row",
-    );
-  });
+  if (options.openDetail !== false) {
+    await act(async () => {
+      fireEvent.click(card.querySelector("button"));
+    });
+    await waitFor(() => {
+      assert.ok(
+        options.noJob
+          ? screen.queryByTestId("wiki-generate-mirror")
+          : screen.queryByTestId("wiki-recovery-header"),
+        "the detail view must render the durable recovery row",
+      );
+    });
+  }
 
   return {
     client,
@@ -230,6 +478,7 @@ async function mountDetail(localWorkspacePath, calls) {
       cleanup();
       resetWikiStore();
       relayClient.fetchEvents = originalFetchEvents;
+      relayClient.subscribeLive = originalSubscribeLive;
       delete globalThis.__TAURI_INTERNALS__;
       delete dom.window.__TAURI_INTERNALS__;
     },
@@ -299,6 +548,1119 @@ test("a linked workspace exposes Regenerate and forwards the captured path", asy
     );
     assert.equal(call.args.id, "operation-1");
     assert.equal(call.args.revision, 3);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Open project uses the containing project rather than its repository id", async () => {
+  const mounted = await mountDetail(LINKED_PATH, []);
+  try {
+    globalThis.__wikiProjectVisits.length = 0;
+    const open = buttonNamed("Open project");
+    assert.ok(open);
+    await act(async () => {
+      fireEvent.click(open);
+    });
+    assert.deepEqual(globalThis.__wikiProjectVisits, ["project-1"]);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a missing bound workspace offers Manage workspace for the exact repository", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    job: missingSourceJob(),
+    repoState: repoState("release"),
+    openDetail: false,
+  });
+  try {
+    const card = screen.getByTestId(`wiki-repo-card-${REPO_D}`);
+    const missing = await screen.findByTestId("wiki-missing-local");
+    assert.match(missing.textContent, /Project folder is gone/);
+    const manage = screen.getByTestId(`wiki-manage-workspace-${REPO_D}`);
+    globalThis.__wikiProjectVisits.length = 0;
+    globalThis.__wikiProjectVisitOptions.length = 0;
+    await act(async () => fireEvent.click(manage));
+    assert.deepEqual(globalThis.__wikiProjectVisits, ["project-1"]);
+    assert.deepEqual(globalThis.__wikiProjectVisitOptions, [
+      { repositoryAddress: `30617:${OWNER}:${REPO_D}` },
+    ]);
+    assert.equal(
+      card.querySelector(`[data-testid="wiki-manage-workspace-${REPO_D}"]`),
+      manage,
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("saved Wiki runtime is visible before opening settings", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls);
+  try {
+    await waitFor(() =>
+      assert.match(
+        screen.getByTestId("wiki-runtime-label").textContent,
+        /Hermes \/ saved-profile/,
+      ),
+    );
+    assert.ok(
+      calls.some(({ command }) => command === "wiki_runtime_settings_get"),
+    );
+    assert.equal(screen.queryByTestId("wiki-runtime-settings-panel"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki generation opens a source dialog; Escape cancels without saving or launching", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, { noJob: true });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Generate Wiki" });
+    assert.ok(dialog.textContent.includes(LINKED_PATH));
+    await act(async () => fireEvent.keyDown(dialog, { key: "Escape" }));
+    await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+    assert.equal(
+      calls.some(
+        ({ command }) =>
+          command === "wiki_runtime_settings_set" ||
+          command === "wiki_publication_prepare",
+      ),
+      false,
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki generation dialog reads the repository state's actual branch", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    noJob: true,
+    repoState: repoState("release"),
+    repository: { defaultBranch: "main" },
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Generate Wiki" });
+    assert.match(dialog.textContent, /release/);
+    assert.doesNotMatch(dialog.textContent, /\bmain\b/);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Start generation persists the selected runtime before reaching native prepare", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, { noJob: true });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () =>
+      fireEvent.change(
+        screen.getByRole("combobox", { name: "Hermes profile" }),
+        { target: { value: "other-profile" } },
+      ),
+    );
+    await act(async () => {
+      mounted.client.setQueryData(
+        ["acp-runtimes"],
+        [
+          { id: "hermes", label: "Hermes", availability: "available" },
+          { id: "codex", label: "Codex", availability: "available" },
+        ],
+      );
+    });
+    assert.equal(
+      screen.getByRole("combobox", { name: "Hermes profile" }).value,
+      "other-profile",
+      "catalog refresh must preserve the user's draft",
+    );
+    await act(async () => fireEvent.click(start));
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    const save = calls.findIndex(
+      ({ command }) => command === "wiki_runtime_settings_set",
+    );
+    const prepare = calls.findIndex(
+      ({ command }) => command === "wiki_publication_prepare",
+    );
+    assert.ok(save >= 0 && prepare > save);
+    assert.equal(calls[save].args.selection.profile, "other-profile");
+    assert.equal(calls[prepare].args.repoPath, LINKED_PATH);
+    assert.equal(screen.queryByRole("dialog"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki keeps the selected page while a changed-runtime update saves and prepares", async () => {
+  const calls = [];
+  let resolveSave;
+  let resolvePrepare;
+  const save = new Promise((resolve) => {
+    resolveSave = resolve;
+  });
+  const prepare = new Promise((resolve) => {
+    resolvePrepare = resolve;
+  });
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    snapshot: completeWikiSnapshot(),
+    runtimeSettings: {
+      runtimeId: "hermes",
+      profile: "saved-profile",
+      model: null,
+    },
+    runtimeCatalog: [
+      { id: "hermes", label: "Hermes", availability: "available" },
+      {
+        id: "claude",
+        label: "Claude Code",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/claude",
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/codex",
+      },
+    ],
+    save,
+    prepare,
+  });
+  try {
+    await waitFor(() => screen.getByText("Introduction body"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-toc-runtime"));
+    });
+    await waitFor(() => screen.getByText("Runtime body"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror"));
+    });
+    const select = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(select.disabled, false));
+    await act(async () =>
+      fireEvent.change(select, { target: { value: "codex" } }),
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Start update" })),
+    );
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_runtime_settings_set"),
+      ),
+    );
+    assert.ok(screen.getByText("Runtime body"));
+    assert.ok(screen.getByRole("dialog", { name: "Update Wiki" }));
+
+    await act(async () => resolveSave());
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    assert.ok(screen.getByText("Runtime body"));
+    assert.equal(screen.queryByTestId("wiki-navigation-fallback"), null);
+
+    await act(async () =>
+      resolvePrepare({
+        token: scope(),
+        value: { result: "created", job: generationJob() },
+      }),
+    );
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_dispatch"),
+      ),
+    );
+    await waitFor(() => screen.getByText("Runtime body"));
+    assert.equal(screen.queryByTestId("wiki-navigation-fallback"), null);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki runtime select owns ArrowUp without changing the selected page", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    snapshot: completeWikiSnapshot(),
+    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+  });
+  try {
+    await waitFor(() => screen.getByText("Introduction body"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-toc-runtime"));
+    });
+    await waitFor(() => screen.getByText("Runtime body"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror"));
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Update Wiki" });
+    const runtime = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(runtime.disabled, false));
+
+    const event = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowUp",
+    });
+    await act(async () => {
+      runtime.dispatchEvent(event);
+    });
+    assert.equal(
+      event.defaultPrevented,
+      false,
+      "the Wiki TOC must not cancel native runtime selector navigation",
+    );
+    assert.ok(screen.getByText("Runtime body"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    await waitFor(() => assert.equal(screen.queryByRole("dialog"), null));
+    assert.ok(screen.getByText("Runtime body"));
+    assert.equal(
+      calls.some(
+        ({ command }) =>
+          command === "wiki_runtime_settings_set" ||
+          command === "wiki_publication_prepare",
+      ),
+      false,
+      "canceling the dialog must not save settings or launch generation",
+    );
+    assert.ok(dialog, "the production Update dialog was exercised");
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki TOC arrow keys change pages only from focused TOC buttons", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    noJob: true,
+    snapshot: completeWikiSnapshot(),
+    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+  });
+  try {
+    await waitFor(() => screen.getByText("Introduction body"));
+    const intro = screen.getByTestId("wiki-toc-intro");
+    const runtime = screen.getByTestId("wiki-toc-runtime");
+
+    runtime.focus();
+    const up = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowUp",
+    });
+    await act(async () => {
+      runtime.dispatchEvent(up);
+    });
+    await waitFor(() => screen.getByText("Introduction body"));
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(document.activeElement, intro);
+
+    const down = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowDown",
+    });
+    await act(async () => {
+      intro.dispatchEvent(down);
+    });
+    await waitFor(() => screen.getByText("Runtime body"));
+    assert.equal(down.defaultPrevented, true);
+    assert.equal(document.activeElement, runtime);
+
+    const shiftedUp = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowUp",
+      shiftKey: true,
+    });
+    await act(async () => {
+      runtime.dispatchEvent(shiftedUp);
+    });
+    assert.equal(shiftedUp.defaultPrevented, false);
+    assert.ok(screen.getByText("Runtime body"));
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Codex generation accepts a blank optional model and records runtime default", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+  });
+  try {
+    await waitFor(() =>
+      assert.match(
+        screen.getByTestId("wiki-runtime-label").textContent,
+        /Codex \/ runtime default/,
+      ),
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    const model = await screen.findByRole("textbox", {
+      name: "Wiki runtime model",
+    });
+    await act(async () =>
+      fireEvent.change(model, { target: { value: "   " } }),
+    );
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () => fireEvent.click(start));
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    const save = calls.find(
+      ({ command }) => command === "wiki_runtime_settings_set",
+    );
+    assert.deepEqual(save.args.selection, {
+      runtimeId: "codex",
+      model: null,
+      profile: null,
+    });
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki keeps Claude visible but defers it until compatibility is verified", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    runtimeSettings: {
+      runtimeId: "claude",
+      profile: null,
+      model: "claude-fable-5-1",
+    },
+    runtimeCatalog: [
+      { id: "hermes", label: "Hermes", availability: "available" },
+      {
+        id: "claude",
+        label: "Claude Code",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/claude",
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        availability: "adapter_missing",
+        underlying_cli_path: "/fixture/bin/codex",
+      },
+    ],
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const select = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(select.disabled, false));
+    assert.deepEqual(
+      Array.from(select.options, (option) => option.value),
+      ["hermes", "claude", "codex"],
+    );
+    assert.equal(
+      select.value,
+      "claude",
+      "saved Claude selection stays visible",
+    );
+    assert.equal(select.options[1].disabled, true);
+    assert.equal(
+      screen.getByTestId("wiki-runtime-claude-deferred").textContent,
+      "Claude Code is not yet verified for Wiki generation.",
+    );
+    const start = screen.getByRole("button", { name: "Start generation" });
+    assert.equal(start.disabled, true);
+    await act(async () => fireEvent.click(start));
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_runtime_settings_set"),
+      false,
+    );
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("Wiki excludes a runtime whose plain CLI is missing", async () => {
+  const mounted = await mountDetail(LINKED_PATH, [], {
+    noJob: true,
+    runtimeCatalog: [
+      { id: "hermes", label: "Hermes", availability: "available" },
+      {
+        id: "claude",
+        label: "Claude Code",
+        availability: "cli_missing",
+        underlying_cli_path: null,
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        availability: "available",
+        underlying_cli_path: null,
+      },
+    ],
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const select = await screen.findByRole("combobox", {
+      name: "Wiki runtime",
+    });
+    await waitFor(() => assert.equal(select.disabled, false));
+    assert.deepEqual(
+      Array.from(select.options, (option) => option.value),
+      ["hermes"],
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a failed runtime save keeps the dialog open and never launches generation", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    saveError: "settings disk unavailable",
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () => fireEvent.click(start));
+    await screen.findByText("settings disk unavailable");
+    assert.ok(screen.queryByRole("dialog"));
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("initial native generation shows clear progress and only the real Cancel action", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: generationJob(),
+    openDetail: false,
+  });
+  try {
+    await waitFor(() => {
+      assert.match(
+        screen.getByTestId("wiki-generating").textContent,
+        /Generating Wiki…/,
+      );
+    });
+    assert.equal(screen.queryByText("0/0"), null);
+    assert.ok(screen.getByRole("button", { name: "Cancel job" }));
+    assert.doesNotMatch(
+      screen.getByTestId("wiki-recovery-controls").textContent,
+      /attempts/,
+    );
+    assert.equal(
+      screen.queryByRole("button", { name: "Retry publication" }),
+      null,
+    );
+    assert.equal(
+      screen.queryByRole("button", { name: "Resume publication" }),
+      null,
+    );
+    assert.equal(screen.queryByRole("button", { name: "Reconcile" }), null);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId(`wiki-repo-card-${REPO_D}`).querySelector("button"),
+      );
+    });
+    await waitFor(() => screen.getByTestId("wiki-recovery-header"));
+    assert.match(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generating Wiki…/,
+    );
+    assert.ok(screen.getByRole("button", { name: "Cancel" }));
+    assert.equal(screen.queryByRole("button", { name: "Reconcile" }), null);
+    assert.equal(
+      screen.queryByRole("button", { name: "Retry publication" }),
+      null,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    await waitFor(() => {
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_cancel"),
+      );
+      assert.ok(screen.getByTestId("wiki-generation-canceled"));
+    });
+    const cancel = calls.find(
+      ({ command }) => command === "wiki_publication_cancel",
+    );
+    assert.equal(cancel.args.id, generationJob().id);
+    assert.equal(cancel.args.revision, generationJob().revision);
+    assert.match(
+      screen.getByTestId("wiki-generation-canceled").textContent,
+      /interrupted before publication/,
+    );
+    assert.match(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generation: canceled/,
+    );
+    assert.doesNotMatch(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generating Wiki…/,
+    );
+    assert.equal(
+      screen.getByTestId("wiki-generate-mirror").disabled,
+      false,
+      "a terminal canceled draft permits a new Generate",
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a canceled generation does not duplicate its durable prepare error", async () => {
+  const calls = [];
+  const message = canceledGenerationJob().lastError;
+  let rejectPrepare;
+  const prepare = new Promise((_, reject) => {
+    rejectPrepare = reject;
+  });
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: { ...canceledGenerationJob(), id: "previous-generation" },
+    prepare,
+  });
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByTestId("wiki-generate-mirror")),
+    );
+    const start = await screen.findByRole("button", {
+      name: "Start generation",
+    });
+    await waitFor(() => assert.equal(start.disabled, false));
+    await act(async () => fireEvent.click(start));
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+      ),
+    );
+    const cancel = await screen.findByRole(
+      "button",
+      { name: "Cancel", exact: true },
+      { timeout: 5000 },
+    );
+    await act(async () => fireEvent.click(cancel));
+    await waitFor(() =>
+      assert.ok(screen.queryByTestId("wiki-generation-canceled")),
+    );
+    await act(async () => rejectPrepare(new Error(message)));
+    await waitFor(() =>
+      assert.ok(
+        mounted.client
+          .getMutationCache()
+          .getAll()
+          .some((candidate) => candidate.state.status === "error"),
+      ),
+    );
+    assert.equal(screen.getAllByText(message).length, 1);
+    assert.equal(screen.queryByTestId("wiki-generate-error") === null, true);
+    assert.equal(
+      screen.getByTestId("wiki-generation-canceled").textContent,
+      message,
+    );
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a terminal canceled generation stays visible and permits Generate", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: canceledGenerationJob(),
+    openDetail: false,
+  });
+  try {
+    await waitFor(() => screen.getByTestId("wiki-generation-canceled"));
+    assert.equal(screen.queryByRole("button", { name: "Cancel job" }), null);
+    assert.equal(screen.queryByRole("button", { name: "Reconcile" }), null);
+    assert.equal(screen.getByTestId("wiki-generate-crew").disabled, false);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+test("a terminal runtime generation error is labeled failed and permits Generate", async () => {
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    job: failedGenerationJob(),
+    openDetail: false,
+  });
+  try {
+    await waitFor(() => screen.getByTestId("wiki-generation-failed"));
+    assert.match(
+      screen.getByTestId("wiki-generation-failed").textContent,
+      /Wiki runtime returned invalid page output\./,
+    );
+    assert.equal(screen.queryByTestId("wiki-generation-canceled"), null);
+    assert.equal(screen.getByTestId("wiki-generate-crew").disabled, false);
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId(`wiki-repo-card-${REPO_D}`).querySelector("button"),
+      );
+    });
+    await waitFor(() => screen.getByTestId("wiki-recovery-header"));
+    assert.match(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generation: failed/,
+    );
+    assert.doesNotMatch(
+      screen.getByTestId("wiki-recovery-header").textContent,
+      /Generation: canceled|Generating Wiki…/,
+    );
+    assert.equal(screen.queryByRole("button", { name: "Cancel" }), null);
+    assert.equal(screen.getByTestId("wiki-generate-mirror").disabled, false);
+  } finally {
+    mounted.dispose();
+  }
+});
+
+for (const unmountBeforeDue of [false, true]) {
+  test(
+    unmountBeforeDue
+      ? "on-push cadence cancels the pending wakeup when Wiki unmounts"
+      : "on-push cadence rechecks after debounce when the observed graph stays stable",
+    async (t) => {
+      const nowSeconds = Math.floor(Date.now() / 1_000);
+      t.mock.timers.enable({
+        apis: ["Date"],
+        now: nowSeconds * 1_000,
+      });
+      const originalWindowSetTimeout = dom.window.setTimeout;
+      const originalWindowClearTimeout = dom.window.clearTimeout;
+      // Control browser-owned deadlines without freezing React Query and the
+      // test harness's process timers during mount.
+      let timerId = 0;
+      const timers = new Map();
+      dom.window.setTimeout = (callback, delay = 0) => {
+        const id = ++timerId;
+        timers.set(id, { callback, at: Date.now() + delay });
+        return id;
+      };
+      dom.window.clearTimeout = (id) => timers.delete(id);
+
+      const calls = [];
+      const snapshot = completeWikiSnapshot();
+      const pushedCommit = "c".repeat(40);
+      snapshot.head = {
+        ...snapshot.head,
+        tags: snapshot.head.tags.map((tag) =>
+          tag[0] === "cadence" ? ["cadence", "on-push"] : tag,
+        ),
+      };
+      snapshot.repo_state = {
+        ...snapshot.repo_state,
+        created_at: nowSeconds,
+        tags: snapshot.repo_state.tags.map((tag) =>
+          tag[0] === "refs/heads/main" ? [tag[0], pushedCommit] : tag,
+        ),
+      };
+
+      let mounted;
+      try {
+        mounted = await mountDetail(LINKED_PATH, calls, {
+          noJob: true,
+          snapshot,
+        });
+        const repoQuery = mounted.client.getQueryData([
+          "crew-wiki-events",
+          "repos",
+          OWNER,
+          COMMUNITY,
+          1,
+          1,
+        ]);
+        assert.equal(repoQuery?.tocs?.[0]?.cadence, "on-push");
+        assert.equal(repoQuery?.states?.[0]?.created_at, nowSeconds);
+        assert.equal(
+          calls.some(({ command }) => command === "wiki_publication_prepare"),
+          false,
+          "the fresh push is still inside the debounce window",
+        );
+
+        if (unmountBeforeDue) {
+          mounted.dispose();
+          mounted = undefined;
+          assert.equal(
+            timers.size,
+            0,
+            "unmount must cancel the browser deadline",
+          );
+        }
+        await act(async () => {
+          t.mock.timers.tick(30_001);
+          for (const [id, timer] of [...timers]) {
+            if (timer.at <= Date.now()) {
+              timers.delete(id);
+              timer.callback();
+            }
+          }
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        assert.equal(
+          calls.some(({ command }) => command === "wiki_publication_prepare"),
+          !unmountBeforeDue,
+          "a mounted Wiki must launch after the quiet-period deadline; an unmounted Wiki must not launch",
+        );
+      } finally {
+        mounted?.dispose();
+        dom.window.setTimeout = originalWindowSetTimeout;
+        dom.window.clearTimeout = originalWindowClearTimeout;
+      }
+    },
+  );
+}
+
+const RELAY_SELF = "d".repeat(64);
+
+async function runFreshOnPushCase(
+  t,
+  variant,
+  { unmountBeforeRefresh = false } = {},
+) {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: nowSeconds * 1_000,
+  });
+  const originalWindowSetTimeout = dom.window.setTimeout;
+  const originalWindowClearTimeout = dom.window.clearTimeout;
+  // Keep process timers real for Testing Library and the 250 ms live
+  // coalescer. Control only the browser-owned cadence deadline with the
+  // Date-only clock used by the quiet-period regression above.
+  let timerId = 0;
+  const timers = new Map();
+  dom.window.setTimeout = (callback, delay = 0) => {
+    const id = ++timerId;
+    timers.set(id, { callback, at: Date.now() + delay, delay });
+    return id;
+  };
+  dom.window.clearTimeout = (id) => timers.delete(id);
+
+  const liveSubscriptions = [];
+  const subscribeLive = async (filter, onEvent, onStatus) => {
+    liveSubscriptions.push({ filter, onEvent });
+    onStatus?.({ state: "open" });
+    return async () => {};
+  };
+  const calls = [];
+  const snapshot = completeWikiSnapshot();
+  const previousCommit = "b".repeat(40);
+  const pushedCommit = "c".repeat(40);
+  snapshot.head = {
+    ...snapshot.head,
+    tags: snapshot.head.tags.map((tag) =>
+      tag[0] === "cadence" ? ["cadence", "on-push"] : tag,
+    ),
+  };
+  snapshot.repo_state = {
+    ...snapshot.repo_state,
+    created_at: nowSeconds - 1,
+    tags: snapshot.repo_state.tags.map((tag) =>
+      tag[0] === "refs/heads/main" ? [tag[0], previousCommit] : tag,
+    ),
+  };
+  const pushedState = {
+    ...snapshot.repo_state,
+    id: "4".repeat(64),
+    pubkey: variant.author,
+    created_at: nowSeconds,
+    tags: [
+      ...snapshot.repo_state.tags.map((tag) =>
+        tag[0] === "refs/heads/main" ? [tag[0], pushedCommit] : tag,
+      ),
+      ...(variant.relaySigned ? [["a", `30617:${OWNER}:${REPO_D}`]] : []),
+    ],
+  };
+
+  let mounted;
+  try {
+    mounted = await mountDetail(LINKED_PATH, calls, {
+      noJob: true,
+      snapshot,
+      relaySelf: variant.relaySelf,
+      subscribeLive,
+      prepare: Promise.resolve({
+        token: scope(),
+        value: { result: "created", job: generationJob() },
+      }),
+    });
+    const queryKey = ["crew-wiki-events", "repos", OWNER, COMMUNITY, 1, 1];
+    const initial = mounted.client.getQueryData(queryKey);
+    assert.equal(initial?.tocs?.[0]?.cadence, "on-push");
+    assert.equal(
+      initial?.states?.[0]?.tags.find(
+        (tag) => tag[0] === "refs/heads/main",
+      )?.[1],
+      previousCommit,
+      "the mounted Wiki first observes the pre-push repository tip",
+    );
+
+    // The hook's live setup and initial overlap read use the real 250 ms
+    // process timer. Let that settle before counting the push-triggered read.
+    await waitFor(() => assert.equal(liveSubscriptions.length, 1));
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    const initialReadCount = calls.filter(
+      ({ command }) => command === "wiki_snapshot_read",
+    ).length;
+    const subscription = liveSubscriptions[0];
+    const expectedAuthors = [OWNER, ...(variant.relaySelf ? [RELAY_SELF] : [])];
+    assert.deepEqual(
+      subscription.filter.authors,
+      expectedAuthors,
+      "live state reads must authorize the repository owner and relay self",
+    );
+    assert.deepEqual(subscription.filter.kinds, [30618]);
+    assert.deepEqual(subscription.filter["#d"], [REPO_D]);
+    assert.equal(subscription.filter.limit, 0);
+    if (variant.relaySigned) {
+      assert.deepEqual(
+        pushedState.tags.find((tag) => tag[0] === "a"),
+        ["a", `30617:${OWNER}:${REPO_D}`],
+        "relay-signed repository state must carry the exact repository coordinate",
+      );
+    }
+
+    if (unmountBeforeRefresh) {
+      mounted.dispose();
+      mounted = undefined;
+      snapshot.repo_state = pushedState;
+      await act(async () => {
+        subscription.onEvent(pushedState, { replay: false });
+      });
+      await act(async () => {
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+      });
+      assert.equal(
+        calls.filter(({ command }) => command === "wiki_snapshot_read").length,
+        initialReadCount,
+        "a late live event after unmount must not refetch the Wiki",
+      );
+      assert.equal(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+        false,
+        "a late live event after unmount must not start generation",
+      );
+      return;
+    }
+
+    // The push is observable only through the live event; native projection
+    // data becomes fresh after that callback requests the scoped reread.
+    snapshot.repo_state = pushedState;
+    await act(async () => {
+      subscription.onEvent(pushedState, { replay: false });
+    });
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    await waitFor(() =>
+      assert.ok(
+        calls.filter(({ command }) => command === "wiki_snapshot_read").length >
+          initialReadCount,
+        "the live 30618 event must invalidate the mounted Wiki projection",
+      ),
+    );
+    await waitFor(() => {
+      const refreshed = mounted.client.getQueryData(queryKey);
+      assert.equal(
+        refreshed?.states?.[0]?.tags.find(
+          (tag) => tag[0] === "refs/heads/main",
+        )?.[1],
+        pushedCommit,
+        "the invalidated read must expose the fresh repository tip",
+      );
+    });
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
+      "on-push generation waits for the quiet period",
+    );
+    const cadenceTimer = [...timers.values()].find(
+      ({ delay }) => delay >= 30_000,
+    );
+    assert.ok(
+      cadenceTimer,
+      "the fresh post-mount state must arm the 30-second cadence wakeup",
+    );
+
+    await act(async () => {
+      t.mock.timers.tick(30_001);
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= Date.now()) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      assert.ok(
+        calls.some(({ command }) => command === "wiki_publication_prepare"),
+        "a fresh post-mount push must start generation after 30 seconds",
+      ),
+    );
+  } finally {
+    mounted?.dispose();
+    dom.window.setTimeout = originalWindowSetTimeout;
+    dom.window.clearTimeout = originalWindowClearTimeout;
+  }
+}
+
+for (const variant of [
+  { label: "owner", author: OWNER, relaySelf: null, relaySigned: false },
+  {
+    label: "relay-self",
+    author: RELAY_SELF,
+    relaySelf: RELAY_SELF,
+    relaySigned: true,
+  },
+]) {
+  test(`a fresh ${variant.label} on-push state observed after mount refreshes the Wiki and starts after quiet time`, async (t) =>
+    runFreshOnPushCase(t, variant));
+}
+
+test("an unmounted Wiki ignores a late owner repository-state callback", async (t) =>
+  runFreshOnPushCase(
+    t,
+    {
+      label: "owner",
+      author: OWNER,
+      relaySelf: null,
+      relaySigned: false,
+    },
+    { unmountBeforeRefresh: true },
+  ));
+
+test("a recovering live subscription keeps its error until open confirms a reread", async () => {
+  let resolveSubscription;
+  const liveSubscriptions = [];
+  const subscribeLive = async (filter, onEvent, onStatus) => {
+    liveSubscriptions.push({ filter, onEvent, onStatus });
+    onStatus?.({ state: "recovering", message: "fixture reconnecting" });
+    await new Promise((resolve) => {
+      resolveSubscription = resolve;
+    });
+    return async () => {};
+  };
+  const calls = [];
+  const mounted = await mountDetail(LINKED_PATH, calls, {
+    noJob: true,
+    subscribeLive,
+    snapshot: completeWikiSnapshot(),
+  });
+  try {
+    await waitFor(() => {
+      assert.ok(
+        screen.getByTestId("wiki-live-error"),
+        "a recovering subscription must surface its live error",
+      );
+    });
+    assert.equal(typeof resolveSubscription, "function");
+    const subscription = liveSubscriptions[0];
+    assert.ok(subscription, "the production live hook must register first");
+
+    await act(async () => {
+      resolveSubscription();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const readCountBeforeEvent = calls.filter(
+      ({ command }) => command === "wiki_snapshot_read",
+    ).length;
+    await act(async () => {
+      subscription.onEvent(repoState("main"), { replay: false });
+    });
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    await waitFor(() =>
+      assert.ok(
+        calls.filter(({ command }) => command === "wiki_snapshot_read").length >
+          readCountBeforeEvent,
+        "a live event must perform the successful native reread",
+      ),
+    );
+    assert.ok(
+      screen.getByTestId("wiki-live-error"),
+      "a successful reread while still recovering must keep the error visible",
+    );
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
+      "recovering live state must not start generation",
+    );
+
+    await act(async () => {
+      subscription.onStatus({ state: "open" });
+    });
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300));
+    });
+    await waitFor(() =>
+      assert.equal(
+        screen.queryByTestId("wiki-live-error"),
+        null,
+        "an actual open followed by a successful reread clears the error",
+      ),
+    );
   } finally {
     mounted.dispose();
   }

@@ -501,7 +501,16 @@ fn isolated_env<const N: usize>(
     env
 }
 
-fn macos_containment_profile(executable: &Path) -> Result<Option<String>, RecapRunFailure> {
+/// Resolve the platform process-containment policy shared by native adapters.
+///
+/// macOS uses the fixed no-fork Seatbelt profile so a runtime cannot create a
+/// descendant outside the bounded process owner. Windows returns `None`
+/// because the bounded runner assigns a Job Object before child code runs.
+/// Other Unix platforms have only the process-group fallback and therefore
+/// fail closed instead of claiming whole-tree containment.
+pub(crate) fn native_containment_profile(
+    executable: &Path,
+) -> Result<Option<String>, RecapRunFailure> {
     #[cfg(target_os = "macos")]
     {
         if !is_executable(Path::new("/usr/bin/sandbox-exec")) {
@@ -528,6 +537,10 @@ fn macos_containment_profile(executable: &Path) -> Result<Option<String>, RecapR
         let _ = executable;
         Err(RecapRunFailure::UnsupportedContainment)
     }
+}
+
+fn macos_containment_profile(executable: &Path) -> Result<Option<String>, RecapRunFailure> {
+    native_containment_profile(executable)
 }
 
 #[derive(Default)]

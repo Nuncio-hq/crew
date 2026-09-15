@@ -2291,3 +2291,36 @@ or another origin. This is origin-scoped discovery under the configured
 transport's existing trust model, not additional cryptographic authentication
 or a new key-pinning interface. Other relay-self consumers keep their existing
 behavior.
+
+## D-081 — Optional model override for native Wiki runtimes
+
+- **Status:** Accepted amendment to D-061; installed-runtime acceptance pending
+- **Date:** 2026-09-14
+- **Issue:** #363
+
+The native Wiki runtime selection keeps a nullable `model` field. Hermes
+remains profile-owned: a named Hermes profile is required, its staged
+provider/model configuration is authoritative, and a non-empty model override
+is rejected. Claude and Codex accept either an explicit model override or a
+null model. Blank or whitespace-only model input is normalized to null before
+the owner/community/repository preference is persisted, and a null model
+omits the CLI `--model` flag so the disposable runtime chooses its own default.
+
+Runtime-default mode does not inherit a user's configured global model,
+employee-agent settings, session, or other host configuration: the adapter
+continues to clear the child environment and use fresh isolated state. Native
+diagnostics report `model=runtime-default` when no override was supplied and
+`model=profile-owned` only for Hermes. They do not claim the effective model
+unless the installed runtime supplies a validated receipt. There is no
+provider/API or heuristic fallback, and the existing bounded, disposable
+process contract remains unchanged. Codex's CLI `read-only` mode does not by
+itself prove no-tools or snapshot-only filesystem isolation; that distinction
+remains an installed-acceptance gate.
+
+This amendment changes only D-061's model requirement for native Wiki
+generation. A persisted runtime selection is still required; missing or
+unsupported runtime/profile state fails closed. Fake-process tests prove null
+normalization, command construction and provenance labels. Installed
+acceptance must separately prove the real default/auth path in the #348
+staging environment without exposing credentials or treating Codex's ordinary
+read-only sandbox as snapshot-only isolation.

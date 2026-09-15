@@ -132,7 +132,9 @@ export function WikiPageView({
     () => (navigationIdentity ? JSON.stringify(navigationIdentity) : null),
     [navigationIdentity],
   );
-  const [activeSlug, setActiveSlug] = React.useState(page?.slug ?? "");
+  const [activeSlug, setActiveSlug] = React.useState(
+    page ? pageLogicalSlug(page) : "",
+  );
   const [search, setSearch] = React.useState("");
   const [navigationNotice, setNavigationNotice] = React.useState<string | null>(
     null,
@@ -163,7 +165,8 @@ export function WikiPageView({
     () => pages ?? (page ? [page] : []),
     [page, pages],
   );
-  const shown = availablePages.find((item) => item.slug === activeSlug) ?? null;
+  const shown =
+    availablePages.find((item) => pageMatchesSlug(item, activeSlug)) ?? null;
   const navigationSnapshotRef = React.useRef<{
     key: string;
     identity: WikiNavigationIdentity;
@@ -188,11 +191,13 @@ export function WikiPageView({
 
   const persistCurrentNavigation = React.useCallback(() => {
     if (!navigationIdentity) return;
-    const current = availablePages.find((item) => item.slug === activeSlug);
+    const current = availablePages.find((item) =>
+      pageMatchesSlug(item, activeSlug),
+    );
     const scrollTop = scrollRef.current?.scrollTop ?? 0;
     writeWikiNavigationState(navigationIdentity, {
       pageId: current?.event.id || null,
-      pageSlug: current?.slug ?? (activeSlug || null),
+      pageSlug: current ? pageLogicalSlug(current) : activeSlug || null,
       scrollTop,
     });
     if (navigationKey && current) {
@@ -320,7 +325,7 @@ export function WikiPageView({
 
   const selectPage = React.useCallback(
     (slug: string) => {
-      const next = availablePages.find((item) => item.slug === slug);
+      const next = availablePages.find((item) => pageMatchesSlug(item, slug));
       if (!next) return;
       stopScrollRestore();
       if (sourcePaneRequest) {
@@ -329,11 +334,12 @@ export function WikiPageView({
       }
       setSourceNotice(null);
       setNavigationNotice(null);
-      setActiveSlug(slug);
+      const nextSlug = pageLogicalSlug(next);
+      setActiveSlug(nextSlug);
       if (navigationIdentity) {
         writeWikiNavigationState(navigationIdentity, {
           pageId: next.event.id || null,
-          pageSlug: next.slug,
+          pageSlug: nextSlug,
           scrollTop: 0,
         });
         if (navigationKey) {
@@ -341,7 +347,7 @@ export function WikiPageView({
             key: navigationKey,
             identity: navigationIdentity,
             page: next,
-            activeSlug: slug,
+            activeSlug: nextSlug,
             scrollTop: 0,
           };
         }
@@ -363,11 +369,13 @@ export function WikiPageView({
       stopScrollRestore();
     }
     if (!navigationIdentity) return;
-    const current = availablePages.find((item) => item.slug === activeSlug);
+    const current = availablePages.find((item) =>
+      pageMatchesSlug(item, activeSlug),
+    );
     const scrollTop = scrollRef.current?.scrollTop ?? 0;
     writeWikiNavigationState(navigationIdentity, {
       pageId: current?.event.id || null,
-      pageSlug: current?.slug ?? (activeSlug || null),
+      pageSlug: current ? pageLogicalSlug(current) : activeSlug || null,
       scrollTop,
     });
     if (navigationKey && current) {
@@ -421,19 +429,30 @@ export function WikiPageView({
       const saved = navigationIdentity
         ? readWikiNavigationState(navigationIdentity)
         : null;
+      // Publication updates issue fresh signed event IDs while keeping the
+      // logical wiki-slug stable. Prefer the exact event when it survives,
+      // then match the logical name in the current publication.
       const savedPage = saved
         ? saved.pageId
-          ? availablePages.find((item) => item.event.id === saved.pageId)
+          ? (availablePages.find((item) => item.event.id === saved.pageId) ??
+            (saved.pageSlug
+              ? availablePages.find((item) =>
+                  pageMatchesSlug(item, saved.pageSlug),
+                )
+              : null))
           : saved.pageSlug
-            ? availablePages.find((item) => item.slug === saved.pageSlug)
+            ? availablePages.find((item) =>
+                pageMatchesSlug(item, saved.pageSlug),
+              )
             : null
         : null;
       const fallback =
-        availablePages.find((item) => item.slug === page?.slug) ??
+        availablePages.find((item) => pageMatchesSlug(item, page?.slug)) ??
         availablePages[0];
       const selected = savedPage ?? fallback;
       if (selected) {
-        setActiveSlug(selected.slug);
+        const selectedSlug = pageLogicalSlug(selected);
+        setActiveSlug(selectedSlug);
         if (!savedPage && saved?.pageId) {
           setNavigationNotice(
             `The saved Wiki page is no longer available. Showing “${selected.title}”.`,
@@ -442,7 +461,7 @@ export function WikiPageView({
         if (navigationIdentity) {
           writeWikiNavigationState(navigationIdentity, {
             pageId: selected.event.id || null,
-            pageSlug: selected.slug,
+            pageSlug: selectedSlug,
             scrollTop: savedPage ? (saved?.scrollTop ?? 0) : 0,
           });
           restoreRequestRef.current = {
@@ -452,7 +471,7 @@ export function WikiPageView({
           };
           if (
             selected.event.id === shown?.event.id &&
-            selected.slug === activeSlug
+            selectedSlug === activeSlug
           ) {
             startScrollRestore(restoreRequestRef.current);
           }
@@ -460,17 +479,20 @@ export function WikiPageView({
       }
       return;
     }
-    if (availablePages.some((item) => item.slug === activeSlug)) return;
+    if (availablePages.some((item) => pageMatchesSlug(item, activeSlug))) {
+      return;
+    }
     const fallback = availablePages[0];
     if (!fallback) return;
-    setActiveSlug(fallback.slug);
+    const fallbackSlug = pageLogicalSlug(fallback);
+    setActiveSlug(fallbackSlug);
     setNavigationNotice(
       `This Wiki page is no longer available. Showing “${fallback.title}”.`,
     );
     if (navigationIdentity) {
       writeWikiNavigationState(navigationIdentity, {
         pageId: fallback.event.id || null,
-        pageSlug: fallback.slug,
+        pageSlug: fallbackSlug,
         scrollTop: 0,
       });
     }
@@ -483,6 +505,29 @@ export function WikiPageView({
     shown,
     startScrollRestore,
   ]);
+
+  React.useEffect(() => {
+    if (!navigationIdentity || !navigationKey || !shown) return;
+    const saved = readWikiNavigationState(navigationIdentity);
+    const shownSlug = pageLogicalSlug(shown);
+    if (saved?.pageSlug !== shownSlug || saved.pageId === shown.event.id) {
+      return;
+    }
+    const scrollTop = scrollRef.current?.scrollTop ?? saved.scrollTop;
+    writeWikiNavigationState(navigationIdentity, {
+      pageId: shown.event.id || null,
+      pageSlug: shownSlug,
+      scrollTop,
+    });
+    const snapshot = navigationSnapshotRef.current;
+    if (snapshot?.key === navigationKey && snapshot.activeSlug === shownSlug) {
+      navigationSnapshotRef.current = {
+        ...snapshot,
+        page: shown,
+        scrollTop,
+      };
+    }
+  }, [navigationIdentity, navigationKey, shown]);
 
   React.useLayoutEffect(() => {
     if (!navigationIdentity || !navigationKey || !shown) return;
@@ -517,7 +562,7 @@ export function WikiPageView({
       if (!current || current.key !== navigationKey) return;
       writeWikiNavigationState(current.identity, {
         pageId: current.page.event.id || null,
-        pageSlug: current.page.slug || current.activeSlug || null,
+        pageSlug: pageLogicalSlug(current.page) || current.activeSlug || null,
         scrollTop: current.scrollTop,
       });
       if (navigationSnapshotRef.current?.key === navigationKey) {
@@ -807,6 +852,17 @@ export function WikiPageView({
       </div>
     </div>
   );
+}
+
+function pageMatchesSlug(
+  page: WikiPage,
+  slug: string | null | undefined,
+): boolean {
+  return Boolean(slug && (page.slug === slug || page.logicalSlug === slug));
+}
+
+function pageLogicalSlug(page: WikiPage): string {
+  return page.logicalSlug ?? page.slug;
 }
 
 function WikiSearchResultsPanel({

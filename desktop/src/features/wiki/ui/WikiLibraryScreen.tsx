@@ -57,7 +57,28 @@ export function WikiLibraryScreen() {
     ? undefined
     : eventsQuery.scopeQuery.data;
   const recovery = useWikiPublicationRecovery(operationScope);
-  useWikiRefresh();
+  const live = useWikiRefresh();
+  const liveNotice = live.error ? (
+    <div
+      className="shrink-0 border-b border-border px-4 py-2 text-xs"
+      role="alert"
+      data-testid="wiki-live-error"
+    >
+      {live.error}{" "}
+      <button type="button" className="underline" onClick={live.retry}>
+        Retry live updates
+      </button>
+    </div>
+  ) : null;
+  const withLiveNotice = (view: React.ReactElement) =>
+    liveNotice ? (
+      <div className="flex h-full min-h-0 flex-col">
+        {liveNotice}
+        <div className="min-h-0 min-w-0 flex-1">{view}</div>
+      </div>
+    ) : (
+      view
+    );
   const { goProject } = useAppNavigation();
   const jobs = React.useSyncExternalStore(
     subscribeWikiJobs,
@@ -106,7 +127,7 @@ export function WikiLibraryScreen() {
       eventsQuery.data?.companyError ??
       toQueryError(eventsQuery.companyQuery.error) ??
       toQueryError(eventsQuery.scopeQuery.error);
-    return (
+    return withLiveNotice(
       <WikiPageView
         admin
         askScope="library"
@@ -125,7 +146,7 @@ export function WikiLibraryScreen() {
         proposals={proposals}
         repoName="Company Wiki"
         toc={companyToc(publishedCompany)}
-      />
+      />,
     );
   }
 
@@ -178,7 +199,12 @@ export function WikiLibraryScreen() {
             (tag) => tag[0] === "a" && tag[1] === repo?.repoAddress,
           )),
     );
-    return (
+    const project = projectsQuery.data?.find((project) =>
+      project.repositories.some(
+        (member) => member.repoAddress === repo?.repoAddress,
+      ),
+    );
+    const view = (
       <WikiPageView
         admin
         askScope="repo"
@@ -186,11 +212,15 @@ export function WikiLibraryScreen() {
         door="library"
         isCompany={false}
         onBack={() => setSelected(null)}
-        onOpenProject={() => {
-          if (repo) void goProject(repo.id);
-        }}
+        onOpenProject={
+          project
+            ? () => {
+                void goProject(project.id);
+              }
+            : undefined
+        }
         owner={repo?.owner ?? toc?.owner ?? ""}
-        navigationProjectId={repo?.id ?? selectedCoordinate}
+        navigationProjectId={project?.id ?? selectedCoordinate}
         operationScope={selectedScope}
         page={page}
         pages={repoPages}
@@ -258,6 +288,7 @@ export function WikiLibraryScreen() {
         toc={toc}
       />
     );
+    return withLiveNotice(view);
   }
 
   const showCompanyCard =
@@ -265,6 +296,7 @@ export function WikiLibraryScreen() {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="wiki-library">
+      {liveNotice}
       <TopChromeInsetHeader
         className="border-b border-border"
         data-office-surface={OFFICE_SURFACE.headerBar}
@@ -402,6 +434,14 @@ export function WikiLibraryScreen() {
                 remoteBranch: tip?.branch,
                 remoteCommit: tip?.commit,
               });
+              const containingProject = projectsQuery.data?.find((project) =>
+                project.repositories.some(
+                  (member) => member.repoAddress === repo.repoAddress,
+                ),
+              );
+              const missingWorkspace =
+                probe.kind === "missing-local" ||
+                probe.kind === "missing-local-gone";
               return (
                 <WikiRepoCard
                   key={repo.id}
@@ -413,6 +453,20 @@ export function WikiLibraryScreen() {
                   readStatus={readStatus}
                   generating={job}
                   name={repo.name}
+                  repoPath={repo.localWorkspacePath}
+                  branch={
+                    repo.workspaceMode === "folder"
+                      ? null
+                      : (tip?.branch ?? toc?.branch ?? null)
+                  }
+                  onManageWorkspace={
+                    missingWorkspace && containingProject
+                      ? () =>
+                          void goProject(containingProject.id, {
+                            repositoryAddress: repo.repoAddress,
+                          })
+                      : undefined
+                  }
                   onGenerate={
                     canWrite
                       ? () => {
