@@ -530,14 +530,16 @@ preference. Start saves that scoped preference before invoking native preparatio
 a failed save keeps the dialog open and starts no runtime. Cancel or Escape before
 Start dismisses the draft. Runtime labels load independently of opening the dialog,
 and catalog refreshes preserve an edited draft. The picker reuses Buzz's complete
-runtime catalog: Claude/Codex require an installed underlying CLI, independently
-of ACP adapter readiness; Hermes uses its existing CLI availability. Library navigation resolves the
+runtime catalog: Hermes uses its existing CLI availability; Codex requires an
+installed underlying CLI independently of ACP adapter readiness; Claude remains
+visible when its CLI is installed but is disabled for Wiki until compatibility is
+verified. Library navigation resolves the
 containing Project from the existing project query rather than using a repository
 ID as a project route. Native publication resolves an owner/community/repository
 scoped Wiki runtime preference, then starts a fresh bounded process through the
 caller-agnostic `crew-wiki::Generator` seam. Hermes receives a copied named
-profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Claude/Codex
-receive an optional model override, and a null model omits `--model` and
+profile, `HERMES_SAFE_MODE=1`, and the native `--safe-mode` flag; Codex receives
+an optional model override, and a null model omits `--model` and
 requests the isolated runtime default. For Hermes Agent v0.21.2 (source HEAD
 `eec131b7163a8f287a9bddfc8ba11e6bd07ac49e`), the launcher loads profile dotenv,
 external secret sources, and managed dotenv before its startup guard reapplies
@@ -566,8 +568,9 @@ policy: macOS wraps the runtime in the fixed `sandbox-exec` process-fork denial,
 Windows retains the bounded runner's Job Object, and unsupported Unix platforms
 fail before disposable runtime setup. The fork-denial regression proves the
 production command builder denies the fixture fork, but these tests do
-not certify a native Hermes launch, provider/auth path, effective model, Claude
-compatibility, or full installed tool isolation. The #363 installed-runtime
+not certify a native Hermes launch, provider/auth path, effective model, or full
+installed tool isolation; Claude Wiki generation remains deferred until its
+compatibility is verified. The #363 installed-runtime
 acceptance must run in the #348 staging environment; #348 owns that environment
 and #363 owns the runtime acceptance result. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the

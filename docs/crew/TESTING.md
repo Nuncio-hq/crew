@@ -978,9 +978,10 @@ cargo test --manifest-path desktop/src-tauri/Cargo.toml wiki_worker::incremental
 cargo test --manifest-path desktop/src-tauri/Cargo.toml bounded_command --lib
 ```
 
-These tests bind runtime/profile/model validation, including null model
-normalization and omission of the CLI override for Claude/Codex while Hermes
-continues to require a named profile, owner/community preference persistence,
+These tests bind runtime/profile/model validation, including the deferred
+Claude constructor rejection, null model normalization and omission of the CLI
+override for Codex while Hermes continues to require a named profile,
+owner/community preference persistence,
 immutable source prompt construction, Codex-style stdin delivery, isolated
 disposable state, nonzero failure, cancellation and bounded input/output/process
 cleanup. Installed Wiki construction checks the shared native containment
@@ -992,10 +993,10 @@ Native generation also has a 15-minute
 job budget around the 180-second per-page process bound. The legacy unsigned
 preview remains a heuristic fixture; a native publication call with no stored
 or supplied selection fails closed. Fake-process GREEN tests do not certify
-provider auth, effective generation model, Claude's installed no-fork path, or
-an installed runtime; #348 must
-run one exact staged runtime with a disposable copied profile/config and
-record source revision, runtime/model/profile, output and no employee-session
+provider auth, effective generation model, or an installed runtime; Claude Wiki
+generation remains deferred until a compatible authenticated path is verified;
+#348 must run one exact staged runtime with a disposable copied profile/config
+and record source revision, runtime/model/profile, output and no employee-session
 mutation.
 
 Incremental tests in `desktop/src-tauri/src/wiki_incremental_tests.rs` bind
@@ -1036,10 +1037,11 @@ provider. They live in
 `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs` so the runtime
 implementation remains under the repository file-size gate.
 
-This source-level guard does not close the installed-runtime acceptance gap.
-The containment wiring and its fork-denial regression do not imply a native
-Hermes launch, provider/auth check, effective-model receipt, Claude compatibility,
-or staging generation. The #363 installed-runtime acceptance must run
+The source-level guard intentionally keeps Claude out of Wiki until its
+installed compatibility is verified. The containment wiring and its fork-denial
+regression do not imply a native Hermes launch, provider/auth check,
+effective-model receipt, or staging generation. The #363 installed-runtime
+acceptance must run
 in the #348 staging environment; #348 owns that environment and #363 owns the
 runtime acceptance result. Mutable Hermes source or wrappers require
 revalidation.

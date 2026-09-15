@@ -28,6 +28,13 @@ const KNOWN_RUNTIME_LABELS: Record<string, string> = {
 
 const KNOWN_RUNTIME_IDS = ["hermes", "claude", "codex"] as const;
 
+export const CLAUDE_WIKI_DEFERRED_REASON =
+  "Claude Code is not yet verified for Wiki generation.";
+
+function wikiRuntimeDeferredReason(runtimeId: string): string | null {
+  return runtimeId === "claude" ? CLAUDE_WIKI_DEFERRED_REASON : null;
+}
+
 export function WikiRuntimeSettingsControl({
   owner,
   repoD,
@@ -63,7 +70,7 @@ export function WikiRuntimeSettingsControl({
       .filter((runtime) => {
         if (!(KNOWN_RUNTIME_IDS as readonly string[]).includes(runtime.id))
           return false;
-        // Wiki invokes the plain CLI; Claude/Codex do not need an ACP adapter.
+        // Wiki uses the plain CLI; an underlying path keeps adapterless entries visible.
         return runtime.id === "hermes"
           ? runtime.availability === "available"
           : Boolean(runtime.underlyingCliPath?.trim());
@@ -143,8 +150,10 @@ export function WikiRuntimeSettingsControl({
         ? "Unavailable"
         : "Not configured";
   const invalidDraft = runtimeId === "hermes" && profile.trim().length === 0;
+  const deferredReason = wikiRuntimeDeferredReason(runtimeId);
 
   async function save() {
+    if (deferredReason) return;
     const started = activeGeneration.current;
     const selection: WikiRuntimeSelection =
       runtimeId === "hermes"
@@ -253,12 +262,26 @@ export function WikiRuntimeSettingsControl({
                 </option>
               ) : null}
               {availableRuntimes.map((runtime) => (
-                <option key={runtime.id} value={runtime.id}>
+                <option
+                  key={runtime.id}
+                  value={runtime.id}
+                  disabled={wikiRuntimeDeferredReason(runtime.id) !== null}
+                >
                   {runtime.label}
                 </option>
               ))}
             </select>
           </label>
+          {deferredReason ? (
+            <p
+              aria-live="polite"
+              className="mb-2 text-xs text-muted-foreground"
+              data-testid="wiki-runtime-claude-deferred"
+              role="status"
+            >
+              {deferredReason}
+            </p>
+          ) : null}
           {runtimeId === "hermes" ? (
             <label className="mb-2 block">
               <span className="mb-1 block text-muted-foreground">
@@ -345,6 +368,7 @@ export function WikiRuntimeSettingsControl({
               data-testid="wiki-runtime-settings-save"
               disabled={
                 invalidDraft ||
+                Boolean(deferredReason) ||
                 saveMutation.isPending ||
                 !settingsQuery.isSuccess ||
                 !runtimeQuery.isSuccess ||

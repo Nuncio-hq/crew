@@ -117,3 +117,20 @@ fn unsupported_unix_has_no_native_wiki_containment_profile() {
         Err(super::super::recap_adapter::RecapRunFailure::UnsupportedContainment)
     );
 }
+
+#[test]
+fn installed_constructor_rejects_deferred_claude_before_runtime_setup() {
+    let result = WikiRuntimeGenerator::installed_with_cancel(
+        WikiRuntimeSelection {
+            runtime_id: "claude".into(),
+            model: Some("claude-fable-5-1".into()),
+            profile: None,
+        },
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+
+    assert_eq!(
+        result.err(),
+        Some(WikiRuntimeFailure::UnsupportedRuntime("claude".into()))
+    );
+}
