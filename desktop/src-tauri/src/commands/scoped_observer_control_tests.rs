@@ -1,14 +1,17 @@
 use super::*;
 use crate::app_state::{AppState, IdentityStorage};
-use base64::Engine;
-use nostr::{Event, JsonUtil, Keys};
+use futures_util::{SinkExt, StreamExt};
+use nostr::{Event, Keys};
+use serde_json::Value;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tauri::Manager;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 struct ResetAdmission;
 impl Drop for ResetAdmission {
@@ -26,58 +29,126 @@ impl Drop for TestRelay {
         self.worker.abort();
     }
 }
-async fn relay(
-    reply: impl FnOnce(Event) -> Option<serde_json::Value> + Send + 'static,
+async fn relay(reply: impl FnOnce(Event) -> Option<Value> + Send + 'static) -> TestRelay {
+    relay_with_auth_gate(reply, None, true).await
+}
+
+async fn relay_with_auth_gate(
+    reply: impl FnOnce(Event) -> Option<Value> + Send + 'static,
+    auth_gate: Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
+    expect_event: bool,
 ) -> TestRelay {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
+    let expected_relay_url = url.clone();
     let connections = Arc::new(AtomicUsize::new(0));
     let count = connections.clone();
     let worker = tokio::spawn(async move {
         tokio::time::timeout(Duration::from_secs(4), async {
-            let (mut socket, _) = listener.accept().await.unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
             count.fetch_add(1, Ordering::SeqCst);
-            let mut bytes = Vec::new();
-            let mut chunk = [0; 4096];
-            let (body, auth_owner) = loop {
-                let n = socket.read(&mut chunk).await.unwrap();
-                assert!(n > 0);
-                bytes.extend_from_slice(&chunk[..n]);
-                assert!(bytes.len() <= 1024 * 1024 + 8192);
-                if let Some(end) = bytes.windows(4).position(|p| p == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&bytes[..end]);
-                    assert!(headers.starts_with("POST /events "));
-                    assert!(headers.to_ascii_lowercase().contains("authorization: nostr "));
-                    let len: usize = headers.lines().find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse().unwrap())
-                    }).unwrap();
-                    if bytes.len() >= end + 4 + len { let auth = headers.lines().find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("authorization").then_some(value.trim())
-                        }).unwrap().strip_prefix("Nostr ").unwrap();
-                        let decoded = base64::engine::general_purpose::STANDARD.decode(auth).unwrap();
-                        let auth = Event::from_json(decoded).unwrap();
-                        auth.verify().unwrap();
-                        break (bytes[end + 4..end + 4 + len].to_vec(), auth.pubkey); }
-                }
-            };
-            let event = Event::from_json(body).unwrap();
-            event.verify().unwrap();
-            assert_eq!(event.pubkey, auth_owner);
-            if let Some(body) = reply(event) {
-                let body = serde_json::to_vec(&body).unwrap();
-                let headers = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-                socket.write_all(headers.as_bytes()).await.unwrap();
-                socket.write_all(&body).await.unwrap();
-                socket.shutdown().await.unwrap();
+            let mut socket = accept_async(stream).await.unwrap();
+            socket
+                .send(Message::Text(
+                    serde_json::json!(["AUTH", "scoped-control-test-challenge"])
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+
+            let auth = next_json(&mut socket).await;
+            assert_eq!(auth.get(0).and_then(Value::as_str), Some("AUTH"));
+            let auth_event: Event =
+                serde_json::from_value(auth.get(1).cloned().expect("AUTH event payload")).unwrap();
+            auth_event.verify().unwrap();
+            assert_eq!(auth_event.kind.as_u16(), 22242);
+            assert!(auth_event.tags.iter().any(|tag| {
+                let values = tag.as_slice();
+                values.first().map(String::as_str) == Some("challenge")
+                    && values.get(1).map(String::as_str) == Some("scoped-control-test-challenge")
+            }));
+            assert!(auth_event.tags.iter().any(|tag| {
+                let values = tag.as_slice();
+                values.first().map(String::as_str) == Some("relay")
+                    && values.get(1).map(String::as_str) == Some(expected_relay_url.as_str())
+            }));
+
+            if let Some((ready, release)) = auth_gate {
+                ready.send(()).unwrap();
+                release.await.unwrap();
             }
-        }).await.expect("bounded relay worker");
+
+            socket
+                .send(Message::Text(
+                    serde_json::json!(["OK", auth_event.id.to_hex(), true, "authenticated"])
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+
+            if !expect_event {
+                match tokio::time::timeout(Duration::from_secs(1), socket.next()).await {
+                    Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => {}
+                    Ok(Some(Ok(message))) => {
+                        panic!("unexpected relay client frame after stale fence: {message:?}")
+                    }
+                    Err(_) => panic!("stale fenced client kept the WebSocket open"),
+                }
+                return;
+            }
+
+            let frame = next_json(&mut socket).await;
+            assert_eq!(frame.get(0).and_then(Value::as_str), Some("EVENT"));
+            let event: Event =
+                serde_json::from_value(frame.get(1).cloned().expect("EVENT payload")).unwrap();
+            event.verify().unwrap();
+            assert_eq!(event.pubkey, auth_event.pubkey);
+            let body = reply(event.clone());
+            if let Some(body) = body {
+                let event_id = body
+                    .get("event_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| event.id.to_hex());
+                let accepted = body
+                    .get("accepted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let message = body.get("message").and_then(Value::as_str).unwrap_or("");
+                socket
+                    .send(Message::Text(
+                        serde_json::json!(["OK", event_id, accepted, message])
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        })
+        .await
+        .expect("bounded relay worker");
     });
     TestRelay {
         url,
         connections,
         worker,
+    }
+}
+
+async fn next_json<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Value
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        match socket.next().await.expect("relay client frame").unwrap() {
+            Message::Text(text) => return serde_json::from_str(text.as_ref()).unwrap(),
+            Message::Ping(data) => {
+                socket.send(Message::Pong(data)).await.unwrap();
+            }
+            other => panic!("unexpected relay client frame: {other:?}"),
+        }
     }
 }
 fn app(url: &str) -> tauri::App<tauri::test::MockRuntime> {
@@ -246,6 +317,47 @@ async fn scoped_stop_identity_aba_during_admission_never_connects() {
 }
 
 #[tokio::test]
+async fn scoped_stop_scope_change_during_auth_never_sends_event() {
+    let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
+    let _reset = ResetAdmission;
+    crate::relay_admission::reset_rate_limit_gate();
+    let (auth_ready_tx, auth_ready_rx) = oneshot::channel();
+    let (auth_release_tx, auth_release_rx) = oneshot::channel();
+    let server =
+        relay_with_auth_gate(accepted, Some((auth_ready_tx, auth_release_rx)), false).await;
+    let app = app(&server.url);
+    let token = capture(app.handle().clone()).await.unwrap().token;
+    let sending = tokio::spawn(send_at_scope(
+        app.handle().clone(),
+        Keys::generate().public_key().to_hex(),
+        payload(),
+        token,
+    ));
+
+    auth_ready_rx.await.unwrap();
+    let state = app.state::<AppState>();
+    let dir = tempfile::tempdir().unwrap();
+    let mutation = state.identity_mutation.lock().unwrap();
+    crate::commands::commit_imported_identity(
+        &state,
+        &mutation,
+        dir.path(),
+        Keys::generate(),
+        |_| Ok(IdentityStorage::LocalFile),
+    )
+    .unwrap();
+    drop(mutation);
+    auth_release_tx.send(()).unwrap();
+
+    let result = sending.await.unwrap();
+    assert!(matches!(
+        result,
+        ScopedControlPublication::NotAttempted { .. }
+    ));
+    assert_eq!(server.connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn scoped_stop_sent_ack_mismatch_refusal_and_disconnect_are_unknown() {
     let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
     let _reset = ResetAdmission;
@@ -266,9 +378,16 @@ async fn scoped_stop_sent_ack_mismatch_refusal_and_disconnect_are_unknown() {
         )
         .await;
         assert!(
-            matches!(result, ScopedControlPublication::Unknown { .. }),
+            matches!(&result, ScopedControlPublication::Unknown { .. }),
             "{result:?}"
         );
+        if outcome == 1 {
+            assert!(matches!(
+                &result,
+                ScopedControlPublication::Unknown { message }
+                    if message == "refused"
+            ));
+        }
         assert_eq!(server.connections.load(Ordering::SeqCst), 1);
     }
 }
@@ -313,4 +432,26 @@ async fn scoped_stop_post_send_identity_change_preserves_accepted_outcome() {
         "{result:?}"
     );
     assert_eq!(server.connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn scoped_observer_transport_blocks_key_backup_before_connect() {
+    let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
+    let _reset = ResetAdmission;
+    crate::relay_admission::reset_rate_limit_gate();
+    let server = relay(accepted).await;
+    let keys = Keys::generate();
+    let event = nostr::EventBuilder::new(
+        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_AGENT_OBSERVER_FRAME as u16),
+        "ncryptsec1fixture-not-a-real-key",
+    )
+    .sign_with_keys(&keys)
+    .unwrap();
+    let transport =
+        transport::ScopedObserverControlTransport::captured(server.url.clone(), keys).unwrap();
+    let result = transport.publish(&event, || async { Ok(()) }).await;
+    assert!(
+        matches!(result, Err(OperationTransportError::InvalidInput(ref message)) if message.contains("key-backup material"))
+    );
+    assert_eq!(server.connections.load(Ordering::SeqCst), 0);
 }

@@ -1168,13 +1168,17 @@ none replace final `just ci` or real installed staging screenshots.
 
 #354 scoped Stop native source tests live in
 `commands/scoped_observer_control_tests.rs`. They bind the actual command helper,
-native owner capture, shared transport, and bounded loopback HTTP receiver.
-The required cases are zero connections on stale scope/malformed target and
-identity import ABA during admission; captured event/NIP-98 owner and decrypted
-exact target on acceptance; unknown on mismatched ACK/refusal/disconnect; and
-preserved accepted outcome when identity changes after send. These tests exercise
-the native command and encrypted transport against a bounded loopback receiver; they do not establish installed UI/runtime acceptance.
-The shared transport's existing tests also remain required and unchanged.
+native owner capture, and a bounded loopback WebSocket relay. The relay sends
+an AUTH challenge, verifies the captured NIP-42 owner, and receives observer
+kind 24200 as an EVENT frame. An HTTP-only mock is insufficient: the actual
+relay rejects this kind through the HTTP event-ingest bridge.
+The required cases include stale scope/malformed target and identity import ABA
+during admission; captured owner and decrypted exact target on acceptance; scope
+changes during connection/authentication that prevent EVENT publication; uncertain
+ACK/disconnect outcomes; and a preserved accepted outcome when identity changes
+after send. These tests exercise the native command and encrypted WebSocket
+transport; they do not establish installed UI/runtime acceptance. Existing owner
+HTTP transport tests remain required for the operations that use that bridge.
 
 
 `activeAgentsForConversation.test.mjs` exercises the real observer store and

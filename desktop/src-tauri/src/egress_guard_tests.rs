@@ -275,9 +275,8 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     ("src/archive/mod_tests.rs", 1, 0),
     ("src/managed_agents/persona_events/tests.rs", 1, 0),
     ("src/commands/team_snapshot/tests.rs", 1, 0),
-    // Mock relay route in scoped observer-control tests; production Stop
-    // publication goes through the guarded owner-operation transport.
-    ("src/commands/scoped_observer_control_tests.rs", 1, 0),
+    // Captured observer controls use WebSocket, with their own guarded send.
+    ("src/commands/scoped_observer_control_transport.rs", 0, 1),
     // Mock-relay route in its in-file tests; production publish goes through
     // the guarded boundary-1 funnel (`submit_signed_event_at_with_keys`).
     ("src/commands/personas/sharing.rs", 1, 0),
@@ -466,6 +465,7 @@ fn ncryptsec_handling_is_confined_to_allowlisted_files() {
         "src/commands/team_snapshot.rs",
         "src/commands/team_snapshot/tests.rs",
         "src/commands/owner_operation_transport_tests.rs", // boundary 9 injection fixture
+        "src/commands/scoped_observer_control_tests.rs",   // scoped WebSocket injection fixture
         "src/commands/personas/snapshot/import.rs",
         "src/native_websocket.rs",
         "src/commands/owner_operation_transport_tests.rs", // boundary 9 injection fixture

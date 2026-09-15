@@ -1,10 +1,14 @@
 //! Selected-run control publication through the shared captured-owner transport.
 use nostr::PublicKey;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
-use super::owner_operation_transport::{OperationTransportError, OwnerOperationTransport};
+use super::owner_operation_transport::OperationTransportError;
 use crate::app_state::owner_scope::{assert_current, capture, OwnerScopeToken};
+
+#[path = "scoped_observer_control_transport.rs"]
+mod transport;
+use transport::ScopedObserverControlTransport;
 
 /// Exact-turn controls admitted through the captured-owner transport.
 #[derive(Deserialize, Serialize)]
@@ -75,7 +79,7 @@ async fn send_at_scope<R: Runtime>(
 
 struct PreparedControl {
     event: nostr::Event,
-    transport: OwnerOperationTransport,
+    transport: ScopedObserverControlTransport,
     token: OwnerScopeToken,
 }
 
@@ -129,15 +133,11 @@ async fn prepare_control<R: Runtime>(
     .map_err(|error| format!("build observer control failed: {error}"))?
     .sign_with_keys(&captured.keys)
     .map_err(|error| format!("sign observer control failed: {error}"))?;
-    let transport = match OwnerOperationTransport::captured(
-        &app.state::<crate::AppState>(),
-        captured.token.scope.community.clone(),
-        captured.keys,
-        None,
-    ) {
-        Ok(transport) => transport,
-        Err(error) => return Err(error.to_string()),
-    };
+    let transport =
+        match ScopedObserverControlTransport::captured(captured.relay_url, captured.keys) {
+            Ok(transport) => transport,
+            Err(error) => return Err(error.to_string()),
+        };
     Ok(PreparedControl {
         event,
         transport,
@@ -149,8 +149,15 @@ async fn publish_prepared<R: Runtime>(
     app: AppHandle<R>,
     prepared: PreparedControl,
 ) -> ScopedControlPublication {
-    // Pass a lazy future: the shared transport polls it AFTER admission.
-    let guard = async { assert_current(app.clone(), &prepared.token).await };
+    // Pass a lazy guard factory: the transport checks it after admission and
+    // again after asynchronous WebSocket authentication, immediately before
+    // the EVENT frame can leave the process.
+    let token = prepared.token.clone();
+    let guard = move || {
+        let app = app.clone();
+        let token = token.clone();
+        async move { assert_current(app, &token).await }
+    };
     match prepared.transport.publish(&prepared.event, guard).await {
         Ok(result) if result.accepted => ScopedControlPublication::Accepted {
             event_id: result.event_id,

@@ -794,10 +794,12 @@ by #348/#357 before #354 is complete.
 #354 selected-run Stop extends the existing encrypted observer control frame.
 The source-stage `send_scoped_observer_control` command captures the native
 owner scope and requires the caller's exact token, including identity/workspace
-generations. It uses the shared `OwnerOperationTransport` with captured keys and
-origin, and passes a lazy `assert_current` check that runs after admission.
-It neither adds a journal nor duplicates the transport. Native preparation or
-admission rejection is `not_attempted`; an exact positive relay acknowledgment
+generations. Observer control kind 24200 uses Buzz's existing WebSocket path,
+not the HTTP event-ingest bridge. Its publisher retains the captured WebSocket
+URL and signing keys, uses shared rate-limit admission and NIP-42 authentication,
+and rechecks `assert_current` after connection setup immediately before sending.
+The complete attempt has a ten-second budget. No journal is added. Failure
+before the control event is sent is `not_attempted`; an exact positive relay acknowledgment
 is `accepted`; all uncertain sent outcomes remain `unknown`. Relay acceptance is
 not a harness Stop acknowledgment. The existing owner-authorized harness handler
 still verifies the exact channel/conversation/turn target. A scope change after
