@@ -10,7 +10,9 @@ import {
   UserRound,
 } from "lucide-react";
 import * as React from "react";
+import { managedAgentTransportPresentation } from "@/features/agents/managedAgentTransportStatus";
 import { AgentStatusBadge } from "@/features/agents/ui/AgentStatusBadge";
+import { useProfileManagedAgentRuntime } from "@/features/profile/hooks";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   HoverCopyIndicator,
@@ -21,9 +23,11 @@ import { PanelSectionGroup } from "@/shared/ui/PanelSectionGroup";
 import type {
   AgentPersona,
   ManagedAgent,
+  ManagedAgentRuntimeStatus,
   Profile,
   RelayAgent,
 } from "@/shared/api/types";
+import { Badge } from "@/shared/ui/badge";
 
 const RUNTIME_LABELS: Record<string, string> = {
   goose: "Goose",
@@ -110,6 +114,11 @@ export function useProfileFieldBuckets({
   pubkey: string | null;
   relayAgent: RelayAgent | undefined;
 }) {
+  const managedAgentRuntime = useProfileManagedAgentRuntime(
+    managedAgent,
+    pubkey,
+  );
+
   return React.useMemo(() => {
     const metadataFields = [
       ...buildPublicFields({ pubkey, profile, relayAgent, isBot, persona }),
@@ -117,6 +126,7 @@ export function useProfileFieldBuckets({
         ? buildOwnerFields({
             includeOperationalFields: isOwner === true,
             managedAgent,
+            managedAgentRuntime,
             onOpenProfile,
             ownerDisplayName,
             ownerHandle,
@@ -134,6 +144,7 @@ export function useProfileFieldBuckets({
     isBot,
     isOwner,
     managedAgent,
+    managedAgentRuntime,
     onOpenProfile,
     ownerDisplayName,
     ownerHandle,
@@ -225,6 +236,7 @@ export function buildPublicFields({
 export function buildOwnerFields({
   includeOperationalFields,
   managedAgent,
+  managedAgentRuntime,
   onOpenProfile,
   ownerDisplayName,
   ownerHandle,
@@ -237,6 +249,7 @@ export function buildOwnerFields({
 }: {
   includeOperationalFields: boolean;
   managedAgent: ManagedAgent | undefined;
+  managedAgentRuntime?: ManagedAgentRuntimeStatus;
   onOpenProfile?: (pubkey: string) => void;
   ownerDisplayName: string | null;
   ownerHandle: string | null;
@@ -260,6 +273,9 @@ export function buildOwnerFields({
     : null;
 
   const ownerClickable = Boolean(onOpenProfile && ownerProfilePubkey);
+  const transport = managedAgent
+    ? managedAgentTransportPresentation(managedAgentRuntime)
+    : null;
 
   if (ownerDisplayName) {
     fields.push({
@@ -322,13 +338,33 @@ export function buildOwnerFields({
         .replace(/_/g, " ")
         .replace(/\b\w/g, (char: string) => char.toUpperCase()),
       displayNode: (
-        <AgentStatusBadge
-          className="normal-case tracking-normal"
-          presenceLoaded={presenceLoaded}
-          presenceStatus={presenceStatus}
-          sentenceCase
-          status={managedAgent.status}
-        />
+        <div className="flex min-w-0 flex-col items-end gap-1">
+          <div className="flex flex-wrap justify-end gap-2">
+            <AgentStatusBadge
+              className="normal-case tracking-normal"
+              presenceLoaded={presenceLoaded}
+              presenceStatus={presenceStatus}
+              sentenceCase
+              status={managedAgent.status}
+              transportState={managedAgentRuntime?.transport?.state}
+            />
+            {transport ? (
+              <Badge
+                className="normal-case tracking-normal"
+                data-testid="user-profile-agent-transport"
+                title={transport.detail ?? undefined}
+                variant={transport.needsRetry ? "warning" : "secondary"}
+              >
+                {transport.label}
+              </Badge>
+            ) : null}
+          </div>
+          {transport?.detail ? (
+            <span className="max-w-56 text-right text-xs text-muted-foreground">
+              {transport.detail}
+            </span>
+          ) : null}
+        </div>
       ),
       icon: Activity,
       label: "Status",

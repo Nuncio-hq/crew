@@ -137,8 +137,8 @@ pub(crate) async fn owner_operation_scope(app: AppHandle) -> Result<OwnerScopeTo
 
 /// Reserve or recover an immutable creation intent before external effects.
 #[tauri::command]
-pub(crate) async fn owner_operation_create(
-    app: AppHandle,
+pub(crate) async fn owner_operation_create<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     operation: NewOperation,
 ) -> Result<ScopedOperationResult<CreateResult>, String> {
@@ -199,8 +199,8 @@ pub(super) async fn owner_operation_update_at_path<R: Runtime>(
 ///
 /// This deliberately has no `tauri::command` attribute. Renderer IPC must use
 /// [`owner_operation_update`], which rejects managed-agent deletion records.
-pub(crate) async fn owner_operation_update_native(
-    app: AppHandle,
+pub(crate) async fn owner_operation_update_native<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     id: String,
     revision: u64,
@@ -220,8 +220,8 @@ pub(crate) async fn owner_operation_update_native(
 
 /// Load an exact record from the currently captured native scope.
 #[tauri::command]
-pub(crate) async fn owner_operation_load(
-    app: AppHandle,
+pub(crate) async fn owner_operation_load<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     id: String,
     revision: Option<u64>,
@@ -253,8 +253,8 @@ pub(super) async fn owner_operation_load_at_path<R: Runtime>(
 
 /// List bounded metadata; payloads require an explicit scoped load.
 #[tauri::command]
-pub(crate) async fn owner_operation_list(
-    app: AppHandle,
+pub(crate) async fn owner_operation_list<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     after_id: Option<String>,
     limit: usize,
@@ -281,8 +281,8 @@ pub(super) async fn owner_operation_list_at_path<R: Runtime>(
 
 /// Atomically advance one whole recovery snapshot at its expected local revision.
 #[tauri::command]
-pub(crate) async fn owner_operation_update(
-    app: AppHandle,
+pub(crate) async fn owner_operation_update<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     id: String,
     revision: u64,

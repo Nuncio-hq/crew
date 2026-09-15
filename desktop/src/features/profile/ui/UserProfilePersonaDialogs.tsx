@@ -9,6 +9,7 @@ import { PersonaDeleteDialog } from "@/features/agents/ui/PersonaDeleteDialog";
 import { AgentDialog } from "@/features/agents/ui/AgentDialog";
 import type { PersonaDialogState } from "@/features/agents/ui/personaDialogState";
 import { UserProfileSnapshotExportDialog } from "@/features/profile/ui/UserProfileSnapshotExportDialog";
+import type { ProfilePersonaSubmitOptions } from "./UserProfilePanelPersonaSubmit";
 
 /** Agent selected for card minting. */
 export type CardMintTarget = {
@@ -67,7 +68,10 @@ export function UserProfilePersonaDialogs({
     },
   ) => void;
   onExportSnapshot: (persona: AgentPersona) => void;
-  onSubmit: (input: CreatePersonaInput | UpdatePersonaInput) => Promise<void>;
+  onSubmit: (
+    input: CreatePersonaInput | UpdatePersonaInput,
+    options?: ProfilePersonaSubmitOptions,
+  ) => Promise<void>;
 }) {
   const runtimeCatalogStatus = runtimesLoading
     ? "loading"

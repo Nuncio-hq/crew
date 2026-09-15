@@ -2291,3 +2291,27 @@ or another origin. This is origin-scoped discovery under the configured
 transport's existing trust model, not additional cryptographic authentication
 or a new key-pinning interface. Other relay-self consumers keep their existing
 behavior.
+
+
+## D-079 clarification — Persona cascades and journal schema v4
+
+- **Status:** Accepted implementation clarification for #353; installed recovery acceptance remains open.
+- **Date:** 2026-09-13
+- **Supersedes:** The schema-v3 compatibility paragraph in D-079, for new builds using schema v4.
+
+The existing persona-card Delete operation coordinates its linked managed
+instances through the same durable deletion lifecycle as direct instance
+Delete. A parent operation records the complete bounded target set; each
+child is bound to that parent and its exact agent key. Failed child stops or
+cleanup retain retryable state and prevent removal of the persona definition.
+No new agent registry or relay event kind is introduced.
+
+The owner-operations journal adds an atomic, idempotent v3-to-v4 migration
+that rebuilds managed-agent claim indexes. A coordinator and its first child
+may share the child's resource key; unrelated direct claims remain exclusive.
+Existing scoped payloads, revisions, Wiki successor relations, and unresolved
+claims are preserved. Older binaries refuse v4. Binary rollback alone is
+unsupported: preserve the entire v4 journal and SQLite sidecars, then use a
+verified compatible build or forward fix. Do not restore an older snapshot
+over later operations. The [recovery runbook](TESTING.md#wiki-journal-v4-recovery)
+owns the current procedure and its installed acceptance gates.

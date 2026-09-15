@@ -1,6 +1,7 @@
 //! Native-only global instance claims. No foreign scope data leaves this API.
 use rusqlite::Connection;
 use serde::Deserialize;
+use sha2::Digest;
 
 use super::storage::{read, sql_error, validate_id, validate_scope};
 use super::{
@@ -10,7 +11,18 @@ use super::{
 
 const MAX_DELETE_RECORDS: usize = 4096;
 const MAX_DELETE_CHANNELS: usize = 64;
+const MAX_CASCADE_TARGETS: usize = 15;
 const MAX_ERROR_BYTES: usize = 512;
+
+/// Derive the app-local claim coordinate for a persona cascade that has no
+/// managed-agent children. It is deliberately a valid 64-hex coordinate so
+/// it can use the same SQLite/global claim path as an instance deletion, while
+/// remaining distinct from any real managed-agent public key in practice.
+pub(crate) fn persona_cascade_coordinator_resource_key(persona_id: &str) -> String {
+    hex::encode(sha2::Sha256::digest(
+        format!("persona-cascade:{}", persona_id).as_bytes(),
+    ))
+}
 
 #[derive(Deserialize)]
 struct ManagedDeleteFence {
@@ -31,6 +43,39 @@ struct ManagedDeleteChannel {
 }
 
 #[derive(Deserialize)]
+struct ManagedDeletePersonaFence {
+    id: String,
+    d_tag: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Deserialize)]
+struct ManagedDeleteCascadeTarget {
+    operation_id: String,
+    persona_id: String,
+    fence: ManagedDeleteFence,
+    channels: Vec<ManagedDeleteChannel>,
+    local_removed: bool,
+    key_removed: bool,
+    tombstone_enqueued: bool,
+    failures: u8,
+    last_error: Option<String>,
+    #[serde(default)]
+    settled: bool,
+}
+
+#[derive(Deserialize)]
+struct ManagedDeleteCascade {
+    persona: ManagedDeletePersonaFence,
+    targets: Vec<ManagedDeleteCascadeTarget>,
+    #[serde(default)]
+    coordinator_only: bool,
+    #[serde(default)]
+    persona_removed: bool,
+}
+
+#[derive(Deserialize)]
 struct ManagedDeletePayload {
     version: u32,
     fence: ManagedDeleteFence,
@@ -41,6 +86,12 @@ struct ManagedDeletePayload {
     tombstone_enqueued: bool,
     failures: u8,
     last_error: Option<String>,
+    #[serde(default)]
+    cascade_parent: Option<String>,
+    #[serde(default)]
+    cascade_persona_id: Option<String>,
+    #[serde(default)]
+    cascade: Option<ManagedDeleteCascade>,
 }
 
 pub(super) fn validate_pubkey(pubkey: &str) -> Result<(), StoreError> {
@@ -48,6 +99,137 @@ pub(super) fn validate_pubkey(pubkey: &str) -> Result<(), StoreError> {
         || !pubkey
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(StoreError::Invalid);
+    }
+    Ok(())
+}
+
+fn validate_channels(
+    channels: &[ManagedDeleteChannel],
+    pubkey: &str,
+    operation_id: &str,
+) -> Result<bool, StoreError> {
+    if channels.len() > MAX_DELETE_CHANNELS {
+        return Err(StoreError::Invalid);
+    }
+    let mut channel_ids = std::collections::BTreeSet::new();
+    let mut cleanup_operations = std::collections::BTreeSet::new();
+    for cleanup in channels {
+        let channel_id =
+            uuid::Uuid::parse_str(&cleanup.channel_id).map_err(|_| StoreError::Invalid)?;
+        let cleanup_id =
+            uuid::Uuid::parse_str(&cleanup.operation_id).map_err(|_| StoreError::Invalid)?;
+        if channel_id.to_string() != cleanup.channel_id
+            || cleanup_id.is_nil()
+            || cleanup_id.to_string() != cleanup.operation_id
+            || cleanup.operation_id == operation_id
+            || !channel_ids.insert(&cleanup.channel_id)
+            || !cleanup_operations.insert(&cleanup.operation_id)
+            || cleanup.members != vec![pubkey.to_string()]
+            || cleanup.settled && cleanup.review_required
+        {
+            return Err(StoreError::Invalid);
+        }
+    }
+    Ok(channels
+        .iter()
+        .all(|cleanup| cleanup.settled && !cleanup.review_required))
+}
+
+fn validate_cascade(
+    operation: &Operation,
+    payload: &ManagedDeletePayload,
+    cascade: &ManagedDeleteCascade,
+) -> Result<(), StoreError> {
+    if payload.cascade_parent.is_some()
+        || (!cascade.coordinator_only && cascade.targets.is_empty())
+        || (cascade.coordinator_only && !cascade.targets.is_empty())
+        || cascade.targets.len() > MAX_CASCADE_TARGETS
+        || cascade.persona.id.is_empty()
+        || cascade.persona.id.len() > 256
+        || cascade.persona.d_tag.is_empty()
+        || cascade.persona.d_tag.len() > 256
+        || cascade.persona.created_at.is_empty()
+        || cascade.persona.created_at.len() > 256
+        || cascade.persona.updated_at.is_empty()
+        || cascade.persona.updated_at.len() > 256
+    {
+        return Err(StoreError::Invalid);
+    }
+    if cascade.coordinator_only
+        && (payload.fence.pubkey != persona_cascade_coordinator_resource_key(&cascade.persona.id)
+            || payload.fence.name != "persona-cascade"
+            || payload.fence.created_at != cascade.persona.created_at
+            || payload.fence.relay_url != "wss://persona-coordinator.invalid"
+            || payload.fence.backend_agent_id.is_some()
+            || !payload.channels.is_empty()
+            || cascade.persona_removed
+                != (payload.local_removed && payload.key_removed && payload.tombstone_enqueued))
+    {
+        return Err(StoreError::Invalid);
+    }
+    let mut target_keys = std::collections::BTreeSet::new();
+    let mut target_operations = std::collections::BTreeSet::new();
+    for (index, target) in cascade.targets.iter().enumerate() {
+        validate_pubkey(&target.fence.pubkey)?;
+        let target_operation_id =
+            uuid::Uuid::parse_str(&target.operation_id).map_err(|_| StoreError::Invalid)?;
+        if target.persona_id.is_empty()
+            || target.persona_id.len() > 256
+            || target.persona_id != cascade.persona.id
+            || target.fence.name.len() > 256
+            || target.fence.created_at.is_empty()
+            || target.fence.created_at.len() > 256
+            || target.fence.relay_url.len() > 2048
+            || target
+                .fence
+                .backend_agent_id
+                .as_ref()
+                .is_some_and(|id| id.len() > 512)
+            || target.failures > 5
+            || target
+                .last_error
+                .as_ref()
+                .is_some_and(|error| error.len() > MAX_ERROR_BYTES)
+            || target_operation_id.is_nil()
+            || target_operation_id.to_string() != target.operation_id
+            || target.operation_id == operation.id
+            || !target_operations.insert(&target.operation_id)
+            || !target_keys.insert(&target.fence.pubkey)
+        {
+            return Err(StoreError::Invalid);
+        }
+        let all_settled =
+            validate_channels(&target.channels, &target.fence.pubkey, &target.operation_id)?;
+        if target.key_removed && !target.local_removed
+            || target.tombstone_enqueued && !target.key_removed
+            || target.settled
+                && (!target.local_removed
+                    || !target.key_removed
+                    || !target.tombstone_enqueued
+                    || !all_settled)
+        {
+            return Err(StoreError::Invalid);
+        }
+        if index == 0 && target.fence.pubkey != payload.fence.pubkey {
+            return Err(StoreError::Invalid);
+        }
+    }
+    if cascade.persona_removed
+        && (!payload.local_removed
+            || !payload.key_removed
+            || !payload.tombstone_enqueued
+            || !cascade.targets.iter().all(|target| target.settled))
+    {
+        return Err(StoreError::Invalid);
+    }
+    // The top-level fields are a compatibility projection of the first
+    // target; they are insufficient evidence for a terminal coordinator.
+    // Reconciliation may be true only after every prepared child and the
+    // persona removal itself have durable witnesses.
+    if operation.reconciled
+        && (!cascade.persona_removed || !cascade.targets.iter().all(|target| target.settled))
     {
         return Err(StoreError::Invalid);
     }
@@ -72,14 +254,12 @@ pub(crate) fn validate_record(operation: &Operation) -> Result<(), StoreError> {
         || payload.fence.name.len() > 256
         || payload.fence.created_at.is_empty()
         || payload.fence.created_at.len() > 256
-        || payload.fence.relay_url.is_empty()
         || payload.fence.relay_url.len() > 2048
         || payload
             .fence
             .backend_agent_id
             .as_ref()
             .is_some_and(|id| id.len() > 512)
-        || payload.channels.len() > MAX_DELETE_CHANNELS
         || payload.key_removed && !payload.local_removed
         || payload.tombstone_enqueued && !payload.key_removed
         || payload.failures > 5
@@ -91,30 +271,24 @@ pub(crate) fn validate_record(operation: &Operation) -> Result<(), StoreError> {
         return Err(StoreError::Invalid);
     }
 
-    let mut channels = std::collections::BTreeSet::new();
-    let mut cleanup_operations = std::collections::BTreeSet::new();
-    for cleanup in &payload.channels {
-        let channel_id =
-            uuid::Uuid::parse_str(&cleanup.channel_id).map_err(|_| StoreError::Invalid)?;
-        let operation_id =
-            uuid::Uuid::parse_str(&cleanup.operation_id).map_err(|_| StoreError::Invalid)?;
-        if channel_id.to_string() != cleanup.channel_id
-            || operation_id.is_nil()
-            || operation_id.to_string() != cleanup.operation_id
-            || cleanup.operation_id == operation.id
-            || !channels.insert(&cleanup.channel_id)
-            || !cleanup_operations.insert(&cleanup.operation_id)
-            || cleanup.members != vec![payload.fence.pubkey.clone()]
-            || cleanup.settled && cleanup.review_required
-        {
+    let all_settled = validate_channels(&payload.channels, &payload.fence.pubkey, &operation.id)?;
+    if payload.cascade_parent.is_some() != payload.cascade_persona_id.is_some()
+        || payload
+            .cascade_persona_id
+            .as_ref()
+            .is_some_and(|persona_id| persona_id.is_empty() || persona_id.len() > 256)
+    {
+        return Err(StoreError::Invalid);
+    }
+    if let Some(parent_id) = &payload.cascade_parent {
+        let parent = uuid::Uuid::parse_str(parent_id).map_err(|_| StoreError::Invalid)?;
+        if parent.is_nil() || parent_id == &operation.id || payload.cascade.is_some() {
             return Err(StoreError::Invalid);
         }
     }
-
-    let all_settled = payload
-        .channels
-        .iter()
-        .all(|cleanup| cleanup.settled && !cleanup.review_required);
+    if let Some(cascade) = &payload.cascade {
+        validate_cascade(operation, &payload, cascade)?;
+    }
     if operation.status == OperationStatus::Complete && !operation.reconciled {
         return Err(StoreError::Invalid);
     }
@@ -164,6 +338,34 @@ fn scan(connection: &Connection, max_bytes: usize) -> Result<Vec<Operation>, Sto
     Ok(operations)
 }
 
+fn payload_contains_pubkey(operation: &Operation, pubkey: &str) -> Result<bool, StoreError> {
+    let payload: ManagedDeletePayload =
+        serde_json::from_value(operation.payload.clone()).map_err(|_| StoreError::Corrupt)?;
+    Ok(payload.fence.pubkey == pubkey
+        || payload.cascade.as_ref().is_some_and(|cascade| {
+            cascade
+                .targets
+                .iter()
+                .any(|target| target.fence.pubkey == pubkey)
+        }))
+}
+
+fn cascade_parent_id(operation: &Operation) -> Result<Option<String>, StoreError> {
+    serde_json::from_value::<ManagedDeletePayload>(operation.payload.clone())
+        .map(|payload| payload.cascade_parent)
+        .map_err(|_| StoreError::Corrupt)
+}
+
+fn parent_contains_child(parent: &Operation, child: &Operation) -> Result<bool, StoreError> {
+    let payload: ManagedDeletePayload =
+        serde_json::from_value(parent.payload.clone()).map_err(|_| StoreError::Corrupt)?;
+    Ok(payload.cascade.as_ref().is_some_and(|cascade| {
+        cascade.targets.iter().any(|target| {
+            target.operation_id == child.id && target.fence.pubkey == child.resource_key
+        })
+    }))
+}
+
 pub(super) fn claim(
     connection: &Connection,
     pubkey: &str,
@@ -173,8 +375,20 @@ pub(super) fn claim(
     // Include terminal rows: a corrupt SQL reconciled bit cannot silently
     // release a JSON-unresolved intent. Read each bounded record through the
     // shared coherence validator before inspecting its authoritative fields.
+    let operations = scan(connection, max_bytes)?;
+    let unresolved_ids: std::collections::BTreeSet<(&str, &str, &str)> = operations
+        .iter()
+        .filter(|operation| !operation.reconciled)
+        .map(|operation| {
+            (
+                operation.scope.owner.as_str(),
+                operation.scope.community.as_str(),
+                operation.id.as_str(),
+            )
+        })
+        .collect();
     let mut found = None;
-    for op in scan(connection, max_bytes)? {
+    for op in &operations {
         if op.reconciled
             && !matches!(
                 op.status,
@@ -187,11 +401,24 @@ pub(super) fn claim(
             // unresolved work.
             return Err(StoreError::Corrupt);
         }
-        if op.resource_key == pubkey && !op.reconciled {
+        if !op.reconciled
+            && payload_contains_pubkey(op, pubkey)?
+            && !cascade_parent_id(op)?.is_some_and(|parent_id| {
+                unresolved_ids.contains(&(
+                    op.scope.owner.as_str(),
+                    op.scope.community.as_str(),
+                    parent_id.as_str(),
+                )) && operations.iter().any(|parent| {
+                    parent.scope == op.scope
+                        && parent.id == parent_id
+                        && parent_contains_child(parent, op).unwrap_or(false)
+                })
+            })
+        {
             if found.is_some() {
                 return Err(StoreError::Corrupt);
             }
-            found = Some(op);
+            found = Some(op.clone());
         }
     }
     Ok(found)
@@ -210,10 +437,16 @@ impl OperationStore {
     pub fn list_managed_agent_deletions(
         &self,
     ) -> Result<Vec<ManagedAgentDeletionSummary>, StoreError> {
-        let mut summaries: Vec<_> = scan(&self.connection, self.limits.bytes_per_operation)?
-            .into_iter()
-            .filter(|operation| !operation.reconciled)
-            .map(|operation| ManagedAgentDeletionSummary {
+        let mut summaries = Vec::new();
+        for operation in scan(&self.connection, self.limits.bytes_per_operation)? {
+            if operation.reconciled || cascade_parent_id(&operation)?.is_some() {
+                // A persona cascade child is driven by its coordinator. Keep
+                // the child row durable for crash recovery, but expose one
+                // retry affordance in the recovery UI rather than N duplicate
+                // delete entries.
+                continue;
+            }
+            summaries.push(ManagedAgentDeletionSummary {
                 id: operation.id,
                 owner: operation.scope.owner,
                 community: operation.scope.community,
@@ -222,8 +455,8 @@ impl OperationStore {
                 status: operation.status,
                 reconciled: operation.reconciled,
                 updated_at: operation.updated_at,
-            })
-            .collect();
+            });
+        }
         summaries.sort_by(|left, right| {
             right
                 .updated_at
