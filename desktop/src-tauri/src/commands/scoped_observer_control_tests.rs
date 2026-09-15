@@ -337,16 +337,17 @@ async fn scoped_stop_scope_change_during_auth_never_sends_event() {
     auth_ready_rx.await.unwrap();
     let state = app.state::<AppState>();
     let dir = tempfile::tempdir().unwrap();
-    let mutation = state.identity_mutation.lock().unwrap();
-    crate::commands::commit_imported_identity(
-        &state,
-        &mutation,
-        dir.path(),
-        Keys::generate(),
-        |_| Ok(IdentityStorage::LocalFile),
-    )
-    .unwrap();
-    drop(mutation);
+    {
+        let mutation = state.identity_mutation.lock().unwrap();
+        crate::commands::commit_imported_identity(
+            &state,
+            &mutation,
+            dir.path(),
+            Keys::generate(),
+            |_| Ok(IdentityStorage::LocalFile),
+        )
+        .unwrap();
+    }
     auth_release_tx.send(()).unwrap();
 
     let result = sending.await.unwrap();
