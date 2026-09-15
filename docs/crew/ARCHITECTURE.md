@@ -230,6 +230,9 @@ relay text and unrelated acknowledgements do not enter it. A failed generation
 may receive a bounded final read in retired diagnostics, but the retired cache
 cannot establish a live process or overwrite a newer generation.
 
+The profile Activity row renders local transport health separately from process
+lifecycle status.
+
 The opt-in native evidence markers are a diagnostic sink only. Registration is
 emitted before an AUTH marker, each marker is bounded and retried a fixed number
 of times, and generation/attempt/AUTH identities deduplicate renewals and stale

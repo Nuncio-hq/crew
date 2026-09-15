@@ -11,6 +11,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
+import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
+import { findManagedAgentRuntime } from "@/features/agents/managedAgentRuntimeStatus";
 import {
   getProfile,
   searchUsers,
@@ -21,6 +23,8 @@ import {
 import { getContactList, setContactList } from "@/shared/api/social";
 import type { ContactListResponse } from "@/shared/api/socialTypes";
 import type {
+  ManagedAgent,
+  ManagedAgentRuntimeStatus,
   Profile,
   UpdateProfileInput,
   UserSearchResult,
@@ -280,6 +284,30 @@ export function useUserProfileQuery(pubkey?: string) {
     queryFn: () => getUserProfile(pubkey),
     staleTime: 60_000,
   });
+}
+
+/**
+ * Reads the managed-agent runtime for the profile's exact active-community
+ * pair so profile status can show transport health separately from lifecycle.
+ */
+export function useProfileManagedAgentRuntime(
+  managedAgent: ManagedAgent | undefined,
+  effectivePubkey: string | null,
+): ManagedAgentRuntimeStatus | undefined {
+  const { activeCommunity } = useCommunities();
+  const relayUrl = activeCommunity?.relayUrl;
+  const runtimesQuery = useManagedAgentRuntimesQuery({
+    enabled: Boolean(relayUrl && effectivePubkey),
+  });
+
+  return React.useMemo(() => {
+    if (!managedAgent || !relayUrl) return undefined;
+    return findManagedAgentRuntime(
+      runtimesQuery.data ?? [],
+      managedAgent.pubkey,
+      relayUrl,
+    );
+  }, [managedAgent, relayUrl, runtimesQuery.data]);
 }
 
 // Per-pubkey resolution cache backing `useUsersBatchQuery`'s delta fetch.
