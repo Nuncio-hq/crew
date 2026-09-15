@@ -809,6 +809,11 @@ not a harness Stop acknowledgment. The existing owner-authorized harness handler
 still verifies the exact channel/conversation/turn target. A scope change after
 send cannot retroactively turn that attempt into `not_attempted`.
 
+Clean `ControlSignal::Cancel` termination still emits `turn_error` so active-turn
+projections close, but carries `outcome: "cancelled"` with generic `error: "Run stopped"`;
+the desktop renders a stopped status. Missing or malformed terminal outcome data
+continues to render as a genuine error.
+
 
 The source-stage Activity run picker uses existing live observer session/turn
 identities and captures the native owner token before enabling selection.

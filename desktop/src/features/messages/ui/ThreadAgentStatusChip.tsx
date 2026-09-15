@@ -71,6 +71,7 @@ export type ThreadAgentStatusChipState =
   | "telemetry-unavailable"
   | "ready-to-review"
   | "done"
+  | "stopped"
   | "failed";
 
 export type ThreadAgentStatusChipView = {
@@ -138,16 +139,34 @@ export function buildThreadAgentStatusChipView(
     };
   }
 
+  const cancelledPubkeys =
+    outcome?.outcome === "cancelled" && outcome.cancelledAgentSlots?.length
+      ? outcome.cancelledAgentSlots.map((slot) => slot.agentPubkey)
+      : outcome?.outcome === "cancelled"
+        ? [outcome.agentPubkey]
+        : [];
   const pubkeys =
     summaries.length > 0
       ? summaries.map((summary) => summary.agentPubkey)
-      : receipt
-        ? [receipt.agentPubkey]
-        : outcome
-          ? [outcome.agentPubkey]
-          : [];
+      : cancelledPubkeys.length > 0
+        ? cancelledPubkeys
+        : receipt
+          ? [receipt.agentPubkey]
+          : outcome
+            ? [outcome.agentPubkey]
+            : [];
   if (pubkeys.length === 0) return null;
   const { names, displayAgents } = buildAgentSlots(pubkeys, profiles);
+  if (summaries.length === 0 && outcome?.outcome === "cancelled") {
+    const ago = formatCompactAgo(Math.max(0, now - outcome.endedAt));
+    return {
+      state: "stopped",
+      displayAgents,
+      label: "Stopped",
+      elapsedLabel: ago,
+      title: `${names[0] ?? "Agent"} stopped ${ago}`,
+    };
+  }
   const name = names[0] ?? "Agent";
   const attention = deriveAgentAttention({
     connectionState,
@@ -267,6 +286,10 @@ const STATE_CHROME: Record<
   done: {
     className: "border-success/25 bg-success/10 text-success",
     glyph: "✓",
+  },
+  stopped: {
+    className: "border-muted-foreground/30 bg-muted text-muted-foreground",
+    glyph: "■",
   },
   failed: {
     className: "border-destructive/25 bg-destructive/10 text-destructive",

@@ -582,12 +582,10 @@ function upsertMetadata(
 function isTerminalToolStatus(status: ToolStatus) {
   return status === "completed" || status === "failed";
 }
-
 function mergeToolStatus(existing: ToolStatus, next: ToolStatus): ToolStatus {
   if (isTerminalToolStatus(existing) && !isTerminalToolStatus(next)) {
     return existing;
   }
-
   return next;
 }
 
@@ -756,16 +754,18 @@ export function processTranscriptEvent(
   } else if (event.kind === "turn_error" || event.kind === "agent_panic") {
     const payload = asRecord(event.payload);
     const outcome = asString(payload.outcome) ?? "error";
-    const error = asString(payload.error) ?? "Unknown error";
+    const isCancelled = event.kind === "turn_error" && outcome === "cancelled";
+    // biome-ignore format: keep terminal fallback compact under the file-size ratchet
+    const error = asString(payload.error) ?? (isCancelled ? "Run stopped" : "Unknown error");
     const displayError = friendlyTurnErrorCopy(error, payload.code);
-    const title =
-      event.kind === "agent_panic" ? "Agent error (crash)" : "Turn error";
+    // biome-ignore format: keep terminal title compact under the file-size ratchet
+    const title = event.kind === "agent_panic" ? "Agent error (crash)" : isCancelled ? "Turn canceled" : "Turn error";
     upsertTextItem(
       d,
       `${event.kind}:${ch}:${event.turnId ?? event.seq}`,
       "lifecycle",
       title,
-      `${outcome}: ${displayError}`,
+      isCancelled ? displayError : `${outcome}: ${displayError}`,
       event.timestamp,
       ctx,
       event.kind,

@@ -51,7 +51,7 @@ type AgentAttentionInput = {
   connectionState: ConnectionState;
   needsYou: boolean;
   now: number;
-  outcome: "completed" | "error" | "lost-contact" | null;
+  outcome: "completed" | "cancelled" | "error" | "lost-contact" | null;
   receipt: { createdAt: number; reviewed: boolean } | null;
   /** Runtime lifecycle is listening/asleep; stale observer liveness is calm. */
   sleeping?: boolean;
@@ -199,6 +199,9 @@ export function deriveAgentAttention(
         ? "lost-contact"
         : "telemetry-unavailable",
     );
+  }
+  if (input.outcome === "cancelled" && input.turns.length === 0) {
+    return baseProjection("idle");
   }
 
   if (input.turns.length > 0) {

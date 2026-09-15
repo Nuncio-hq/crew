@@ -113,6 +113,31 @@ function isSleepingAgent(input: MissionInboxInput, pubkey: string): boolean {
   return input.sleepingAgentPubkeys?.has(pubkey.toLowerCase()) ?? false;
 }
 
+function receiptMatchesCancelledRun(
+  receipt: AgentReceiptSummary,
+  outcome: ConversationOutcomeEntry,
+): boolean {
+  if (outcome.outcome !== "cancelled") return false;
+  const cancelledSlots = outcome.cancelledAgentSlots ?? [
+    {
+      agentPubkey: outcome.agentPubkey,
+      triggeringEventIds: outcome.triggeringEventIds ?? [],
+      sessionId: outcome.sessionId,
+      turnId: outcome.turnId,
+    },
+  ];
+  return cancelledSlots.some(
+    (slot) =>
+      receipt.agentPubkey === slot.agentPubkey &&
+      Boolean(slot.sessionId) &&
+      Boolean(slot.turnId) &&
+      receipt.sessionId === slot.sessionId &&
+      receipt.turnId === slot.turnId &&
+      slot.triggeringEventIds.length > 0 &&
+      slot.triggeringEventIds.includes(receipt.parentEventId),
+  );
+}
+
 function latestRequest(requests: readonly NeedsYouRequest[]) {
   return requests.reduce<NeedsYouRequest | null>(
     (latest, request) =>
@@ -187,6 +212,7 @@ export function deriveMissionInboxSections(
 ): MissionInboxSections {
   const now = input.now ?? Date.now();
   const channelIds = new Set(input.channels.map((channel) => channel.id));
+  const outcomesByConversation = new Map(input.outcomes);
   const channelNames = new Map(
     input.channels.map((channel) => [channel.id, channel.name]),
   );
@@ -228,6 +254,7 @@ export function deriveMissionInboxSections(
   for (const [conversationId, entry] of input.outcomes) {
     if (
       entry.outcome === "completed" ||
+      entry.outcome === "cancelled" ||
       blocked.has(conversationId) ||
       !channelIds.has(entry.channelId) ||
       isSleepingAgent(input, entry.agentPubkey)
@@ -270,6 +297,8 @@ export function deriveMissionInboxSections(
   const receiptsByConversation = new Map<string, AgentReceiptSummary[]>();
   for (const receipt of input.receipts) {
     if (!input.ownedAgentPubkeys.has(receipt.agentPubkey)) continue;
+    const outcome = outcomesByConversation.get(receipt.conversationId);
+    if (outcome && receiptMatchesCancelledRun(receipt, outcome)) continue;
     const receipts = receiptsByConversation.get(receipt.conversationId) ?? [];
     receipts.push(receipt);
     receiptsByConversation.set(receipt.conversationId, receipts);

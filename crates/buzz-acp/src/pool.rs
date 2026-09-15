@@ -3868,6 +3868,8 @@ pub async fn run_prompt_task_with_session_identity(
                             Ok(stop_reason) => {
                                 log_stop_reason(&source, &stop_reason);
                                 agent.state.invalidate(&source);
+                                let owner_stop =
+                                    matches!(&control_signal, ControlSignal::Cancel);
                                 let retry_batch =
                                     requeue_cancelled_batch(&ctx, control_signal, batch);
 
@@ -3881,6 +3883,9 @@ pub async fn run_prompt_task_with_session_identity(
                                     Some(buzz_core::agent_turn_metric::StopReason::Cancelled),
                                 )
                                 .await;
+                                if owner_stop {
+                                    turn_guard.mark_cancelled();
+                                }
                                 send_prompt_result(
                                     &result_tx,
                                     &turn_id,
@@ -3933,7 +3938,11 @@ pub async fn run_prompt_task_with_session_identity(
                         // waiting on the continuation decision. Stop must not commit it.
                         agent.acp.cancel_pending_user_input().await;
                         agent.state.invalidate(&source);
+                        let owner_stop = matches!(&control_signal, ControlSignal::Cancel);
                         let retry_batch = requeue_cancelled_batch(&ctx, control_signal, batch);
+                        if owner_stop {
+                            turn_guard.mark_cancelled();
+                        }
                         send_prompt_result(&result_tx, &turn_id, agent, source,
                             PromptOutcome::Cancelled, retry_batch);
                         return;
@@ -6647,6 +6656,7 @@ struct TurnCompletionGuard {
     session_id: Option<String>,
     triggering_event_ids: Vec<String>,
     completed: bool,
+    cancelled: bool,
 }
 
 impl TurnCompletionGuard {
@@ -6667,6 +6677,7 @@ impl TurnCompletionGuard {
             session_id: None,
             triggering_event_ids,
             completed: false,
+            cancelled: false,
         }
     }
 
@@ -6676,6 +6687,10 @@ impl TurnCompletionGuard {
 
     fn mark_completed(&mut self) {
         self.completed = true;
+    }
+
+    fn mark_cancelled(&mut self) {
+        self.cancelled = true;
     }
 }
 
@@ -6688,6 +6703,13 @@ impl Drop for TurnCompletionGuard {
                 self.session_id.clone(),
                 Some(self.turn_id.clone()),
             );
+            let mut payload = serde_json::json!({
+                "triggeringEventIds": self.triggering_event_ids.clone(),
+            });
+            if self.cancelled {
+                payload["outcome"] = serde_json::json!("cancelled");
+                payload["error"] = serde_json::json!("Run stopped");
+            }
             observer.emit(
                 if self.completed {
                     "turn_completed"
@@ -6696,9 +6718,7 @@ impl Drop for TurnCompletionGuard {
                 },
                 self.agent_index,
                 &context,
-                serde_json::json!({
-                    "triggeringEventIds": self.triggering_event_ids.clone(),
-                }),
+                payload,
             );
         }
         crate::desktop_control::notify_lease_release(
@@ -9961,6 +9981,147 @@ done"#
     }
 
     #[tokio::test]
+    async fn control_cancel_prompt_emits_structured_stopped_terminal_event() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let channel_id = Uuid::new_v4();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local relay stub");
+        let base_url = format!("http://{}", listener.local_addr().expect("relay address"));
+        let relay_stub = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = vec![0; 16 * 1024];
+                let _ = socket.read(&mut request).await;
+                let body = "[]";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        let marker = std::env::temp_dir().join(format!(
+            "buzz-acp-owner-stop-prompt-{}.marker",
+            Uuid::new_v4()
+        ));
+        let quoted_marker = marker.to_string_lossy().replace('\'', "'\\''");
+        let script = format!(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *session/prompt*)
+      printf '%s\n' ready > '{quoted_marker}'
+      ;;
+    *session/cancel*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"cancelled"}}}}'
+      ;;
+  esac
+done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".into(), script], &[], false)
+            .await
+            .expect("spawn cancellation ACP script");
+        let observer = observer::ObserverHandle::in_process();
+        let mut agent = OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "legacy-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+            load_session_supported: false,
+        };
+        agent.acp.set_observer(Some(observer.clone()), 0);
+        agent
+            .state
+            .sessions
+            .insert(channel_id, "live-session".into());
+        agent
+            .state
+            .deliveries
+            .insert(channel_id, ChannelDeliveryState::default());
+
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.context_message_limit = 0;
+        let rest_client = RestClient {
+            http: reqwest::Client::new(),
+            base_url: base_url.clone(),
+            keys: ctx.agent_keys.clone(),
+            auth_tag_json: None,
+        };
+        ctx.rest_client = rest_client.clone();
+        ctx.channel_info = ChannelInfoResolver::new(
+            HashMap::from([(
+                channel_id,
+                crate::relay::ChannelInfo {
+                    name: "owner-stop-test".into(),
+                    channel_type: "stream".into(),
+                    description: None,
+                },
+            )]),
+            rest_client,
+        );
+        ctx.channel_info.projects.write().unwrap().insert(
+            channel_id,
+            CachedProjectInfo {
+                fetched_at: std::time::Instant::now(),
+                value: None,
+            },
+        );
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(run_prompt_task(
+            agent,
+            Some(one_event_batch(channel_id)),
+            None,
+            Arc::new(ctx),
+            result_tx,
+            Some(control_rx),
+            None,
+            "owner-stop-turn".into(),
+        ));
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("prompt must reach the in-flight ACP boundary");
+        control_tx
+            .send(ControlSignal::Cancel)
+            .expect("prompt task must still accept owner Stop");
+
+        let mut result = tokio::time::timeout(std::time::Duration::from_secs(10), result_rx.recv())
+            .await
+            .expect("owner Stop must return a prompt result")
+            .expect("prompt result channel must remain open");
+        task.await.expect("prompt task must not panic");
+        assert!(matches!(result.outcome, PromptOutcome::Cancelled));
+        result.agent.acp.shutdown().await;
+
+        let terminal = observer
+            .snapshot()
+            .into_iter()
+            .find(|event| event.kind == "turn_error")
+            .expect("owner Stop must emit a terminal observer event");
+        assert_eq!(terminal.turn_id.as_deref(), Some("owner-stop-turn"));
+        assert_eq!(terminal.session_id.as_deref(), Some("live-session"));
+        assert_eq!(terminal.payload["outcome"], "cancelled");
+        assert_eq!(terminal.payload["error"], "Run stopped");
+
+        let _ = std::fs::remove_file(marker);
+        relay_stub.abort();
+    }
+
+    #[tokio::test]
     async fn merged_cancel_prompt_commits_and_deduplicates_all_rendered_event_ids() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -11318,6 +11479,34 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         assert_eq!(
             completion.payload["triggeringEventIds"],
             serde_json::json!(["trigger-a", "trigger-b"]),
+        );
+    }
+
+    #[test]
+    fn turn_completion_guard_emits_structured_owner_stop() {
+        let observer = observer::ObserverHandle::in_process();
+        {
+            let mut guard = TurnCompletionGuard::new(
+                Some(observer.clone()),
+                Some(0),
+                None,
+                None,
+                "turn-stop".into(),
+                vec!["trigger-stop".into()],
+            );
+            guard.set_session_id("session-stop".into());
+            guard.mark_cancelled();
+        }
+
+        let terminal = observer.snapshot().pop().expect("cancellation event");
+        assert_eq!(terminal.kind, "turn_error");
+        assert_eq!(terminal.session_id.as_deref(), Some("session-stop"));
+        assert_eq!(terminal.turn_id.as_deref(), Some("turn-stop"));
+        assert_eq!(terminal.payload["outcome"], "cancelled");
+        assert_eq!(terminal.payload["error"], "Run stopped");
+        assert_eq!(
+            terminal.payload["triggeringEventIds"],
+            serde_json::json!(["trigger-stop"]),
         );
     }
 

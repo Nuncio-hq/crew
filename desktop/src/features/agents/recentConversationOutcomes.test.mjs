@@ -87,6 +87,31 @@ describe("conversation outcome ledger", () => {
     assert.equal(getConversationOutcomeEntry("conv-1")?.outcome, "error");
   });
 
+  it("records a structured owner stop as neutral but rejects malformed cancellation", () => {
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({ seq: 1, kind: "turn_started", turnId: "stop" }),
+      makeEvent({
+        seq: 2,
+        kind: "turn_error",
+        turnId: "stop",
+        payload: { outcome: "cancelled", error: "Run stopped" },
+      }),
+    ]);
+    assert.equal(getConversationOutcomeEntry("conv-1")?.outcome, "cancelled");
+
+    resetActiveAgentTurnsStore();
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({ seq: 1, kind: "turn_started", turnId: "malformed" }),
+      makeEvent({
+        seq: 2,
+        kind: "turn_error",
+        turnId: "malformed",
+        payload: { error: "Run stopped" },
+      }),
+    ]);
+    assert.equal(getConversationOutcomeEntry("conv-1")?.outcome, "error");
+  });
+
   it("retains recovery targets when liveness arrives before the delayed start", () => {
     syncAgentTurnsFromEvents(AGENT, [
       makeEvent({
