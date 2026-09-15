@@ -151,8 +151,9 @@ until its working-agreement announcement is confirmed; conflicting edits require
 review. Discarding a superseded draft removes only its reconciled recovery entry
 after the native revision check; a failed removal leaves the draft available for
 retry. Saving a contact does not enable automatic routing (#355), and saving
-roles does not reset existing agent sessions. Full relay/session acceptance for
-this editor remains tracked by #350.
+roles does not reset existing agent sessions. The current candidate has
+technical native-UI and fresh/existing session-comparison evidence for this
+editor. Founder acceptance and release #357 remain separate gates.
 
 A channel template is a candidate setup mechanism, not an approved complete
 department implementation. D-069 still prohibits reviving the removed Org
