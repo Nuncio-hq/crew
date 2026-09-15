@@ -983,11 +983,17 @@ normalization and omission of the CLI override for Claude/Codex while Hermes
 continues to require a named profile, owner/community preference persistence,
 immutable source prompt construction, Codex-style stdin delivery, isolated
 disposable state, nonzero failure, cancellation and bounded input/output/process
-cleanup. Native generation also has a 15-minute
+cleanup. Installed Wiki construction checks the shared native containment
+policy before creating disposable state: macOS uses the fixed no-fork
+`sandbox-exec` profile, Windows uses the bounded runner's Job Object, and
+unsupported Unix platforms return a typed failure. A production-bound fake
+runtime regression attempts a fork and verifies the macOS wrapper denies it.
+Native generation also has a 15-minute
 job budget around the 180-second per-page process bound. The legacy unsigned
 preview remains a heuristic fixture; a native publication call with no stored
 or supplied selection fails closed. Fake-process GREEN tests do not certify
-provider auth, effective generation model, or an installed runtime; #348 must
+provider auth, effective generation model, Claude's installed no-fork path, or
+an installed runtime; #348 must
 run one exact staged runtime with a disposable copied profile/config and
 record source revision, runtime/model/profile, output and no employee-session
 mutation.
@@ -1031,8 +1037,9 @@ provider. They live in
 implementation remains under the repository file-size gate.
 
 This source-level guard does not close the installed-runtime acceptance gap.
-No native Hermes launch, provider/auth check, effective-model receipt, or
-staging generation is implied. The #363 installed-runtime acceptance must run
+The containment wiring and its fork-denial regression do not imply a native
+Hermes launch, provider/auth check, effective-model receipt, Claude compatibility,
+or staging generation. The #363 installed-runtime acceptance must run
 in the #348 staging environment; #348 owns that environment and #363 owns the
 runtime acceptance result. Mutable Hermes source or wrappers require
 revalidation.

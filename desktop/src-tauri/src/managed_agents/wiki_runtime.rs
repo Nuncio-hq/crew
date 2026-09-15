@@ -9,6 +9,7 @@
 use super::discovery::bounded_command::{
     output_with_policy, output_with_policy_and_stdin, BoundedFailure, BoundedPolicy, OutputBudget,
 };
+use super::recap_adapter::native_containment_profile;
 use super::wiki_runtime_output::normalize_generated_page;
 #[cfg(test)]
 use super::wiki_runtime_output::validate_generated_links;
@@ -183,6 +184,9 @@ pub(crate) enum WikiRuntimeFailure {
     InvalidRuntimeTelemetry,
     /// Hermes used a provider or model other than the staged profile selection.
     EffectiveRuntimeMismatch,
+    /// The platform has no whole-process-tree containment primitive for this
+    /// runtime adapter.
+    UnsupportedContainment,
     /// The selected process could not be safely owned or completed.
     Process(BoundedFailure),
     /// The process exited unsuccessfully.
@@ -247,6 +251,9 @@ impl std::fmt::Display for WikiRuntimeFailure {
             Self::EffectiveRuntimeMismatch => f.write_str(
                 "Wiki runtime effective provider or model did not match the selected profile.",
             ),
+            Self::UnsupportedContainment => {
+                f.write_str("Wiki runtime process containment is unavailable on this platform.")
+            }
             Self::Process(failure) => {
                 write!(f, "Wiki runtime process was not bounded ({failure:?}).")
             }
@@ -268,6 +275,10 @@ pub(crate) struct WikiRuntimeGenerator {
     selection: WikiRuntimeSelection,
     executable: PathBuf,
     state_dir: PathBuf,
+    /// macOS receives the fixed no-fork Seatbelt profile. Windows leaves this
+    /// empty because the bounded runner owns the child with a Job Object.
+    /// Test-only fake runtimes use the private constructor with no wrapper.
+    sandbox_profile: Option<String>,
     /// Keeps the installed-runtime state disposable; test callers may provide
     /// their own directory and leave this as `None`.
     temp_state: Option<tempfile::TempDir>,
@@ -296,10 +307,20 @@ impl WikiRuntimeGenerator {
         let executable = resolve_command(command)
             .and_then(|path| resolve_installed_wrapper(runtime.id, path))
             .ok_or_else(|| WikiRuntimeFailure::MissingExecutable(runtime.id.to_owned()))?;
+        // Check containment before allocating or copying any disposable
+        // runtime state. Process groups alone cannot contain a setsid escape
+        // on Unix, so unsupported platforms fail closed here.
+        let sandbox_profile = native_containment_profile(&executable)
+            .map_err(|_| WikiRuntimeFailure::UnsupportedContainment)?;
         let state = tempfile::tempdir().map_err(|_| WikiRuntimeFailure::InvalidStateDirectory)?;
         let state_dir = state.path().to_path_buf();
-        let mut generator =
-            Self::with_executable_and_cancel(selection, executable, state_dir, cancel)?;
+        let mut generator = Self::with_executable_and_cancel(
+            selection,
+            executable,
+            state_dir,
+            cancel,
+            sandbox_profile,
+        )?;
         generator.stage_hermes_profile()?;
         generator.claude_oauth_token = super::wiki_runtime_auth::stage_runtime_auth(
             generator.selection.runtime_id.trim(),
@@ -326,6 +347,7 @@ impl WikiRuntimeGenerator {
             executable,
             state_dir,
             Arc::new(AtomicBool::new(false)),
+            None,
         )
     }
 
@@ -334,6 +356,7 @@ impl WikiRuntimeGenerator {
         executable: PathBuf,
         state_dir: PathBuf,
         cancel: Arc<AtomicBool>,
+        sandbox_profile: Option<String>,
     ) -> Result<Self, WikiRuntimeFailure> {
         let selection = selection.normalized()?;
         if !executable.is_absolute() || !state_dir.is_absolute() {
@@ -349,6 +372,7 @@ impl WikiRuntimeGenerator {
             selection,
             executable,
             state_dir,
+            sandbox_profile,
             temp_state: None,
             require_hermes_usage_report: false,
             cancel,
@@ -404,7 +428,14 @@ impl WikiRuntimeGenerator {
     }
 
     fn command(&self, prompt: Option<&str>) -> Command {
-        let mut command = Command::new(&self.executable);
+        let mut command = if let Some(profile) = self.sandbox_profile.as_deref() {
+            let mut command = Command::new("/usr/bin/sandbox-exec");
+            command.args(["-p", profile]);
+            command.arg(&self.executable);
+            command
+        } else {
+            Command::new(&self.executable)
+        };
         command
             .env_clear()
             .current_dir(&self.state_dir)
@@ -902,3 +933,7 @@ fn validate_value(value: &str) -> Result<(), ()> {
 #[cfg(test)]
 #[path = "wiki_runtime_tests.rs"]
 mod wiki_runtime_tests;
+
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "wiki_runtime_containment_tests.rs"]
+mod wiki_runtime_containment_tests;

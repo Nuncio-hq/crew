@@ -561,8 +561,13 @@ selection is independent from employee sessions and recap settings. The source
 guard, config gate, profile-binding, and effective-runtime boundary are covered
 by production seam tests in
 `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs`;
-they do not certify a native Hermes launch, provider/auth path,
-effective model, or installed tool isolation. The #363 installed-runtime
+they also bind the installed command builder to the shared native containment
+policy: macOS wraps the runtime in the fixed `sandbox-exec` process-fork denial,
+Windows retains the bounded runner's Job Object, and unsupported Unix platforms
+fail before disposable runtime setup. The fork-denial regression proves the
+production command builder denies the fixture fork, but these tests do
+not certify a native Hermes launch, provider/auth path, effective model, Claude
+compatibility, or full installed tool isolation. The #363 installed-runtime
 acceptance must run in the #348 staging environment; #348 owns that environment
 and #363 owns the runtime acceptance result. #364 owns scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
