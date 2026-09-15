@@ -297,6 +297,9 @@ impl WikiRuntimeGenerator {
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, WikiRuntimeFailure> {
         let selection = selection.normalized()?;
+        if selection.runtime_id == "claude" {
+            return Err(WikiRuntimeFailure::UnsupportedRuntime(selection.runtime_id));
+        }
         let runtime = known_acp_runtime_exact(selection.runtime_id.trim())
             .ok_or_else(|| WikiRuntimeFailure::UnsupportedRuntime(selection.runtime_id.clone()))?;
         let command = runtime

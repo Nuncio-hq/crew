@@ -721,7 +721,11 @@ test("Wiki keeps the selected page while a changed-runtime update saves and prep
   const mounted = await mountDetail(LINKED_PATH, calls, {
     noJob: true,
     snapshot: completeWikiSnapshot(),
-    runtimeSettings: { runtimeId: "codex", profile: null, model: null },
+    runtimeSettings: {
+      runtimeId: "hermes",
+      profile: "saved-profile",
+      model: null,
+    },
     runtimeCatalog: [
       { id: "hermes", label: "Hermes", availability: "available" },
       {
@@ -755,7 +759,7 @@ test("Wiki keeps the selected page while a changed-runtime update saves and prep
     });
     await waitFor(() => assert.equal(select.disabled, false));
     await act(async () =>
-      fireEvent.change(select, { target: { value: "claude" } }),
+      fireEvent.change(select, { target: { value: "codex" } }),
     );
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "Start update" })),
@@ -950,10 +954,15 @@ test("Codex generation accepts a blank optional model and records runtime defaul
   }
 });
 
-test("Wiki selects installed plain CLIs without their ACP adapters", async () => {
+test("Wiki keeps Claude visible but defers it until compatibility is verified", async () => {
   const calls = [];
   const mounted = await mountDetail(LINKED_PATH, calls, {
     noJob: true,
+    runtimeSettings: {
+      runtimeId: "claude",
+      profile: null,
+      model: "claude-fable-5-1",
+    },
     runtimeCatalog: [
       { id: "hermes", label: "Hermes", availability: "available" },
       {
@@ -982,21 +991,26 @@ test("Wiki selects installed plain CLIs without their ACP adapters", async () =>
       Array.from(select.options, (option) => option.value),
       ["hermes", "claude", "codex"],
     );
-    await act(async () =>
-      fireEvent.change(select, { target: { value: "claude" } }),
+    assert.equal(
+      select.value,
+      "claude",
+      "saved Claude selection stays visible",
     );
-    await act(async () =>
-      fireEvent.click(screen.getByRole("button", { name: "Start generation" })),
+    assert.equal(select.options[1].disabled, true);
+    assert.equal(
+      screen.getByTestId("wiki-runtime-claude-deferred").textContent,
+      "Claude Code is not yet verified for Wiki generation.",
     );
-    await waitFor(() =>
-      assert.ok(
-        calls.some(({ command }) => command === "wiki_publication_prepare"),
-      ),
+    const start = screen.getByRole("button", { name: "Start generation" });
+    assert.equal(start.disabled, true);
+    await act(async () => fireEvent.click(start));
+    assert.equal(
+      calls.some(({ command }) => command === "wiki_runtime_settings_set"),
+      false,
     );
     assert.equal(
-      calls.find(({ command }) => command === "wiki_runtime_settings_set").args
-        .selection.runtimeId,
-      "claude",
+      calls.some(({ command }) => command === "wiki_publication_prepare"),
+      false,
     );
   } finally {
     mounted.dispose();

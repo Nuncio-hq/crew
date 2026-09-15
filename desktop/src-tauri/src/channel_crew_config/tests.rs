@@ -134,6 +134,31 @@ impl Fixture {
     }
 }
 
+fn assert_exact_single_save(fixture: &Fixture, expected: &Payload) {
+    let sends = fixture.sends.lock().unwrap().clone();
+    assert_eq!(
+        sends,
+        vec![
+            expected.canvas.id.to_hex(),
+            expected.announcement.id.to_hex()
+        ],
+        "recovery must publish the original signed canvas and notice IDs",
+    );
+    let canvas_ids = fixture
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event.kind.as_u16() == 40100)
+        .map(|event| event.id.to_hex())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        canvas_ids,
+        vec![expected.canvas.id.to_hex()],
+        "recovery must leave one authoritative canvas snapshot",
+    );
+}
+
 impl Backend for Fixture {
     fn now(&self) -> Result<i64, String> {
         Ok(self.now.load(Ordering::SeqCst))
@@ -235,6 +260,7 @@ impl Backend for Fixture {
 async fn channel_crew_recovery_new_remote_head_suppresses_notice_and_false_applied() {
     for after_notice in [false, true] {
         let (fixture, operation) = Fixture::new();
+        let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
         if after_notice {
             fixture.remote_after_notice.store(1, Ordering::SeqCst);
         } else {
@@ -244,8 +270,15 @@ async fn channel_crew_recovery_new_remote_head_suppresses_notice_and_false_appli
         let result = resume(&fixture, operation, false).await.unwrap();
         assert_eq!(result.outcome, Outcome::Superseded);
         assert_eq!(
-            fixture.sends.lock().unwrap().len(),
-            if after_notice { 2 } else { 1 }
+            fixture.sends.lock().unwrap().clone(),
+            if after_notice {
+                vec![
+                    expected.canvas.id.to_hex(),
+                    expected.announcement.id.to_hex(),
+                ]
+            } else {
+                vec![expected.canvas.id.to_hex()]
+            }
         );
         assert!(fixture.load(&id).reconciled);
     }
@@ -255,6 +288,7 @@ async fn channel_crew_recovery_new_remote_head_suppresses_notice_and_false_appli
 async fn channel_crew_recovery_ack_crash_boundaries_keep_exact_events_on_reopen() {
     for fail_at in [4, 5, 8, 9, 10] {
         let (fixture, operation) = Fixture::new();
+        let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
         let id = operation.id.clone();
         fixture.fail_persist_at.store(fail_at, Ordering::SeqCst);
         let partial = resume(&fixture, operation, false).await.unwrap();
@@ -276,13 +310,14 @@ async fn channel_crew_recovery_ack_crash_boundaries_keep_exact_events_on_reopen(
         fixture.now.store(1060, Ordering::SeqCst);
         let result = resume(&fixture, fixture.load(&id), false).await.unwrap();
         assert_eq!(result.outcome, Outcome::Applied);
-        assert_eq!(fixture.sends.lock().unwrap().len(), 2);
+        assert_exact_single_save(&fixture, &expected);
     }
 }
 
 #[tokio::test]
 async fn channel_crew_recovery_lost_notice_ack_does_not_publish_twice() {
     let (fixture, operation) = Fixture::new();
+    let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
     let id = operation.id.clone();
     fixture.lose_notice_ack.store(1, Ordering::SeqCst);
     assert_eq!(
@@ -297,12 +332,13 @@ async fn channel_crew_recovery_lost_notice_ack_does_not_publish_twice() {
             .outcome,
         Outcome::Applied
     );
-    assert_eq!(fixture.sends.lock().unwrap().len(), 2);
+    assert_exact_single_save(&fixture, &expected);
 }
 
 #[tokio::test]
 async fn channel_crew_recovery_durable_lease_and_cas_fence_duplicate_workers() {
     let (fixture, operation) = Fixture::new();
+    let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
     let stale = operation.clone();
     let mut payload: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
     payload.lease = Some(super::record::Lease {
@@ -321,12 +357,13 @@ async fn channel_crew_recovery_durable_lease_and_cas_fence_duplicate_workers() {
         Outcome::Applied
     );
     assert!(resume(&fixture, stale, false).await.is_err());
-    assert_eq!(fixture.sends.lock().unwrap().len(), 2);
+    assert_exact_single_save(&fixture, &expected);
 }
 
 #[tokio::test]
 async fn channel_crew_recovery_scope_switch_after_send_retains_uncertain_intent() {
     let (fixture, operation) = Fixture::new();
+    let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
     let id = operation.id.clone();
     fixture.switch_after_canvas.store(1, Ordering::SeqCst);
     assert!(resume(&fixture, operation, false).await.is_err());
@@ -341,7 +378,7 @@ async fn channel_crew_recovery_scope_switch_after_send_retains_uncertain_intent(
         resume(&fixture, saved, false).await.unwrap().outcome,
         Outcome::Applied
     );
-    assert_eq!(fixture.sends.lock().unwrap().len(), 2);
+    assert_exact_single_save(&fixture, &expected);
 }
 
 #[tokio::test]
@@ -355,10 +392,11 @@ async fn channel_crew_recovery_failed_initial_persist_has_no_external_effect() {
 #[tokio::test]
 async fn channel_crew_recovery_commits_one_canvas_and_one_unmentioned_notice() {
     let (fixture, operation) = Fixture::new();
+    let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
     let id = operation.id.clone();
     let result = resume(&fixture, operation, false).await.unwrap();
     assert_eq!(result.outcome, Outcome::Applied);
-    assert_eq!(fixture.sends.lock().unwrap().len(), 2);
+    assert_exact_single_save(&fixture, &expected);
     assert!(fixture.load(&id).reconciled);
     for event in fixture.events.lock().unwrap().iter() {
         assert!(!event
@@ -371,6 +409,7 @@ async fn channel_crew_recovery_commits_one_canvas_and_one_unmentioned_notice() {
 #[tokio::test]
 async fn channel_crew_recovery_lost_canvas_ack_reconciles_without_resigning() {
     let (fixture, operation) = Fixture::new();
+    let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
     let id = operation.id.clone();
     fixture.lose_canvas_ack.store(1, Ordering::SeqCst);
     let first = resume(&fixture, operation, false).await.unwrap();
@@ -378,16 +417,13 @@ async fn channel_crew_recovery_lost_canvas_ack_reconciles_without_resigning() {
     fixture.now.store(1005, Ordering::SeqCst);
     let recovered = resume(&fixture, fixture.load(&id), false).await.unwrap();
     assert_eq!(recovered.outcome, Outcome::Applied);
-    assert_eq!(
-        fixture.sends.lock().unwrap().len(),
-        2,
-        "one canvas attempt and one notice"
-    );
+    assert_exact_single_save(&fixture, &expected);
 }
 
 #[tokio::test]
 async fn channel_crew_recovery_announcement_failure_stays_durable_and_bounded() {
     let (fixture, operation) = Fixture::new();
+    let expected: Payload = serde_json::from_value(operation.payload.clone()).unwrap();
     let id = operation.id.clone();
     fixture.reject_announcement.store(1, Ordering::SeqCst);
     let first = resume(&fixture, operation, false).await.unwrap();
@@ -412,5 +448,32 @@ async fn channel_crew_recovery_announcement_failure_stays_durable_and_bounded() 
             .unwrap()
             .outcome,
         Outcome::Applied
+    );
+    let sends = fixture.sends.lock().unwrap().clone();
+    assert_eq!(sends.first(), Some(&expected.canvas.id.to_hex()));
+    assert!(
+        sends.len() >= 2,
+        "manual retry must publish the announcement"
+    );
+    assert!(sends
+        .iter()
+        .skip(1)
+        .all(|id| id == &expected.announcement.id.to_hex()));
+    let events = fixture.events.lock().unwrap().clone();
+    let canvas_ids = events
+        .iter()
+        .filter(|event| event.kind.as_u16() == 40100)
+        .map(|event| event.id.to_hex())
+        .collect::<Vec<_>>();
+    assert_eq!(canvas_ids, vec![expected.canvas.id.to_hex()]);
+    let announcement_ids = events
+        .iter()
+        .filter(|event| event.kind.as_u16() == 9)
+        .map(|event| event.id.to_hex())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        announcement_ids,
+        vec![expected.announcement.id.to_hex()],
+        "manual retry must persist the original announcement ID",
     );
 }
