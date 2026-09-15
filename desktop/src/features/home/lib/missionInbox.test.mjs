@@ -250,6 +250,73 @@ test("read-state acknowledgement does not review a durable receipt", () => {
   );
 });
 
+test("a cancelled run is neutral without hiding another run's receipt", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    now: 1_000,
+    inboxItems: [item("cancelled-run", "channel-a", 100)],
+    needsYou: [],
+    outcomes: [
+      [
+        "cancelled-run",
+        {
+          outcome: "cancelled",
+          channelId: "channel-a",
+          agentPubkey: "agent-1",
+          endedAt: 200,
+          sessionId: "cancelled-session",
+          turnId: "cancelled-turn",
+          triggeringEventIds: ["cancelled-parent"],
+          cancelledAgentSlots: [
+            {
+              agentPubkey: "agent-1",
+              triggeringEventIds: ["cancelled-parent"],
+              sessionId: "cancelled-session",
+              turnId: "cancelled-turn",
+            },
+          ],
+        },
+      ],
+    ],
+    receipts: [
+      {
+        id: "cancelled-receipt",
+        channelId: "channel-a",
+        conversationId: "cancelled-run",
+        agentPubkey: "agent-1",
+        parentEventId: "cancelled-parent",
+        sessionId: "cancelled-session",
+        turnId: "cancelled-turn",
+        createdAt: 201,
+        summary: "Must not become ready after Stop",
+        verify: "pnpm check",
+        reviewed: false,
+      },
+      {
+        id: "prior-receipt",
+        channelId: "channel-a",
+        conversationId: "cancelled-run",
+        agentPubkey: "agent-1",
+        parentEventId: "prior-parent",
+        sessionId: "prior-session",
+        turnId: "prior-turn",
+        createdAt: 150,
+        summary: "Prior run remains reviewable",
+        verify: "pnpm check",
+        reviewed: false,
+      },
+    ],
+  });
+
+  assert.equal(sections.needsYou.length, 0);
+  assert.equal(sections.readyToReview.length, 1);
+  assert.equal(sections.readyToReview[0].messageEventId, "prior-receipt");
+  assert.equal(sections.working.length, 0);
+});
+
 test("receipt-only rows resolve navigation from the exact verified event", async () => {
   const sections = deriveMissionInboxSections({
     ...attentionDefaults,

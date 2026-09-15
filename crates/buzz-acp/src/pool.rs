@@ -24,7 +24,7 @@ mod logical_prompt;
 mod receipt_recovery_tests;
 #[cfg(test)]
 mod reliability_tests;
-use logical_prompt::run_logical_prompt;
+use logical_prompt::run_logical_prompt_with_invocation;
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -84,12 +84,55 @@ pub struct SuccessfulSteerDelivery {
     pub session_id: String,
 }
 
+/// Identity supplied by Activity when steering one selected live run.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct StrictSteerTarget {
+    pub session_id: String,
+    pub turn_id: String,
+    pub request_id: String,
+}
+
+/// Session identity shared by a live task's pool metadata and prompt worker.
+///
+/// Workspace validation can invalidate a cached session before the prompt
+/// resolves its replacement. Sharing the identity lets the worker publish the
+/// replacement into the exact-steer fence before Activity can target it.
+#[derive(Clone, Debug, Default)]
+pub struct TaskSessionIdentity(Arc<Mutex<Option<String>>>);
+
+impl TaskSessionIdentity {
+    /// Create a shared identity with the session known before task dispatch.
+    pub(crate) fn new(session_id: Option<String>) -> Self {
+        Self(Arc::new(Mutex::new(session_id)))
+    }
+
+    /// Publish a session replacement before a new selected-run control.
+    pub(crate) fn set(&self, session_id: String) {
+        if let Ok(mut current) = self.0.lock() {
+            *current = Some(session_id);
+        }
+    }
+
+    fn matches(&self, expected: &str) -> bool {
+        match self.0.lock() {
+            Ok(current) => current.as_deref().is_none_or(|actual| actual == expected),
+            Err(_) => false,
+        }
+    }
+}
+
 pub struct TaskMeta {
     pub agent_index: usize,
     /// Scheduler/session identity. For channel work this identifies a thread.
     pub channel_id: Option<Uuid>,
     /// Real NIP-29 channel used for relay operations and observer context.
     pub routing_channel_id: Option<Uuid>,
+    /// Shared ACP session identity for this task.
+    ///
+    /// First turns may have no value because `session/new` runs inside the
+    /// task. In that case the worker updates this value when `session/new`
+    /// or `session/load` resolves; the ACP read loop remains the final fence.
+    pub session_id: TaskSessionIdentity,
     /// Identifies terminal events when the task panics before returning a result.
     pub turn_id: String,
     /// Clone of batch for Queue mode panic recovery.
@@ -511,6 +554,9 @@ pub struct SteerRequest {
     /// `queue::native_steer_framing()` + `queue::format_event_block` so
     /// the wording cannot drift from the cancel+merge fallback path.
     pub prompt_blocks: Vec<String>,
+    /// Exact selected-run identity. `None` retains the ordinary event-driven
+    /// steering behavior and its existing fallback semantics.
+    pub strict_target: Option<StrictSteerTarget>,
     /// Oneshot for the read loop to report the outcome.
     pub ack_tx: tokio::sync::oneshot::Sender<SteerAck>,
 }
@@ -561,6 +607,17 @@ pub enum SteerError {
     /// drop the user's message: codex-acp answers unrecognized extension
     /// methods with a bare `{}` success rather than `-32601`.
     OutcomeRejected { outcome: String },
+    /// The adapter answered a strict request with a terminal outcome other
+    /// than `appended`; the native observer layer forwards it verbatim.
+    StrictOutcome { outcome: String },
+    /// The selected task disappeared before the strict request could be sent.
+    StrictTargetMismatch,
+    /// The selected adapter did not advertise the exact strict contract.
+    StrictUnsupported,
+    /// The bounded steer queue is already occupied.
+    Busy,
+    /// A strict adapter returned a result for a different request or turn.
+    StrictResponseMismatch,
     /// The read loop never got to dispatch the steer because the prompt
     /// completed first. Delivery state for the underlying message is
     /// unknown after prompt completion — the main loop must treat this as
@@ -1028,6 +1085,41 @@ impl AgentPool {
             .ok_or_else(|| SteerError::Transport("steer_tx not installed".into()))?;
         tx.try_send(request)
             .map_err(|e| SteerError::Transport(e.to_string()))
+    }
+
+    /// Send a strict steer only to the task whose routing channel,
+    /// conversation, turn, and known session identities all match.
+    ///
+    /// A first turn may not have a session ID until `session/new` completes;
+    /// those requests remain fenced by the ACP read loop's lexical session.
+    pub fn send_exact_steer(
+        &mut self,
+        routing_channel_id: Uuid,
+        conversation_id: Uuid,
+        turn_id: &str,
+        request: SteerRequest,
+    ) -> Result<(), SteerError> {
+        let Some(strict_target) = request.strict_target.as_ref() else {
+            return Err(SteerError::StrictTargetMismatch);
+        };
+        let meta = self
+            .task_map
+            .values_mut()
+            .find(|meta| {
+                meta.routing_channel_id == Some(routing_channel_id)
+                    && meta.channel_id == Some(conversation_id)
+                    && meta.turn_id == turn_id
+                    && meta.session_id.matches(&strict_target.session_id)
+            })
+            .ok_or(SteerError::StrictTargetMismatch)?;
+        let tx = meta
+            .steer_tx
+            .as_ref()
+            .ok_or(SteerError::StrictTargetMismatch)?;
+        tx.try_send(request).map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => SteerError::Busy,
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => SteerError::StrictTargetMismatch,
+        })
     }
 
     /// Durably associate a successful steer with the exact ACP session that
@@ -2372,11 +2464,9 @@ fn emit_session_aging_if_needed(
 ///
 /// Clearing `steer_rx` here — rather than per-arm — makes the `install_steer_rx`
 /// invariant (`steer_rx.is_none()` at dispatch) structurally unviolatable: a receiver
-/// installed for a turn that ends before the read loop's `take()` (e.g. session-create
-/// error) is always dropped before the agent re-enters the pool, so the next dispatch
-/// can never trigger the assert.
-///
-/// On the happy path the read loop has already called `take()`, so this is a no-op.
+/// installed for a task that ends before the read loop runs (e.g. session-create
+/// error) is always dropped before the agent re-enters the pool. The receiver is
+/// shared across the prompt and any plan continuation while the task is live.
 fn send_prompt_result(
     result_tx: &mpsc::UnboundedSender<PromptResult>,
     turn_id: &str,
@@ -2396,6 +2486,36 @@ fn send_prompt_result(
     });
 }
 
+/// Run a prompt task without a pool-owned session identity.
+///
+/// Most direct callers are recovery and unit-test paths. The dispatch path
+/// uses [`run_prompt_task_with_session_identity`] so its TaskMeta can follow a
+/// session replacement performed during workspace validation.
+#[allow(clippy::too_many_arguments)] // Existing prompt task boundary plus exact-steer receiver.
+pub async fn run_prompt_task(
+    agent: OwnedAgent,
+    batch: Option<FlushBatch>,
+    prompt_text: Option<String>,
+    ctx: Arc<PromptContext>,
+    result_tx: mpsc::UnboundedSender<PromptResult>,
+    control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
+    steer_rx: Option<mpsc::Receiver<SteerRequest>>,
+    turn_id: String,
+) {
+    run_prompt_task_with_session_identity(
+        agent,
+        batch,
+        prompt_text,
+        ctx,
+        result_tx,
+        control_rx,
+        steer_rx,
+        turn_id,
+        TaskSessionIdentity::default(),
+    )
+    .await;
+}
+
 /// Core async function spawned for each prompt.
 ///
 /// Lifecycle:
@@ -2408,14 +2528,17 @@ fn send_prompt_result(
 ///
 /// The agent is ALWAYS returned — even on panic the `JoinSet` detects the
 /// abort and the caller uses `task_map` to recover the agent index.
-pub async fn run_prompt_task(
+#[allow(clippy::too_many_arguments)] // Prompt task boundary with shared resolved session identity.
+pub async fn run_prompt_task_with_session_identity(
     mut agent: OwnedAgent,
     batch: Option<FlushBatch>,
     prompt_text: Option<String>,
     ctx: Arc<PromptContext>,
     result_tx: mpsc::UnboundedSender<PromptResult>,
     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
+    mut steer_rx: Option<mpsc::Receiver<SteerRequest>>,
     turn_id: String,
+    task_session_identity: TaskSessionIdentity,
 ) {
     agent.acp.set_tool_idle_timeout(ctx.tool_idle_timeout);
     agent
@@ -3298,6 +3421,7 @@ pub async fn run_prompt_task(
             }
         }
     };
+    task_session_identity.set(session_id.clone());
     agent
         .acp
         .set_observer_context(observer::context_for_conversation_turn(
@@ -3363,11 +3487,12 @@ pub async fn run_prompt_task(
             );
             let init_result = agent
                 .acp
-                .session_prompt_with_idle_timeout(
+                .session_prompt_blocks_with_idle_timeout_and_invocation(
                     &session_id,
-                    &init_msg,
+                    &[&init_msg],
                     ctx.idle_timeout,
                     ctx.max_turn_duration,
+                    Some(&turn_id),
                 )
                 .await;
 
@@ -3496,6 +3621,14 @@ pub async fn run_prompt_task(
                 }
             }
         }
+    }
+
+    // The selected-run receiver is needed by the actual prompt, not by the
+    // optional session bootstrap above. Deferring installation keeps a new
+    // session's initial_message from consuming the only receiver and leaving
+    // Activity Steer disconnected from the main run.
+    if let Some(receiver) = steer_rx.take() {
+        agent.acp.install_steer_rx(receiver);
     }
 
     // When the batch is a single slash-command message (e.g. "@Eva /goal …"),
@@ -3690,20 +3823,22 @@ pub async fn run_prompt_task(
             // Heartbeat / non-cancellable path.
             tokio::select! {
                 biased;
-                result = run_logical_prompt(
+                result = run_logical_prompt_with_invocation(
                     &mut agent.acp, &session_id, &prompt_blocks,
                     ctx.idle_timeout, ctx.max_turn_duration,
                     matches!(source, PromptSource::Channel(_)), &deciding_continuation,
+                    Some(&turn_id),
                 ) => result,
             }
         }
         Some(rx) => {
             tokio::select! {
                 biased;
-                result = run_logical_prompt(
+                result = run_logical_prompt_with_invocation(
                     &mut agent.acp, &session_id, &prompt_blocks,
                     ctx.idle_timeout, ctx.max_turn_duration,
                     matches!(source, PromptSource::Channel(_)), &deciding_continuation,
+                    Some(&turn_id),
                 ) => result,
                 mode = rx => {
                     let control_signal = mode.unwrap_or(ControlSignal::Cancel);
@@ -3733,6 +3868,8 @@ pub async fn run_prompt_task(
                             Ok(stop_reason) => {
                                 log_stop_reason(&source, &stop_reason);
                                 agent.state.invalidate(&source);
+                                let owner_stop =
+                                    matches!(&control_signal, ControlSignal::Cancel);
                                 let retry_batch =
                                     requeue_cancelled_batch(&ctx, control_signal, batch);
 
@@ -3746,6 +3883,9 @@ pub async fn run_prompt_task(
                                     Some(buzz_core::agent_turn_metric::StopReason::Cancelled),
                                 )
                                 .await;
+                                if owner_stop {
+                                    turn_guard.mark_cancelled();
+                                }
                                 send_prompt_result(
                                     &result_tx,
                                     &turn_id,
@@ -3798,7 +3938,11 @@ pub async fn run_prompt_task(
                         // waiting on the continuation decision. Stop must not commit it.
                         agent.acp.cancel_pending_user_input().await;
                         agent.state.invalidate(&source);
+                        let owner_stop = matches!(&control_signal, ControlSignal::Cancel);
                         let retry_batch = requeue_cancelled_batch(&ctx, control_signal, batch);
+                        if owner_stop {
+                            turn_guard.mark_cancelled();
+                        }
                         send_prompt_result(&result_tx, &turn_id, agent, source,
                             PromptOutcome::Cancelled, retry_batch);
                         return;
@@ -6512,6 +6656,7 @@ struct TurnCompletionGuard {
     session_id: Option<String>,
     triggering_event_ids: Vec<String>,
     completed: bool,
+    cancelled: bool,
 }
 
 impl TurnCompletionGuard {
@@ -6532,6 +6677,7 @@ impl TurnCompletionGuard {
             session_id: None,
             triggering_event_ids,
             completed: false,
+            cancelled: false,
         }
     }
 
@@ -6541,6 +6687,10 @@ impl TurnCompletionGuard {
 
     fn mark_completed(&mut self) {
         self.completed = true;
+    }
+
+    fn mark_cancelled(&mut self) {
+        self.cancelled = true;
     }
 }
 
@@ -6553,6 +6703,13 @@ impl Drop for TurnCompletionGuard {
                 self.session_id.clone(),
                 Some(self.turn_id.clone()),
             );
+            let mut payload = serde_json::json!({
+                "triggeringEventIds": self.triggering_event_ids.clone(),
+            });
+            if self.cancelled {
+                payload["outcome"] = serde_json::json!("cancelled");
+                payload["error"] = serde_json::json!("Run stopped");
+            }
             observer.emit(
                 if self.completed {
                     "turn_completed"
@@ -6561,9 +6718,7 @@ impl Drop for TurnCompletionGuard {
                 },
                 self.agent_index,
                 &context,
-                serde_json::json!({
-                    "triggeringEventIds": self.triggering_event_ids.clone(),
-                }),
+                payload,
             );
         }
         crate::desktop_control::notify_lease_release(
@@ -9652,6 +9807,7 @@ done"#
                 Arc::clone(&ctx),
                 result_tx.clone(),
                 None,
+                None,
                 format!("turn-{turn}"),
             )
             .await;
@@ -9775,6 +9931,7 @@ done"#
                 Arc::clone(&ctx),
                 result_tx.clone(),
                 None,
+                None,
                 format!("turn-{turn}"),
             )
             .await;
@@ -9821,6 +9978,147 @@ done"#
             !prompt_text(2).contains("<base>\nstanding-once\n</base>"),
             "turn after channel ACP success must omit standing context"
         );
+    }
+
+    #[tokio::test]
+    async fn control_cancel_prompt_emits_structured_stopped_terminal_event() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let channel_id = Uuid::new_v4();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local relay stub");
+        let base_url = format!("http://{}", listener.local_addr().expect("relay address"));
+        let relay_stub = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = vec![0; 16 * 1024];
+                let _ = socket.read(&mut request).await;
+                let body = "[]";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        let marker = std::env::temp_dir().join(format!(
+            "buzz-acp-owner-stop-prompt-{}.marker",
+            Uuid::new_v4()
+        ));
+        let quoted_marker = marker.to_string_lossy().replace('\'', "'\\''");
+        let script = format!(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *session/prompt*)
+      printf '%s\n' ready > '{quoted_marker}'
+      ;;
+    *session/cancel*)
+      printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"cancelled"}}}}'
+      ;;
+  esac
+done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".into(), script], &[], false)
+            .await
+            .expect("spawn cancellation ACP script");
+        let observer = observer::ObserverHandle::in_process();
+        let mut agent = OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "legacy-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+            load_session_supported: false,
+        };
+        agent.acp.set_observer(Some(observer.clone()), 0);
+        agent
+            .state
+            .sessions
+            .insert(channel_id, "live-session".into());
+        agent
+            .state
+            .deliveries
+            .insert(channel_id, ChannelDeliveryState::default());
+
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.context_message_limit = 0;
+        let rest_client = RestClient {
+            http: reqwest::Client::new(),
+            base_url: base_url.clone(),
+            keys: ctx.agent_keys.clone(),
+            auth_tag_json: None,
+        };
+        ctx.rest_client = rest_client.clone();
+        ctx.channel_info = ChannelInfoResolver::new(
+            HashMap::from([(
+                channel_id,
+                crate::relay::ChannelInfo {
+                    name: "owner-stop-test".into(),
+                    channel_type: "stream".into(),
+                    description: None,
+                },
+            )]),
+            rest_client,
+        );
+        ctx.channel_info.projects.write().unwrap().insert(
+            channel_id,
+            CachedProjectInfo {
+                fetched_at: std::time::Instant::now(),
+                value: None,
+            },
+        );
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(run_prompt_task(
+            agent,
+            Some(one_event_batch(channel_id)),
+            None,
+            Arc::new(ctx),
+            result_tx,
+            Some(control_rx),
+            None,
+            "owner-stop-turn".into(),
+        ));
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("prompt must reach the in-flight ACP boundary");
+        control_tx
+            .send(ControlSignal::Cancel)
+            .expect("prompt task must still accept owner Stop");
+
+        let mut result = tokio::time::timeout(std::time::Duration::from_secs(10), result_rx.recv())
+            .await
+            .expect("owner Stop must return a prompt result")
+            .expect("prompt result channel must remain open");
+        task.await.expect("prompt task must not panic");
+        assert!(matches!(result.outcome, PromptOutcome::Cancelled));
+        result.agent.acp.shutdown().await;
+
+        let terminal = observer
+            .snapshot()
+            .into_iter()
+            .find(|event| event.kind == "turn_error")
+            .expect("owner Stop must emit a terminal observer event");
+        assert_eq!(terminal.turn_id.as_deref(), Some("owner-stop-turn"));
+        assert_eq!(terminal.session_id.as_deref(), Some("live-session"));
+        assert_eq!(terminal.payload["outcome"], "cancelled");
+        assert_eq!(terminal.payload["error"], "Run stopped");
+
+        let _ = std::fs::remove_file(marker);
+        relay_stub.abort();
     }
 
     #[tokio::test]
@@ -9956,6 +10254,7 @@ done"#
                 None,
                 Arc::clone(&ctx),
                 result_tx.clone(),
+                None,
                 None,
                 turn_id.into(),
             )
@@ -10120,6 +10419,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             None,
             Arc::new(ctx),
             result_tx,
+            None,
             None,
             "next-turn".into(),
         )
@@ -11183,6 +11483,34 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     }
 
     #[test]
+    fn turn_completion_guard_emits_structured_owner_stop() {
+        let observer = observer::ObserverHandle::in_process();
+        {
+            let mut guard = TurnCompletionGuard::new(
+                Some(observer.clone()),
+                Some(0),
+                None,
+                None,
+                "turn-stop".into(),
+                vec!["trigger-stop".into()],
+            );
+            guard.set_session_id("session-stop".into());
+            guard.mark_cancelled();
+        }
+
+        let terminal = observer.snapshot().pop().expect("cancellation event");
+        assert_eq!(terminal.kind, "turn_error");
+        assert_eq!(terminal.session_id.as_deref(), Some("session-stop"));
+        assert_eq!(terminal.turn_id.as_deref(), Some("turn-stop"));
+        assert_eq!(terminal.payload["outcome"], "cancelled");
+        assert_eq!(terminal.payload["error"], "Run stopped");
+        assert_eq!(
+            terminal.payload["triggeringEventIds"],
+            serde_json::json!(["trigger-stop"]),
+        );
+    }
+
+    #[test]
     fn turn_completion_guard_fails_closed_before_session_resolution() {
         let observer = observer::ObserverHandle::in_process();
         {
@@ -11491,10 +11819,9 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     // any early-return arm (e.g. session-create failure). The receiver must be
     // cleared and the next `install_steer_rx` must not panic.
     //
-    // Test 2 (post-read-loop path): receiver is already `None` (the read loop
-    // already consumed it via `take()`). `send_prompt_result` is idempotent —
-    // `steer_rx` stays `None` and the next `install_steer_rx` still does not
-    // panic.
+    // Test 2 (post-task path): receiver starts as `None` because no receiver
+    // was installed. `send_prompt_result` is idempotent — `steer_rx` stays
+    // `None` and the next `install_steer_rx` still does not panic.
 
     /// After an early-return path (receiver installed but read loop never ran),
     /// the returned agent's `steer_rx` is `None` and a subsequent
@@ -11573,11 +11900,11 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // Reaching here without a panic is the test.
     }
 
-    /// After a successful prompt (read loop already consumed `steer_rx` via
-    /// `take()`), `send_prompt_result` is a no-op — `steer_rx` stays `None`
-    /// and the next `install_steer_rx` does not panic.
+    /// After a task with no installed receiver, `send_prompt_result` is a
+    /// no-op — `steer_rx` stays `None` and the next `install_steer_rx` does
+    /// not panic.
     #[tokio::test]
-    async fn test_send_prompt_result_is_noop_when_steer_rx_already_consumed() {
+    async fn test_send_prompt_result_is_noop_when_steer_rx_already_clear() {
         let acp = AcpClient::spawn(
             "bash",
             &["-c".to_string(), "sleep 10".to_string()],
@@ -11602,8 +11929,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             load_session_supported: false,
         };
 
-        // Simulate a completed turn: `steer_rx` was consumed by the read loop
-        // (`take()` was called), so it is already `None` when the turn ends.
+        // Simulate a completed task with no steer channel, so the field is
+        // already `None` when the task ends.
         assert!(
             agent.acp.steer_rx_is_none(),
             "precondition: steer_rx starts as None"
@@ -13918,6 +14245,7 @@ done"#
             None,
             Arc::new(ctx),
             result_tx,
+            None,
             None,
             "indeterminate-project-turn".into(),
         )

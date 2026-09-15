@@ -291,6 +291,45 @@ test("buildThreadAgentStatusChipView builds failed view model", () => {
   assert.equal(view.title, "Claude Opus failed 45s ago");
 });
 
+test("buildThreadAgentStatusChipView renders owner cancellation as stopped", () => {
+  const view = buildThreadAgentStatusChipView(
+    [],
+    {
+      outcome: "cancelled",
+      agentPubkey: AGENT_B,
+      endedAt: NOW - 45_000,
+      channelId: "chan-1",
+      cancelledAgentSlots: [
+        {
+          agentPubkey: AGENT_A,
+          triggeringEventIds: ["cancelled-parent"],
+          sessionId: "cancelled-session",
+          turnId: "cancelled-turn",
+        },
+      ],
+    },
+    PROFILE_A,
+    NOW,
+    [],
+    {
+      id: "stale-receipt",
+      channelId: "chan-1",
+      conversationId: "thread-a",
+      rootEventId: "e".repeat(64),
+      agentPubkey: AGENT_A,
+      createdAt: NOW - 30_000,
+      summary: "Must not become reviewable after Stop",
+      verify: "pnpm check",
+      reviewed: false,
+    },
+  );
+
+  assert.equal(view?.state, "stopped");
+  assert.equal(view?.label, "Stopped");
+  assert.equal(view?.elapsedLabel, "45s ago");
+  assert.match(view?.title ?? "", /Claude Opus stopped 45s ago/);
+});
+
 test("ThreadAgentStatusChip renders nothing when conversation has no agents", () => {
   resetActiveAgentTurnsStore();
   const html = renderToStaticMarkup(

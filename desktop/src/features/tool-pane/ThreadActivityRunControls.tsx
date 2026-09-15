@@ -134,13 +134,39 @@ export function ThreadActivityRunControls({
       },
     });
   };
+  const publishSteer = async (
+    run: ThreadRunSelection,
+    requestId: string,
+    prompt: string,
+  ): Promise<Publication> => {
+    if (!epoch.current || !chosen || keyFor(chosen.run) !== keyFor(run)) {
+      return {
+        status: "not_attempted",
+        message: "The selected run changed before sending.",
+      };
+    }
+    return invokeTauri<Publication>("send_scoped_observer_control", {
+      agentPubkey: run.agentPubkey,
+      expectedScope: chosen.token,
+      payload: {
+        type: "steer_turn",
+        channelId: run.channelId,
+        conversationId: run.conversationId,
+        sessionId: run.sessionId,
+        turnId: run.turnId,
+        requestId,
+        prompt,
+      },
+    });
+  };
   if (!owned) return null;
   return (
-    <div className="border-b border-border/60 p-2">
-      <label className="flex items-center gap-2 text-sm">
+    <div className="border-b border-border/60 bg-muted/10 p-2">
+      <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
         Live run
         <select
           aria-label="Activity live run"
+          className="min-w-0 flex-1 rounded-md border border-input/60 bg-background px-2 py-1.5 text-sm font-normal text-foreground shadow-xs outline-hidden transition-colors hover:border-input focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
           value={value}
           disabled={!token}
           onChange={(event) => {
@@ -179,15 +205,18 @@ export function ThreadActivityRunControls({
         </select>
       </label>
       {native?.epoch === epoch && native.error ? (
-        <p role="status">{native.error}</p>
+        <p
+          className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
+          role="status"
+        >
+          {native.error}
+        </p>
       ) : null}
       <ThreadSelectedRunControls
         selection={chosen?.run ?? null}
         publishStop={publishStop}
+        publishSteer={publishSteer}
       />
-      <p className="text-xs text-muted-foreground">
-        Steer is unavailable until this runtime supports targeting an exact run.
-      </p>
     </div>
   );
 }

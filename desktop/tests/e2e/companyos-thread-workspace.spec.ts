@@ -41,7 +41,13 @@ async function setup(page: Page, mode: "focus" | "split" = "focus") {
     ],
   });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await page.getByTestId("workspace-menu-trigger").click();
+  await page.getByTestId("workspace-browse-channels").click();
+  await page
+    .getByTestId("browse-channel-general")
+    .getByRole("button")
+    .first()
+    .click();
   await page.waitForFunction(
     () =>
       window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({

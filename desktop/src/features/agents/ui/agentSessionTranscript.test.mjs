@@ -779,6 +779,63 @@ test("buildTranscript separates repeated lifecycle text", () => {
   assert.equal(item.text, "recovered: first\nrecovered: second");
 });
 
+test("buildTranscript presents a structured cancellation as a stopped run", () => {
+  const [item] = buildTranscript([
+    {
+      ...baseEvent,
+      kind: "turn_error",
+      payload: { outcome: "cancelled", error: "Run stopped" },
+    },
+  ]);
+
+  assert.equal(item?.type, "lifecycle");
+  assert.equal(item?.title, "Turn canceled");
+  assert.equal(item?.renderClass, "status");
+  assert.equal(item?.text, "Run stopped");
+});
+
+test("buildTranscript uses a neutral default for a cancellation without detail", () => {
+  const [item] = buildTranscript([
+    {
+      ...baseEvent,
+      kind: "turn_error",
+      payload: { outcome: "cancelled" },
+    },
+  ]);
+
+  assert.equal(item?.title, "Turn canceled");
+  assert.equal(item?.renderClass, "status");
+  assert.equal(item?.text, "Run stopped");
+});
+
+test("buildTranscript keeps a cancelled agent panic as an error", () => {
+  const [item] = buildTranscript([
+    {
+      ...baseEvent,
+      kind: "agent_panic",
+      payload: { outcome: "cancelled" },
+    },
+  ]);
+
+  assert.equal(item?.title, "Agent error (crash)");
+  assert.equal(item?.renderClass, "error");
+  assert.equal(item?.text, "cancelled: Unknown error");
+});
+
+test("buildTranscript keeps an unstructured terminal failure as an error", () => {
+  const [item] = buildTranscript([
+    {
+      ...baseEvent,
+      kind: "turn_error",
+      payload: {},
+    },
+  ]);
+
+  assert.equal(item?.title, "Turn error");
+  assert.equal(item?.renderClass, "error");
+  assert.equal(item?.text, "error: Unknown error");
+});
+
 // --- permission outcome (Fix #3) ---
 
 function makePermissionRequest(seq, requestId, turnId = "turn-1") {

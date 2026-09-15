@@ -178,4 +178,25 @@ describe("channelAgentPresence", () => {
       ["idle", "done-recent", "idle"],
     );
   });
+
+  it("keeps owner-cancelled runs neutral in channel presence", () => {
+    recordConversationOutcome("cancelled-conversation", {
+      outcome: "cancelled",
+      agentPubkey: AGENT,
+      channelId: "channel-1",
+      endedAt: NOW - 1_000,
+    });
+
+    const [presence] = deriveChannelAgentPresence(
+      "channel-1",
+      roster([AGENT]),
+      NOW,
+    );
+    assert.deepEqual(presence, {
+      agentPubkey: AGENT,
+      state: "idle",
+      conversationId: null,
+      since: null,
+    });
+  });
 });

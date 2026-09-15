@@ -1,12 +1,16 @@
 //! Selected-run control publication through the shared captured-owner transport.
 use nostr::PublicKey;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
-use super::owner_operation_transport::{OperationTransportError, OwnerOperationTransport};
+use super::owner_operation_transport::OperationTransportError;
 use crate::app_state::owner_scope::{assert_current, capture, OwnerScopeToken};
 
-/// Only exact-turn Stop is admitted by this initial scoped command.
+#[path = "scoped_observer_control_transport.rs"]
+mod transport;
+use transport::ScopedObserverControlTransport;
+
+/// Exact-turn controls admitted through the captured-owner transport.
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum ScopedObserverControl {
@@ -16,6 +20,15 @@ pub(crate) enum ScopedObserverControl {
         conversation_id: uuid::Uuid,
         turn_id: String,
         request_id: uuid::Uuid,
+    },
+    #[serde(rename_all = "camelCase")]
+    SteerTurn {
+        channel_id: uuid::Uuid,
+        conversation_id: uuid::Uuid,
+        session_id: String,
+        turn_id: String,
+        request_id: uuid::Uuid,
+        prompt: String,
     },
 }
 
@@ -66,7 +79,7 @@ async fn send_at_scope<R: Runtime>(
 
 struct PreparedControl {
     event: nostr::Event,
-    transport: OwnerOperationTransport,
+    transport: ScopedObserverControlTransport,
     token: OwnerScopeToken,
 }
 
@@ -76,9 +89,30 @@ async fn prepare_control<R: Runtime>(
     payload: ScopedObserverControl,
     expected_scope: OwnerScopeToken,
 ) -> Result<PreparedControl, String> {
-    let ScopedObserverControl::CancelTurn { ref turn_id, .. } = payload;
+    let (turn_id, steer_session, steer_prompt) = match &payload {
+        ScopedObserverControl::CancelTurn { turn_id, .. } => (turn_id, None, None),
+        ScopedObserverControl::SteerTurn {
+            session_id,
+            turn_id,
+            prompt,
+            ..
+        } => (turn_id, Some(session_id), Some(prompt)),
+    };
     if turn_id.trim().is_empty() || turn_id.len() > 128 {
         return Err("selected turn identity is missing or invalid".into());
+    }
+    if let Some(session_id) = steer_session {
+        if session_id.trim().is_empty() || session_id.len() > 128 {
+            return Err("selected session identity is missing or invalid".into());
+        }
+    }
+    if let Some(prompt) = steer_prompt {
+        if prompt.trim().is_empty() {
+            return Err("steer prompt must not be empty".into());
+        }
+        if prompt.len() > 16 * 1024 {
+            return Err("steer prompt exceeds 16 KiB".into());
+        }
     }
     let agent = PublicKey::from_hex(agent_pubkey.trim())
         .map_err(|error| format!("invalid agent pubkey: {error}"))?;
@@ -99,15 +133,11 @@ async fn prepare_control<R: Runtime>(
     .map_err(|error| format!("build observer control failed: {error}"))?
     .sign_with_keys(&captured.keys)
     .map_err(|error| format!("sign observer control failed: {error}"))?;
-    let transport = match OwnerOperationTransport::captured(
-        &app.state::<crate::AppState>(),
-        captured.token.scope.community.clone(),
-        captured.keys,
-        None,
-    ) {
-        Ok(transport) => transport,
-        Err(error) => return Err(error.to_string()),
-    };
+    let transport =
+        match ScopedObserverControlTransport::captured(captured.relay_url, captured.keys) {
+            Ok(transport) => transport,
+            Err(error) => return Err(error.to_string()),
+        };
     Ok(PreparedControl {
         event,
         transport,
@@ -119,8 +149,15 @@ async fn publish_prepared<R: Runtime>(
     app: AppHandle<R>,
     prepared: PreparedControl,
 ) -> ScopedControlPublication {
-    // Pass a lazy future: the shared transport polls it AFTER admission.
-    let guard = async { assert_current(app.clone(), &prepared.token).await };
+    // Pass a lazy guard factory: the transport checks it after admission and
+    // again after asynchronous WebSocket authentication, immediately before
+    // the EVENT frame can leave the process.
+    let token = prepared.token.clone();
+    let guard = move || {
+        let app = app.clone();
+        let token = token.clone();
+        async move { assert_current(app, &token).await }
+    };
     match prepared.transport.publish(&prepared.event, guard).await {
         Ok(result) if result.accepted => ScopedControlPublication::Accepted {
             event_id: result.event_id,

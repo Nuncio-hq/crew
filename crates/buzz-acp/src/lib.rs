@@ -66,7 +66,8 @@ use futures_util::FutureExt;
 use nostr::{PublicKey, ToBech32};
 use pool::{
     AgentPool, ControlSignal, IdleSwitchResult, OwnedAgent, PromptContext, PromptOutcome,
-    PromptResult, PromptSource, SessionState, TimeoutKind, CONTROL_CANCEL_GRACE,
+    PromptResult, PromptSource, SessionState, TaskSessionIdentity, TimeoutKind,
+    CONTROL_CANCEL_GRACE,
 };
 use pool_lifecycle::PoolLifecycle;
 use queue::{CancelReason, EventQueue, FlushBatch, QueuedEvent, ThreadTags};
@@ -1143,6 +1144,9 @@ async fn handle_relay_observer_control_event(
     match command_type {
         Some("cancel_turn") => {
             handle_cancel_turn_control(&payload, pool, queue, rest_client, observer);
+        }
+        Some("steer_turn") => {
+            handle_steer_turn_control(&payload, pool, observer);
         }
         Some("retry_turn") => {
             retry_turn::handle_retry_turn_control(
@@ -4142,6 +4146,7 @@ fn try_native_steer(
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<pool::SteerAck>();
     let request = pool::SteerRequest {
         prompt_blocks: vec![body],
+        strict_target: None,
         ack_tx,
     };
 
@@ -4374,7 +4379,7 @@ fn dispatch_pending(
             continue;
         }
         let affinity_hit = pool.has_session_for(channel_id);
-        let mut agent = match pool.try_claim(Some(channel_id)) {
+        let agent = match pool.try_claim(Some(channel_id)) {
             Some(a) => a,
             None => {
                 let pending = queue.pending_channels();
@@ -4394,6 +4399,14 @@ fn dispatch_pending(
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
         let agent_index = agent.index;
+        // Existing channel sessions are already authoritative before this
+        // task starts. Preserve that identity in TaskMeta so the exact-steer
+        // pool seam can reject a stale Activity session before queueing it.
+        // First turns resolve `session/new` inside the task and are fenced by
+        // AcpClient's lexical session check instead.
+        let task_session_identity =
+            pool::TaskSessionIdentity::new(agent.state.sessions.get(&channel_id).cloned());
+        let task_session_identity_for_task = task_session_identity.clone();
 
         // Mid-turn non-cancelling steer seam: install the per-turn steer
         // receiver on the read loop so the main loop's mode-gate fork
@@ -4406,7 +4419,6 @@ fn dispatch_pending(
         // `ExpectedRunIdMissing` (→ queue, degraded to
         // `MultipleEventHandling::Queue`) when it has neither.
         let (tx, rx) = tokio::sync::mpsc::channel::<pool::SteerRequest>(1);
-        agent.acp.install_steer_rx(rx);
         let steer_tx = Some(tx);
 
         // Prompt text is now built inside run_prompt_task (needs async for
@@ -4416,14 +4428,16 @@ fn dispatch_pending(
         let task_turn_id = turn_id.clone();
 
         let abort_handle = pool.join_set.spawn(async move {
-            pool::run_prompt_task(
+            pool::run_prompt_task_with_session_identity(
                 agent,
                 Some(batch),
                 None,
                 ctx_clone,
                 result_tx,
                 Some(control_rx),
+                Some(rx),
                 task_turn_id,
+                task_session_identity_for_task,
             )
             .await;
         });
@@ -4434,6 +4448,7 @@ fn dispatch_pending(
                 agent_index,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(routing_channel_id),
+                session_id: task_session_identity,
                 turn_id,
                 recoverable_batch,
                 control_tx: Some(control_tx),
@@ -5259,6 +5274,7 @@ fn dispatch_heartbeat(
             ctx_clone,
             result_tx,
             None,
+            None,
             task_turn_id,
         )
         .await;
@@ -5270,6 +5286,7 @@ fn dispatch_heartbeat(
             agent_index,
             channel_id: None,
             routing_channel_id: None,
+            session_id: TaskSessionIdentity::default(),
             turn_id,
             recoverable_batch: None,
             control_tx: None,
@@ -6586,6 +6603,7 @@ mod owner_control_command_tests {
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(channel_id),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
@@ -6645,6 +6663,7 @@ mod owner_control_command_tests {
                 agent_index: 0,
                 channel_id: Some(channel),
                 routing_channel_id: Some(channel),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "rapid-followups".into(),
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
@@ -6727,6 +6746,7 @@ mod owner_control_command_tests {
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(channel_id),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
@@ -6776,6 +6796,7 @@ mod owner_control_command_tests {
                     agent_index: 0,
                     channel_id: Some(conversation_id),
                     routing_channel_id: Some(routing_channel_id),
+                    session_id: TaskSessionIdentity::default(),
                     turn_id: format!("turn-{conversation_id}"),
                     recoverable_batch: None,
                     control_tx: Some(control_tx),
@@ -6893,6 +6914,7 @@ mod owner_control_command_tests {
                     agent_index: 0,
                     channel_id: Some(Uuid::new_v4()),
                     routing_channel_id: Some(routing_channel_id),
+                    session_id: TaskSessionIdentity::default(),
                     turn_id: turn_id.to_string(),
                     recoverable_batch: None,
                     control_tx: Some(control_tx),
@@ -8748,6 +8770,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(channel_id),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8821,6 +8844,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(channel_id),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8937,6 +8961,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(channel_id),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9003,6 +9028,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9081,6 +9107,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(channel_id),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "panic-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9176,6 +9203,7 @@ mod error_outcome_emission_tests {
                     agent_index: 0,
                     channel_id: None,
                     routing_channel_id: None,
+                    session_id: TaskSessionIdentity::default(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -9270,6 +9298,7 @@ mod error_outcome_emission_tests {
                     agent_index: 0,
                     channel_id: None,
                     routing_channel_id: None,
+                    session_id: TaskSessionIdentity::default(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -9378,6 +9407,7 @@ mod error_outcome_emission_tests {
                     agent_index: 0,
                     channel_id: None,
                     routing_channel_id: None,
+                    session_id: TaskSessionIdentity::default(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -9456,6 +9486,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9553,6 +9584,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9645,6 +9677,7 @@ mod error_outcome_emission_tests {
                     agent_index: 0,
                     channel_id: Some(channel),
                     routing_channel_id: Some(channel),
+                    session_id: TaskSessionIdentity::default(),
                     turn_id: "circuit-test".into(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -9731,6 +9764,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9874,6 +9908,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "turn-1".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9918,6 +9953,7 @@ mod error_outcome_emission_tests {
                 agent_index: 1,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "turn-2".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -9979,6 +10015,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10093,6 +10130,7 @@ mod error_outcome_emission_tests {
                     agent_index: 0,
                     channel_id: None,
                     routing_channel_id: None,
+                    session_id: TaskSessionIdentity::default(),
                     turn_id: format!("turn-{round}"),
                     recoverable_batch: None,
                     control_tx: None,
@@ -10215,6 +10253,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "turn-a".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10263,6 +10302,7 @@ mod error_outcome_emission_tests {
                 agent_index: 1,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "turn-b".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10350,6 +10390,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10493,6 +10534,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10623,6 +10665,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 routing_channel_id: Some(channel_id),
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "indeterminate-project".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10799,6 +10842,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10887,6 +10931,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -10977,6 +11022,7 @@ mod error_outcome_emission_tests {
                 agent_index: 0,
                 channel_id: None,
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -11167,6 +11213,7 @@ done"#
                 agent_index: 0,
                 channel_id: Some(Uuid::new_v4()),
                 routing_channel_id: None,
+                session_id: TaskSessionIdentity::default(),
                 turn_id: "turn-0".into(),
                 recoverable_batch: None,
                 control_tx: None,

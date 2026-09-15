@@ -11,12 +11,18 @@ import {
 
 /** UI-facing terminal outcome for one conversation (TTL + active-suppressed). */
 export type RecentConversationOutcome = {
-  outcome: "completed" | "error" | "lost-contact";
+  outcome: "completed" | "cancelled" | "error" | "lost-contact";
   agentPubkey: string;
   endedAt: number;
   channelId: string;
   failedEventIds?: string[];
   triggeringEventIds?: string[];
+  cancelledAgentSlots?: Array<{
+    agentPubkey: string;
+    triggeringEventIds: string[];
+    sessionId?: string;
+    turnId?: string;
+  }>;
 };
 
 const cache = new Map<string, RecentConversationOutcome | null>();
@@ -42,6 +48,10 @@ function toRecent(
     channelId: entry.channelId,
     failedEventIds: entry.failedEventIds,
     triggeringEventIds: entry.triggeringEventIds,
+    cancelledAgentSlots: entry.cancelledAgentSlots?.map((slot) => ({
+      ...slot,
+      triggeringEventIds: [...slot.triggeringEventIds],
+    })),
   };
 }
 

@@ -92,11 +92,18 @@ function harness() {
   deps["@/features/agents/lib/cancelTurnOutcome"] = load(
     new URL("../agents/lib/cancelTurnOutcome.ts", import.meta.url),
   );
+  deps["@/features/agents/lib/steerTurnOutcome"] = load(
+    new URL("../agents/lib/steerTurnOutcome.ts", import.meta.url),
+  );
   const { ThreadSelectedRunControls: Component } = load(
     new URL("./ThreadSelectedRunControls.tsx", import.meta.url),
   );
   const publishStop = async (target, requestId) => {
     state.sends.push({ target, requestId });
+    return { status: "accepted" };
+  };
+  const publishSteer = async (target, requestId, prompt) => {
+    state.sends.push({ target, requestId, prompt });
     return { status: "accepted" };
   };
   const result = (overrides = {}) =>
@@ -109,8 +116,151 @@ function harness() {
       requestId: state.sends.at(-1)?.requestId,
       ...overrides,
     });
-  return { Component, state, publishStop, result, listeners, results };
+  const steerResult = (overrides = {}) =>
+    results.get(selection.agentPubkey)?.({
+      type: "steer_turn",
+      status: "appended",
+      channelId: selection.channelId,
+      conversationId: selection.conversationId,
+      sessionId: selection.sessionId,
+      turnId: selection.turnId,
+      requestId: state.sends.at(-1)?.requestId,
+      ...overrides,
+    });
+  return {
+    Component,
+    state,
+    publishStop,
+    publishSteer,
+    result,
+    steerResult,
+    listeners,
+    results,
+  };
 }
+
+test("Steer Enter targets the selected session and turn; Shift+Enter does not submit", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  const textbox = view.getByRole("textbox", { name: "Steer selected run" });
+  fireEvent.change(textbox, { target: { value: "first" } });
+  fireEvent.keyDown(textbox, { key: "Enter", shiftKey: true });
+  assert.equal(h.state.sends.length, 0);
+  await act(async () => fireEvent.keyDown(textbox, { key: "Enter" }));
+  assert.equal(h.state.sends.length, 1);
+  assert.equal(h.state.sends[0].target.sessionId, selection.sessionId);
+  assert.equal(h.state.sends[0].target.turnId, selection.turnId);
+  assert.equal(h.state.sends[0].prompt, "first");
+  await act(async () => h.steerResult());
+  assert.match(view.getByRole("status").textContent, /appended/);
+});
+test("unconfirmed Steer result keeps replay disabled", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  const textbox = view.getByRole("textbox", { name: "Steer selected run" });
+  await act(async () => {
+    fireEvent.change(textbox, { target: { value: "may have applied" } });
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () => h.steerResult({ status: "unconfirmed" }));
+  assert.match(view.getByRole("status").textContent, /unconfirmed/);
+  assert.equal(
+    view.getByRole("button", { name: "Steer selected run" }).disabled,
+    true,
+  );
+});
+test("rejected Steer feedback preserves the native rejection reason", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      { target: { value: "explain the failure" } },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () =>
+    h.steerResult({
+      status: "rejected",
+      error: "selected adapter does not support strict steering",
+    }),
+  );
+  assert.match(
+    view.getByRole("status").textContent,
+    /selected adapter does not support strict steering/,
+  );
+  assert.equal(
+    view.getByRole("button", { name: "Steer selected run" }).disabled,
+    false,
+  );
+});
+test("rejected Steer feedback falls back when the native reason is absent", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      { target: { value: "retry safely" } },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () => h.steerResult({ status: "rejected", error: " " }));
+  assert.match(
+    view.getByRole("status").textContent,
+    /The selected runtime rejected Steer\. You can retry\./,
+  );
+});
+test("rejected Steer feedback ignores a malformed native reason", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      { target: { value: "retry safely" } },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () => h.steerResult({ status: "rejected", error: 503 }));
+  assert.match(
+    view.getByRole("status").textContent,
+    /The selected runtime rejected Steer\. You can retry\./,
+  );
+});
 test("same-tick Stop publishes once with immutable exact turn and waits for correlated native result", async () => {
   const { render, act } = await import("@testing-library/react");
   const h = harness();

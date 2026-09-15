@@ -113,6 +113,7 @@ export function getAgentThreadDigestForChannel(
 
   walkConversationOutcomes((conversationId, entry) => {
     if (entry.channelId !== channelId) return;
+    if (entry.outcome === "cancelled") return;
     if (now - entry.endedAt > CONVERSATION_OUTCOME_TTL_MS) return;
     if (runningByConversation.has(conversationId)) return;
     const ref: ConversationRef = {

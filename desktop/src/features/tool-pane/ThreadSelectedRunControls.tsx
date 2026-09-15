@@ -9,6 +9,10 @@ import {
 } from "@/features/agents/activeAgentTurnsStore";
 import { subscribeControlResults } from "@/features/agents/controlResultDispatch";
 import { awaitCancelTurnOutcome } from "@/features/agents/lib/cancelTurnOutcome";
+import {
+  awaitSteerTurnOutcome,
+  type SteerTurnOutcome,
+} from "@/features/agents/lib/steerTurnOutcome";
 
 /** Exact run selected in the thread Activity view. */
 export type ThreadRunSelection = Readonly<{
@@ -28,6 +32,14 @@ export type ThreadRunControlsProps = {
   publishStop: (
     selection: ThreadRunSelection,
     requestId: string,
+  ) => Promise<{
+    status: "accepted" | "unknown" | "not_attempted";
+    message?: string;
+  }>;
+  publishSteer?: (
+    selection: ThreadRunSelection,
+    requestId: string,
+    prompt: string,
   ) => Promise<{
     status: "accepted" | "unknown" | "not_attempted";
     message?: string;
@@ -55,6 +67,7 @@ function isLive(selection: ThreadRunSelection | null): boolean {
 export function ThreadSelectedRunControls({
   selection,
   publishStop,
+  publishSteer,
 }: ThreadRunControlsProps) {
   const viewer = useIdentityQuery().data?.pubkey ?? "";
   const relay = normalizeRelayUrl(
@@ -63,6 +76,7 @@ export function ThreadSelectedRunControls({
   const owned = useCurrentOwnedAgentPubkeys(viewer);
   const [, bump] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => subscribeActiveAgentTurns(bump), []);
+  const steerInputId = React.useId();
   const selectionKey = JSON.stringify(selection);
   const targetOwned = !!selection && owned.has(selection.agentPubkey);
   const gate = React.useMemo(
@@ -84,6 +98,7 @@ export function ThreadSelectedRunControls({
     gate: typeof gate;
     text: string;
   } | null>(null);
+  const [steerDraft, setSteerDraft] = React.useState("");
   React.useLayoutEffect(() => {
     gate.current = true;
     return () => {
@@ -160,20 +175,154 @@ export function ThreadSelectedRunControls({
       });
     }
   };
+  const steer = async () => {
+    const prompt = steerDraft.trim();
+    if (!publishSteer || !target || !prompt || !eligible() || gate.claimed)
+      return;
+    gate.claimed = true;
+    setFeedback({
+      gate,
+      text: "Waiting for the selected run to acknowledge Steer…",
+    });
+    const requestId = crypto.randomUUID();
+    let notAttempted = false;
+    try {
+      const result = await awaitSteerTurnOutcome({
+        requestId,
+        channelId: target.channelId,
+        conversationId: target.conversationId,
+        sessionId: target.sessionId,
+        turnId: target.turnId,
+        subscribe: (listener) =>
+          subscribeControlResults(target.agentPubkey, (frame) => {
+            if (frame.turnId === target.turnId) listener(frame);
+          }),
+        sendSteer: async () => {
+          const result = await publishSteer(target, requestId, prompt);
+          if (result.status === "not_attempted") {
+            notAttempted = true;
+            throw new Error(
+              result.message ?? "Steer was not sent. You can retry.",
+            );
+          }
+        },
+        scheduleTimeout: (onTimeout) => {
+          gate.retire = onTimeout;
+          const timer = setTimeout(onTimeout, 10_000);
+          return () => {
+            clearTimeout(timer);
+            gate.retire = () => {};
+          };
+        },
+      });
+      if (!gate.current) return;
+      setFeedback({
+        gate,
+        text: steerFeedback(result.outcome, result.error),
+      });
+      if (result.outcome === "appended") setSteerDraft("");
+      // Only an unconfirmed send is replay-unsafe. The adapter's terminal
+      // outcomes prove that this request can be retried safely if needed.
+      gate.claimed = result.outcome === "unconfirmed";
+    } catch (error) {
+      if (!gate.current) return;
+      gate.claimed = !notAttempted;
+      setFeedback({
+        gate,
+        text:
+          notAttempted && error instanceof Error
+            ? error.message
+            : "Steer is unconfirmed. Check the selected run before retrying.",
+      });
+    }
+  };
+  const controlsEnabled = eligible();
   return (
-    <div className="flex flex-col gap-2 p-2">
-      {eligible() ? (
-        <button
-          type="button"
-          disabled={gate.claimed}
-          onClick={() => {
-            void stop();
-          }}
-        >
-          Stop selected run
-        </button>
+    <div
+      className={
+        controlsEnabled
+          ? "flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
+          : "flex flex-col gap-2 p-2"
+      }
+    >
+      {controlsEnabled ? (
+        <>
+          <button
+            type="button"
+            className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={gate.claimed}
+            onClick={() => {
+              void stop();
+            }}
+          >
+            Stop selected run
+          </button>
+          {publishSteer ? (
+            <div className="flex flex-col gap-1.5 text-sm">
+              <label
+                className="text-xs font-medium text-foreground"
+                htmlFor={steerInputId}
+              >
+                Steer selected run
+              </label>
+              <textarea
+                id={steerInputId}
+                aria-label="Steer selected run"
+                className="min-h-16 w-full resize-y rounded-md border border-input/60 bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-hidden transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+                value={steerDraft}
+                disabled={gate.claimed}
+                maxLength={16 * 1024}
+                onChange={(event) => setSteerDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void steer();
+                  }
+                }}
+                placeholder="Send guidance to this run"
+                rows={2}
+              />
+              <button
+                type="button"
+                className="inline-flex h-8 items-center justify-center self-start rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={gate.claimed || !steerDraft.trim()}
+                onClick={() => {
+                  void steer();
+                }}
+              >
+                Steer selected run
+              </button>
+            </div>
+          ) : null}
+        </>
       ) : null}
-      {feedback?.gate === gate ? <p role="status">{feedback.text}</p> : null}
+      {feedback?.gate === gate ? (
+        <p
+          className="rounded-md border border-border/60 bg-background/60 px-2.5 py-2 text-xs text-foreground"
+          role="status"
+        >
+          {feedback.text}
+        </p>
+      ) : null}
     </div>
   );
+}
+
+function steerFeedback(outcome: SteerTurnOutcome, reason?: string): string {
+  switch (outcome) {
+    case "appended":
+      return "Steer appended to the selected run.";
+    case "stale_target":
+      return "The selected run has ended or changed.";
+    case "busy":
+      return "The selected run is already processing a steer. You can retry.";
+    case "expired":
+      return "Steer expired before the selected run reached a round boundary. You can retry.";
+    case "rejected":
+      return reason
+        ? `The selected runtime rejected Steer (${reason}). You can retry.`
+        : "The selected runtime rejected Steer. You can retry.";
+    case "unconfirmed":
+      return "Steer is unconfirmed. Check the selected run before retrying.";
+  }
 }
