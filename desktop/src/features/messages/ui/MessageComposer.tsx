@@ -25,6 +25,7 @@ import {
 } from "@/features/messages/lib/backgroundMediaUploadStore";
 import { useComposerFocusOwnership } from "@/features/messages/lib/useComposerFocusOwnership";
 import { useThreadComposerFocusRegistration } from "@/features/messages/lib/useThreadComposerFocusRegistration";
+import { useComposerScrollToBottom } from "./useComposerScrollToBottom";
 import { isMentionCodeContext } from "@/features/messages/lib/mentionCodeContext";
 import { useMentions } from "@/features/messages/lib/useMentions";
 import { getPersistentAgentAudienceScope } from "@/features/messages/lib/persistentAgentAudience";
@@ -266,13 +267,7 @@ function MessageComposerImpl({
     ((info: LinkSelectionInfo | null) => void) | null
   >(null);
   const onLinkShortcutRef = React.useRef<(() => boolean) | null>(null);
-  const scrollComposerToBottom = React.useCallback(() => {
-    window.requestAnimationFrame(() => {
-      const scrollElement = composerScrollRef.current;
-      if (!scrollElement) return;
-      scrollElement.scrollTop = scrollElement.scrollHeight;
-    });
-  }, []);
+  const scrollComposerToBottom = useComposerScrollToBottom(composerScrollRef);
   const computedPlaceholder = editTarget
     ? "Edit your message"
     : (placeholder ??
