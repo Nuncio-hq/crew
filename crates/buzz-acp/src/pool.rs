@@ -84,6 +84,27 @@ pub struct SuccessfulSteerDelivery {
     pub session_id: String,
 }
 
+/// Shared "this request reached the adapter" marker.
+///
+/// A dropped ack oneshot alone cannot tell a request that was discarded
+/// before any write from one whose response was lost after the write. The
+/// first is replay-safe (`stale_target`); the second is not (`unconfirmed`).
+/// The read loop sets this at the exact point the JSON-RPC frame is written.
+#[derive(Clone, Debug, Default)]
+pub struct SteerDispatchMarker(Arc<std::sync::atomic::AtomicBool>);
+
+impl SteerDispatchMarker {
+    /// Record that the request was written to the adapter.
+    pub fn mark_dispatched(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether the request was ever written to the adapter.
+    pub fn was_dispatched(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 /// Identity supplied by Activity when steering one selected live run.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct StrictSteerTarget {
@@ -559,6 +580,8 @@ pub struct SteerRequest {
     pub strict_target: Option<StrictSteerTarget>,
     /// Oneshot for the read loop to report the outcome.
     pub ack_tx: tokio::sync::oneshot::Sender<SteerAck>,
+    /// Set by the read loop once the request is written to the adapter.
+    pub dispatched: SteerDispatchMarker,
 }
 
 /// Why a mid-turn steer failed, on either transport
@@ -609,7 +632,13 @@ pub enum SteerError {
     OutcomeRejected { outcome: String },
     /// The adapter answered a strict request with a terminal outcome other
     /// than `appended`; the native observer layer forwards it verbatim.
-    StrictOutcome { outcome: String },
+    /// `reason` carries the adapter's own bounded explanation when it gave
+    /// one, so the operator sees why the runtime refused rather than a bare
+    /// status.
+    StrictOutcome {
+        outcome: String,
+        reason: Option<String>,
+    },
     /// The selected task disappeared before the strict request could be sent.
     StrictTargetMismatch,
     /// The selected adapter did not advertise the exact strict contract.
@@ -3841,6 +3870,11 @@ pub async fn run_prompt_task_with_session_identity(
                     Some(&turn_id),
                 ) => result,
                 mode = rx => {
+                    // A dropped control sender is not an owner Stop. Only an
+                    // actually-received Cancel may present the turn as a
+                    // deliberate "Stopped"; a lost sender must keep the
+                    // abnormal-termination outcome the turn really had.
+                    let owner_stop = is_owner_stop(&mode);
                     let control_signal = mode.unwrap_or(ControlSignal::Cancel);
                     // Land the model switch before any cancel/requeue work: setting
                     // `desired_model` here means the fresh session created by the
@@ -3868,8 +3902,6 @@ pub async fn run_prompt_task_with_session_identity(
                             Ok(stop_reason) => {
                                 log_stop_reason(&source, &stop_reason);
                                 agent.state.invalidate(&source);
-                                let owner_stop =
-                                    matches!(&control_signal, ControlSignal::Cancel);
                                 let retry_batch =
                                     requeue_cancelled_batch(&ctx, control_signal, batch);
 
@@ -3938,7 +3970,6 @@ pub async fn run_prompt_task_with_session_identity(
                         // waiting on the continuation decision. Stop must not commit it.
                         agent.acp.cancel_pending_user_input().await;
                         agent.state.invalidate(&source);
-                        let owner_stop = matches!(&control_signal, ControlSignal::Cancel);
                         let retry_batch = requeue_cancelled_batch(&ctx, control_signal, batch);
                         if owner_stop {
                             turn_guard.mark_cancelled();
@@ -6328,6 +6359,17 @@ fn requeue_batch_if_queue(ctx: &PromptContext, batch: Option<FlushBatch>) -> Opt
 /// drop the batch entirely. The reason is consumed by the main loop at requeue
 /// time (`requeue_as_cancelled`) and ultimately by `format_prompt`.
 #[inline]
+/// Whether the turn ended because its owner actually asked it to stop.
+///
+/// The control receiver yields `Err` when its sender is dropped — nobody
+/// requested anything. Rendering that as a deliberate Stop would hide an
+/// abnormal termination behind a neutral "Stopped".
+pub(crate) fn is_owner_stop(
+    mode: &Result<ControlSignal, tokio::sync::oneshot::error::RecvError>,
+) -> bool {
+    matches!(mode, Ok(ControlSignal::Cancel))
+}
+
 fn requeue_cancelled_batch(
     ctx: &PromptContext,
     signal: ControlSignal,

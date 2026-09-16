@@ -4148,6 +4148,7 @@ fn try_native_steer(
         prompt_blocks: vec![body],
         strict_target: None,
         ack_tx,
+        dispatched: Default::default(),
     };
 
     match pool.send_steer(conversation_id, request) {

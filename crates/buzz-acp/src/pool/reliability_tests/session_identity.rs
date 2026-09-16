@@ -98,6 +98,7 @@ for line in sys.stdin:
             request_id: "stale-request".into(),
         }),
         ack_tx: stale_ack_tx,
+        dispatched: Default::default(),
     };
     assert!(matches!(
         pool.send_exact_steer(channel, channel, &turn_id, stale),
@@ -113,6 +114,7 @@ for line in sys.stdin:
             request_id: "current-request".into(),
         }),
         ack_tx,
+        dispatched: Default::default(),
     };
     assert!(pool
         .send_exact_steer(channel, channel, "resolved-session-turn", current)

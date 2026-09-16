@@ -148,65 +148,176 @@ fn signal_exact_cancel_turn(
 /// settled as `stale_target`; it is never sent to a successor task. The
 /// adapter's response is watched asynchronously so the relay control loop is
 /// not held open while the selected run reaches its next round boundary.
+/// One validated Activity Steer request.
+struct ParsedSteerRequest<'a> {
+    channel_id: uuid::Uuid,
+    conversation_id: uuid::Uuid,
+    session_id: &'a str,
+    turn_id: &'a str,
+    request_id: uuid::Uuid,
+    prompt: &'a str,
+}
+
+/// Largest steer prompt the observer control accepts, in bytes.
+pub(crate) const MAX_STEER_PROMPT_BYTES: usize = 16 * 1024;
+
+/// Longest raw identifier echoed back on a rejected frame.
+const MAX_ECHOED_ID_BYTES: usize = 128;
+
+/// Echo an unvalidated identifier so the caller can still correlate.
+fn echo_id(payload: &serde_json::Value, key: &str) -> Option<String> {
+    let value = payload.get(key)?.as_str()?;
+    Some(
+        crate::acp::bound_steer_reason(Some(value))?
+            .chars()
+            .take(MAX_ECHOED_ID_BYTES)
+            .collect(),
+    )
+}
+
+/// Validate one steer control frame, naming the exact reason on failure.
+///
+/// Every rejection reason is a fixed string: it is forwarded to the operator,
+/// so it must never echo unbounded caller-supplied text.
+fn parse_steer_payload(
+    payload: &serde_json::Value,
+) -> Result<ParsedSteerRequest<'_>, &'static str> {
+    let channel_id = payload
+        .get("channelId")
+        .and_then(|value| value.as_str())
+        .and_then(|value| value.parse::<uuid::Uuid>().ok())
+        .ok_or("steer request is missing a valid channelId")?;
+    let conversation_id = payload
+        .get("conversationId")
+        .and_then(|value| value.as_str())
+        .and_then(|value| value.parse::<uuid::Uuid>().ok())
+        .ok_or("steer request is missing a valid conversationId")?;
+    let session_id = payload
+        .get("sessionId")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("steer request is missing a sessionId")?;
+    let turn_id = payload
+        .get("turnId")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("steer request is missing a turnId")?;
+    let request_id = payload
+        .get("requestId")
+        .and_then(|value| value.as_str())
+        .and_then(|value| value.parse::<uuid::Uuid>().ok())
+        .ok_or("steer request is missing a valid requestId")?;
+    let prompt = payload
+        .get("prompt")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("steer request is missing a prompt")?;
+    if prompt.len() > MAX_STEER_PROMPT_BYTES {
+        return Err("steer prompt exceeds the 16 KiB limit");
+    }
+    Ok(ParsedSteerRequest {
+        channel_id,
+        conversation_id,
+        session_id,
+        turn_id,
+        request_id,
+        prompt,
+    })
+}
+
+/// Classify the adapter's answer to a dispatched strict steer request.
+///
+/// `dispatched` is the only thing that separates "the queued request was
+/// dropped before any write" (replay-safe `stale_target`) from "the request
+/// reached the adapter and its answer was lost" (`unconfirmed`, no replay).
+pub(crate) fn classify_steer_ack(
+    ack: Result<pool::SteerAck, tokio::sync::oneshot::error::RecvError>,
+    dispatched: bool,
+) -> (String, Option<String>) {
+    match ack {
+        Ok(pool::SteerAck::Success { .. }) => ("appended".into(), None),
+        Ok(pool::SteerAck::Err(pool::SteerError::StrictOutcome { outcome, reason }))
+            if matches!(
+                outcome.as_str(),
+                "stale_target" | "rejected" | "busy" | "expired"
+            ) =>
+        {
+            (outcome, reason)
+        }
+        Ok(pool::SteerAck::Err(pool::SteerError::StrictTargetMismatch))
+        | Ok(pool::SteerAck::PromptCompletedNeutral)
+        | Ok(pool::SteerAck::Err(pool::SteerError::PromptCompleted)) => {
+            ("stale_target".into(), None)
+        }
+        Ok(pool::SteerAck::Err(pool::SteerError::Busy)) => ("busy".into(), None),
+        Ok(pool::SteerAck::Err(
+            pool::SteerError::StrictUnsupported | pool::SteerError::ExpectedRunIdMissing,
+        )) => (
+            "rejected".into(),
+            Some("selected adapter does not support strict steering".into()),
+        ),
+        // A malformed echo, unknown adapter outcome, or transport failure
+        // does not prove whether the request was applied. Keep replay
+        // disabled until the user verifies the run.
+        Ok(pool::SteerAck::Err(
+            pool::SteerError::StrictResponseMismatch
+            | pool::SteerError::StrictOutcome { .. }
+            | pool::SteerError::OutcomeRejected { .. }
+            | pool::SteerError::Transport(_)
+            | pool::SteerError::AgentError { .. },
+        )) => (
+            "unconfirmed".into(),
+            Some("strict steer outcome was unconfirmed".into()),
+        ),
+        // The ack sender was dropped. If nothing was ever written to the
+        // adapter the request cannot have taken effect, so it is safe to
+        // retry; only a dropped answer to a written request is unconfirmed.
+        Err(_) if !dispatched => (
+            "stale_target".into(),
+            Some("the selected run ended before the steer was sent".into()),
+        ),
+        Err(_) => (
+            "unconfirmed".into(),
+            Some("strict steer response was lost".into()),
+        ),
+    }
+}
+
+/// Forward one Activity Steer request to the exact in-flight task.
+///
+/// The task map is the native source of truth for routing. A request that no
+/// longer matches the selected routing channel, conversation, or turn is
+/// settled as `stale_target`; it is never sent to a successor task. The
+/// adapter's response is watched asynchronously so the relay control loop is
+/// not held open while the selected run reaches its next round boundary.
+///
+/// Every frame, including a malformed one, leaves exactly one terminal
+/// `control_result`: a dropped frame would strand the caller's control
+/// latched on a request that can never resolve.
 pub(crate) fn handle_steer_turn_control(
     payload: &serde_json::Value,
     pool: &mut AgentPool,
     observer: Option<&observer::ObserverHandle>,
 ) {
-    let Some(channel_id) = payload
-        .get("channelId")
-        .and_then(|value| value.as_str())
-        .and_then(|value| value.parse::<uuid::Uuid>().ok())
-    else {
-        tracing::warn!("observer steer_turn control frame missing valid channelId");
-        return;
+    let parsed = match parse_steer_payload(payload) {
+        Ok(parsed) => parsed,
+        Err(reason) => {
+            tracing::warn!("observer steer_turn control frame rejected: {reason}");
+            emit_rejected_steer_frame(observer, payload, reason);
+            return;
+        }
     };
-    let Some(conversation_id) = payload
-        .get("conversationId")
-        .and_then(|value| value.as_str())
-        .and_then(|value| value.parse::<uuid::Uuid>().ok())
-    else {
-        tracing::warn!("observer steer_turn control frame missing valid conversationId");
-        return;
-    };
-    let Some(session_id) = payload
-        .get("sessionId")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-    else {
-        tracing::warn!("observer steer_turn control frame missing sessionId");
-        return;
-    };
-    let Some(turn_id) = payload
-        .get("turnId")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-    else {
-        tracing::warn!("observer steer_turn control frame missing turnId");
-        return;
-    };
-    let Some(request_id) = payload
-        .get("requestId")
-        .and_then(|value| value.as_str())
-        .and_then(|value| value.parse::<uuid::Uuid>().ok())
-    else {
-        tracing::warn!("observer steer_turn control frame missing valid requestId");
-        return;
-    };
-    let Some(prompt) = payload
-        .get("prompt")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-    else {
-        tracing::warn!("observer steer_turn control frame missing prompt");
-        return;
-    };
-    if prompt.len() > 16 * 1024 {
-        tracing::warn!("observer steer_turn control frame prompt exceeds 16 KiB");
-        return;
-    }
+    let ParsedSteerRequest {
+        channel_id,
+        conversation_id,
+        session_id,
+        turn_id,
+        request_id,
+        prompt,
+    } = parsed;
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+    let dispatched = pool::SteerDispatchMarker::default();
     let request = pool::SteerRequest {
         prompt_blocks: vec![prompt.to_owned()],
         strict_target: Some(pool::StrictSteerTarget {
@@ -215,6 +326,7 @@ pub(crate) fn handle_steer_turn_control(
             request_id: request_id.to_string(),
         }),
         ack_tx,
+        dispatched: dispatched.clone(),
     };
     match pool.send_exact_steer(channel_id, conversation_id, turn_id, request) {
         Ok(()) => {
@@ -222,65 +334,18 @@ pub(crate) fn handle_steer_turn_control(
             let session_id = session_id.to_owned();
             let turn_id = turn_id.to_owned();
             tokio::spawn(async move {
-                let (status, error): (String, Option<&'static str>) = match ack_rx.await {
-                    Ok(pool::SteerAck::Success { .. }) => ("appended".into(), None),
-                    Ok(pool::SteerAck::Err(pool::SteerError::StrictOutcome { outcome }))
-                        if matches!(
-                            outcome.as_str(),
-                            "stale_target" | "rejected" | "busy" | "expired"
-                        ) =>
-                    {
-                        (outcome, None)
-                    }
-                    Ok(pool::SteerAck::Err(pool::SteerError::StrictTargetMismatch))
-                    | Ok(pool::SteerAck::PromptCompletedNeutral)
-                    | Ok(pool::SteerAck::Err(pool::SteerError::PromptCompleted)) => {
-                        ("stale_target".into(), None)
-                    }
-                    Ok(pool::SteerAck::Err(pool::SteerError::Busy)) => ("busy".into(), None),
-                    Ok(pool::SteerAck::Err(
-                        pool::SteerError::StrictUnsupported
-                        | pool::SteerError::ExpectedRunIdMissing,
-                    )) => (
-                        "rejected".into(),
-                        Some("selected adapter does not support strict steering"),
-                    ),
-                    // A malformed echo, unknown adapter outcome, or transport
-                    // failure does not prove whether the request was applied.
-                    // Keep replay disabled until the user verifies the run.
-                    Ok(pool::SteerAck::Err(
-                        pool::SteerError::StrictResponseMismatch
-                        | pool::SteerError::StrictOutcome { .. }
-                        | pool::SteerError::OutcomeRejected { .. }
-                        | pool::SteerError::Transport(_)
-                        | pool::SteerError::AgentError { .. },
-                    )) => (
-                        "unconfirmed".into(),
-                        Some("strict steer outcome was unconfirmed"),
-                    ),
-                    Err(_) => ("unconfirmed".into(), Some("strict steer response was lost")),
-                };
+                let ack = ack_rx.await;
+                let (status, error) = classify_steer_ack(ack, dispatched.was_dispatched());
                 if let Some(observer) = observer {
-                    let context = observer::context_for_conversation(
-                        Some(channel_id),
-                        Some(conversation_id),
-                        Some(session_id.clone()),
-                        Some(turn_id.clone()),
-                    );
-                    observer.emit(
-                        "control_result",
-                        None,
-                        &context,
-                        serde_json::json!({
-                            "type": "steer_turn",
-                            "requestId": request_id.to_string(),
-                            "status": status,
-                            "channelId": channel_id.to_string(),
-                            "conversationId": conversation_id.to_string(),
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "error": error,
-                        }),
+                    emit_steer_result(
+                        Some(&observer),
+                        channel_id,
+                        conversation_id,
+                        &session_id,
+                        &turn_id,
+                        request_id,
+                        &status,
+                        error.as_deref(),
                     );
                 }
             });
@@ -330,6 +395,50 @@ pub(crate) fn handle_steer_turn_control(
             Some("strict steer was not sent"),
         ),
     }
+}
+
+/// Answer a frame that never became a routable request.
+///
+/// Identifiers are echoed raw and bounded: the caller correlates on string
+/// equality, and a frame whose own requestId is unusable still deserves a
+/// terminal answer rather than silence.
+fn emit_rejected_steer_frame(
+    observer: Option<&observer::ObserverHandle>,
+    payload: &serde_json::Value,
+    reason: &str,
+) {
+    let Some(observer) = observer else {
+        return;
+    };
+    let channel_id = echo_id(payload, "channelId");
+    let conversation_id = echo_id(payload, "conversationId");
+    let session_id = echo_id(payload, "sessionId");
+    let turn_id = echo_id(payload, "turnId");
+    let context = observer::context_for_conversation(
+        channel_id
+            .as_deref()
+            .and_then(|value| value.parse::<uuid::Uuid>().ok()),
+        conversation_id
+            .as_deref()
+            .and_then(|value| value.parse::<uuid::Uuid>().ok()),
+        session_id.clone(),
+        turn_id.clone(),
+    );
+    observer.emit(
+        "control_result",
+        None,
+        &context,
+        serde_json::json!({
+            "type": "steer_turn",
+            "requestId": echo_id(payload, "requestId"),
+            "status": "rejected",
+            "channelId": channel_id,
+            "conversationId": conversation_id,
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "error": reason,
+        }),
+    );
 }
 
 #[allow(clippy::too_many_arguments)] // Correlated result identity remains explicit at the boundary.

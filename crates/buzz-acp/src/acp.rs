@@ -430,7 +430,35 @@ const ACP_STEER_METHOD: &str = "_session/steering";
 
 /// Crew's strict selected-invocation steering uses the same wire method but a
 /// stronger parameter/result contract, gated by the strict capability flag.
-const STRICT_ACP_STEER_METHOD: &str = "_session/steering";
+const STRICT_ACP_STEER_METHOD: &str = ACP_STEER_METHOD;
+
+/// Largest adapter-supplied steer rejection reason forwarded to the operator.
+pub(crate) const MAX_STEER_REASON_BYTES: usize = 240;
+
+/// Make an adapter's rejection reason safe to carry into a control result.
+///
+/// Control characters would corrupt the observer frame and the rendered
+/// feedback line, and an unbounded adapter string must not become an
+/// unbounded event payload. Truncation lands on a char boundary so a
+/// multibyte character at the cut cannot panic.
+pub(crate) fn bound_steer_reason(reason: Option<&str>) -> Option<String> {
+    let scrubbed: String = reason?
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = scrubbed.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.len() <= MAX_STEER_REASON_BYTES {
+        return Some(trimmed.to_owned());
+    }
+    let mut end = MAX_STEER_REASON_BYTES;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(trimmed[..end].trim_end().to_owned())
+}
 
 /// `outcome` value meaning the steer was applied to the turn Buzz is waiting
 /// on, which therefore keeps running.
@@ -1951,6 +1979,10 @@ impl AcpClient {
                             );
                             match self.write_ndjson(&msg).await {
                                 Ok(()) => {
+                                    // From here the request has reached the
+                                    // adapter: a later lost ack is
+                                    // "outcome unknown", never "never sent".
+                                    req.dispatched.mark_dispatched();
                                     pending_steer = Some((id, transport, target, req.ack_tx));
                                 }
                                 Err(e) => {
@@ -2142,6 +2174,11 @@ impl AcpClient {
                                             crate::pool::SteerAck::Err(
                                                 crate::pool::SteerError::StrictOutcome {
                                                     outcome: "rejected".into(),
+                                                    reason: bound_steer_reason(
+                                                        error
+                                                            .get("message")
+                                                            .and_then(|m| m.as_str()),
+                                                    ),
                                                 },
                                             )
                                         } else {
@@ -2203,6 +2240,9 @@ impl AcpClient {
                                                         .send(crate::pool::SteerAck::Err(
                                                         crate::pool::SteerError::StrictOutcome {
                                                             outcome: outcome.to_owned(),
+                                                            reason: bound_steer_reason(
+                                                                result["reason"].as_str(),
+                                                            ),
                                                         },
                                                     ));
                                                 } else {
@@ -4931,6 +4971,7 @@ done
                     prompt_blocks: vec!["test steer body".into()],
                     strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -5001,6 +5042,7 @@ done
                     prompt_blocks: vec!["test steer body".into()],
                     strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -5074,6 +5116,7 @@ done
                     prompt_blocks: vec!["steer body".into()],
                     strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -5149,6 +5192,7 @@ done
                     prompt_blocks: vec!["steer body".into()],
                     strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -5213,6 +5257,7 @@ done
                 prompt_blocks: vec!["strict steer body".into()],
                 strict_target: Some(target),
                 ack_tx,
+                dispatched: Default::default(),
             })
             .await
             .expect("strict steer send should succeed");
@@ -5518,6 +5563,7 @@ done
                     prompt_blocks: vec!["steer body".into()],
                     strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -5572,6 +5618,7 @@ done
                     prompt_blocks: vec!["steer body".into()],
                     strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");

@@ -382,9 +382,13 @@ async fn initialize(app: &Arc<App>, id: Value, params: Value, wire_tx: &WireSend
                     "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false },
                     "mcpCapabilities": { "http": false, "sse": false },
                 },
+                // `supported` advertises the parameterless cross-adapter
+                // `_session/steering` form. buzz-agent requires
+                // `expectedTurnId`/`requestId` and answers the plain form with
+                // `invalid_params`, so only the strict contract is advertised.
                 "_meta": {
                     "steering": {
-                        "supported": true,
+                        "supported": false,
                         "strictTurnTarget": true,
                     }
                 },
