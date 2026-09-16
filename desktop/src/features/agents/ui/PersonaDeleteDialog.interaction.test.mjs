@@ -342,3 +342,38 @@ test("production persona delete handler applies Keep and Archive at the IPC seam
   );
   assert.equal(state.closed, 2);
 });
+
+test("a running instance behind any cascaded profile blocks archival", async () => {
+  // The fields name the first profile, but Delete archives every unique
+  // profile on the cascade. A running instance behind the SECOND one is the
+  // case a primary-only check missed.
+  await act(async () => {
+    render(
+      React.createElement(PersonaDeleteDialog, {
+        open: true,
+        persona,
+        instanceCount: 2,
+        // Profiles are shown sorted, so "zulu" is deliberately NOT the one
+        // the offboard fields name.
+        hermesProfiles: ["alpha", "zulu"],
+        runningHermesProfiles: ["zulu"],
+        onConfirm: () => {},
+        onOpenChange: () => {},
+      }),
+    );
+  });
+
+  assert.equal(
+    screen.getByTestId("hermes-profile-offboard-archive").disabled,
+    true,
+    "archiving a running agent's profile must stay unavailable",
+  );
+  assert.ok(
+    screen.getByText("Stop the running agent before archiving its profile."),
+  );
+  assert.match(
+    document.body.textContent,
+    /Also applies to: zulu \(running\)/,
+    "the other affected profile must say which one is still running",
+  );
+});

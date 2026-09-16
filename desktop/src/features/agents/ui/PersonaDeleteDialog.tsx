@@ -93,6 +93,14 @@ export function PersonaDeleteDialog({
   }, [open]);
 
   const primaryProfile = uniqueProfiles[0] ?? null;
+  // Archiving applies to EVERY profile bound on the cascade-deleted instances,
+  // not just the one named in the fields, so a running instance behind any of
+  // them has to block the choice — reading only the first profile let a
+  // running non-primary instance be archived out from under itself.
+  const runningProfiles = React.useMemo(
+    () => uniqueProfiles.filter((name) => runningHermesProfiles.includes(name)),
+    [uniqueProfiles, runningHermesProfiles],
+  );
   const showPublicWarning = isNonOwnerOnlyRespondTo(persona?.respondTo);
 
   return (
@@ -116,12 +124,18 @@ export function PersonaDeleteDialog({
               onReasonChange={setProfileReason}
               profileName={primaryProfile}
               reason={profileReason}
-              isRunning={runningHermesProfiles.includes(primaryProfile)}
+              isRunning={runningProfiles.length > 0}
               showPublicAgentWarning={showPublicWarning}
             />
             {uniqueProfiles.length > 1 ? (
               <p className="text-xs text-muted-foreground">
-                Also applies to: {uniqueProfiles.slice(1).join(", ")}
+                Also applies to:{" "}
+                {uniqueProfiles
+                  .slice(1)
+                  .map((name) =>
+                    runningProfiles.includes(name) ? `${name} (running)` : name,
+                  )
+                  .join(", ")}
               </p>
             ) : null}
           </div>

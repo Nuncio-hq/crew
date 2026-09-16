@@ -352,7 +352,6 @@ export function buildOwnerFields({
               <Badge
                 className="normal-case tracking-normal"
                 data-testid="user-profile-agent-transport"
-                title={transport.detail ?? undefined}
                 variant={transport.needsRetry ? "warning" : "secondary"}
               >
                 {transport.label}

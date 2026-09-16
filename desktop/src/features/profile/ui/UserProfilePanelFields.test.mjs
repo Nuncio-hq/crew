@@ -101,3 +101,38 @@ test("profile runtime keeps process status separate from exhausted transport", (
     mock.timers.reset();
   }
 });
+
+test("the transport detail is announced once, not as badge tooltip and text", () => {
+  const fields = buildOwnerFields({
+    includeOperationalFields: true,
+    managedAgent: managedAgent(),
+    managedAgentRuntime: runtime(),
+    ownerDisplayName: "Owner",
+    ownerHandle: "owner",
+    ownerProfilePubkey: PUBKEY,
+    ownerPubkey: PUBKEY,
+    persona: undefined,
+    presenceLoaded: true,
+    presenceStatus: "offline",
+    relayAgent: undefined,
+  });
+  const status = fields.find((field) => field.label === "Status");
+  assert.ok(status?.displayNode, "the runtime status row must render");
+
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    render(status.displayNode);
+    act(() => mock.timers.tick(15_001));
+
+    const badge = screen.getByTestId("user-profile-agent-transport");
+    const detail = "The connection retry limit was reached.";
+    assert.ok(screen.getByText(detail), "the detail renders as visible text");
+    assert.equal(
+      badge.getAttribute("title"),
+      null,
+      "a title would repeat the visible detail as a second screen-reader stop",
+    );
+  } finally {
+    mock.timers.reset();
+  }
+});
