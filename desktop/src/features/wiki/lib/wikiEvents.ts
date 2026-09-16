@@ -38,7 +38,10 @@ export type WikiFreshness = "never" | "fresh" | "stale" | "unknown";
 export type WikiPage = {
   event: RelayEvent;
   repoD: string;
+  /** Immutable address suffix carried by the page's `d` tag. */
   slug: string;
+  /** Stable logical slug carried by the signed `wiki-slug` tag, when present. */
+  logicalSlug?: string;
   title: string;
   section: string;
   commit: string;
@@ -66,6 +69,8 @@ export type WikiJobState = {
   operationRevision?: number;
   nativeStatus?: string;
   reconciled?: boolean;
+  /** Native progress phase. `generation` has no signed graph or page count. */
+  phase?: string;
   attempts?: number;
   retryAt?: number;
   headAttempted?: boolean;
@@ -107,6 +112,9 @@ export function wikiRecoveryAffordance(
   job: WikiJobState | undefined,
 ): WikiRecoveryAffordance {
   if (!job?.operationId || job.reconciled) return "none";
+  // Initial source generation owns a durable row before a signed publication
+  // graph exists. There is nothing to retry, reconcile, or resume yet.
+  if (job.phase === "generation") return "none";
   if (job.retiredDependencyId) return "regenerate";
   if (job.cancelRequested || job.reconcileOnly) return "resume";
   return "retry";
@@ -139,9 +147,67 @@ export function wikiRecoveryActionLabel(
  * successor flow depends on.
  */
 export function wikiCanCancelRecovery(job: WikiJobState | undefined): boolean {
+  if (!job?.operationId || job.reconciled || job.cancelRequested) return false;
+  if (job.phase === "generation") return true;
   const affordance = wikiRecoveryAffordance(job);
-  return (
-    (affordance === "retry" || affordance === "resume") && !job?.cancelRequested
+  return affordance === "retry" || affordance === "resume";
+}
+
+/** True for the terminal native row left by a canceled or interrupted draft. */
+export function isCanceledWikiGeneration(
+  job: WikiJobState | undefined,
+): boolean {
+  return Boolean(
+    job?.phase === "generation" &&
+      job.nativeStatus === "canceled" &&
+      job.reconciled &&
+      (!job.error || isGenerationCancellationMessage(job.error)),
+  );
+}
+
+/** True for a terminal pre-publication runtime failure. */
+export function isFailedWikiGeneration(job: WikiJobState | undefined): boolean {
+  return Boolean(
+    job?.phase === "generation" &&
+      job.nativeStatus === "canceled" &&
+      job.reconciled &&
+      Boolean(job.error) &&
+      !isCanceledWikiGeneration(job),
+  );
+}
+
+/** Human-readable progress that never invents a 0/0 page count. */
+export function wikiGenerationStatusLabel(
+  job: WikiJobState | undefined,
+): string {
+  if (job?.phase === "generation" && job.reconciled) {
+    return isFailedWikiGeneration(job)
+      ? "Generation: failed"
+      : `Generation: ${job.nativeStatus ?? "canceled"}`;
+  }
+  switch (job?.phase) {
+    case "generation":
+      return "Generating Wiki…";
+    case "preparing":
+      return "Preparing Wiki publication…";
+    case "pages":
+      return job.total > 0
+        ? `Publishing Wiki pages… ${job.done}/${job.total} pages`
+        : "Publishing Wiki pages…";
+    case "manifest":
+      return "Publishing Wiki manifest…";
+    case "head":
+      return "Publishing Wiki index…";
+    default:
+      return job && job.total > 0
+        ? `Generating… ${job.done}/${job.total} pages`
+        : "Generating Wiki…";
+  }
+}
+
+function isGenerationCancellationMessage(error: string): boolean {
+  return /^Wiki generation (?:was )?(?:canceled|interrupted) before publication\./u.test(
+    error,
   );
 }
 
@@ -190,7 +256,9 @@ export function parseWikiToc(event: RelayEvent): WikiToc | null {
     repoD: parsed.repoD,
     owner: owner.toLowerCase(),
     commit: tagValue(event, "commit") ?? "",
-    branch: tagValue(event, "branch") ?? "main",
+    // A missing branch tag is unknown; do not invent the conventional `main`
+    // name when the signed Wiki record did not identify its source branch.
+    branch: tagValue(event, "branch") ?? "",
     cadence,
     sections,
     generatedAt: event.created_at,
@@ -201,11 +269,13 @@ export function parseWikiPage(event: RelayEvent): WikiPage | null {
   if (event.kind !== KIND_REPO_WIKI_PAGE) return null;
   const parsed = parseWikiDTag(tagValue(event, "d"));
   if (!parsed || parsed.slug === WIKI_TOC_SLUG) return null;
+  const logicalSlug = tagValue(event, "wiki-slug") || parsed.slug;
   return {
     event,
     repoD: parsed.repoD,
     slug: parsed.slug,
-    title: tagValue(event, "title") ?? parsed.slug,
+    ...(logicalSlug === parsed.slug ? {} : { logicalSlug }),
+    title: tagValue(event, "title") ?? logicalSlug,
     section: tagValue(event, "section") ?? "overview",
     commit: tagValue(event, "commit") ?? "",
     language: tagValue(event, "language") ?? "en",

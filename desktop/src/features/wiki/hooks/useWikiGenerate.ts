@@ -78,6 +78,7 @@ export function wikiPublicationJobState(
     operationRevision: job.revision,
     nativeStatus: job.status,
     reconciled: job.reconciled,
+    phase: job.progress || undefined,
     attempts: job.attempts,
     retryAt: job.retryAt,
     headAttempted: job.headAttempted,
@@ -261,14 +262,24 @@ export function useWikiGenerate() {
                   sameOwnerOperationScope(existing.scope, expected) &&
                   existing.operationId
                 ) {
-                  // Keep the durable identity and revision visible when the
-                  // native call failed after a recovery row was already
-                  // projected but before it returned a fresh job envelope.
-                  setWikiJob({
-                    ...existing,
-                    status: "failed",
-                    error: message,
-                  });
+                  // A concurrent status poll may have adopted the same
+                  // generation draft after Cancel (or restart recovery)
+                  // settled it. Preserve that terminal durable message; the
+                  // prepare error belongs to the foreground call, not the
+                  // newer reconciled row.
+                  if (
+                    !existing.reconciled ||
+                    existing.nativeStatus !== "canceled"
+                  ) {
+                    // Keep the durable identity and revision visible when the
+                    // native call failed after a recovery row was already
+                    // projected but before it returned a fresh job envelope.
+                    setWikiJob({
+                      ...existing,
+                      status: "failed",
+                      error: message,
+                    });
+                  }
                 } else {
                   updateJob(input.repoKey, null, message, "failed", expected);
                 }

@@ -1,9 +1,13 @@
 //! Native Wiki publication prepare, dispatch, and recovery commands.
 
+#[cfg(test)]
+use super::owner_operations::owner_operation_create_at_path;
 use super::owner_operations::{
-    load_owner_operation_for_dispatch, owner_operation_create, owner_operation_create_at_path,
-    owner_operation_update, replace_wiki_with_successor, ScopedOperationResult,
+    load_owner_operation_for_dispatch, owner_operation_create, owner_operation_update,
+    replace_wiki_with_successor, ScopedOperationResult,
 };
+use super::wiki_generation_record::GenerationControl;
+use super::wiki_native_generation::{generate_native_wiki, NativeWikiGenerationContext};
 use super::wiki_publication_driver::drive;
 use super::wiki_publication_native_reads::{NativeClock, NativeJournal};
 use super::wiki_publication_record::WikiPublicationRecord;
@@ -11,86 +15,20 @@ use super::wiki_publication_runtime::{coordinate_parts, now, NativeWikiPublicati
 use crate::app_state::owner_scope::{assert_current, OwnerScopeToken};
 use crate::commands::resolve_wiki_runtime_selection;
 use crate::managed_agents::wiki_runtime::WikiRuntimeSelection;
+#[cfg(test)]
+use crate::owner_operations::CreateResult;
 use crate::owner_operations::{
-    CreateResult, NewOperation, Operation, OperationKind, OperationStatus, OperationUpdate,
+    NewOperation, Operation, OperationKind, OperationStatus, OperationUpdate,
 };
 use crate::wiki_worker::WikiGeneration;
 use crew_wiki::snapshot_v1_build::{build_cadence_update, build_snapshot, SnapshotBuild};
 use serde::Serialize;
-use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+#[cfg(test)]
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 use tauri::{AppHandle, Runtime};
-use tokio::sync::OwnedSemaphorePermit;
-use tokio::sync::Semaphore;
 
 const MAX_OPERATION_PAGES: usize = 10;
 const OPERATION_PAGE_SIZE: usize = 100;
-
-const MAX_NATIVE_GENERATIONS: usize = 2;
-
-fn generation_admission() -> Arc<Semaphore> {
-    static ADMISSION: OnceLock<Arc<Semaphore>> = OnceLock::new();
-    ADMISSION
-        .get_or_init(|| Arc::new(Semaphore::new(MAX_NATIVE_GENERATIONS)))
-        .clone()
-}
-
-async fn generate_native_wiki(
-    expected: &OwnerScopeToken,
-    owner: &str,
-    repo_d: &str,
-    repo_path: Option<&str>,
-    workspace_mode: Option<&str>,
-    runtime_selection: WikiRuntimeSelection,
-    generation_key: String,
-) -> Result<WikiGeneration, String> {
-    let generation_owner = owner.to_owned();
-    let generation_repo = repo_d.to_owned();
-    let generation_path = repo_path.map(str::to_owned);
-    let generation_mode = workspace_mode.map(str::to_owned);
-    let generation_scope = expected.scope.community.clone();
-    let generation_permit: OwnedSemaphorePermit = tokio::time::timeout(
-        Duration::from_secs(5),
-        generation_admission().acquire_owned(),
-    )
-    .await
-    .map_err(|_| "Wiki generation worker admission timed out.".to_string())?
-    .map_err(|_| "Wiki generation worker admission is unavailable.".to_string())?;
-    let result = tokio::task::spawn_blocking(move || {
-        let _generation_permit = generation_permit;
-        let _guard = super::super::wiki_worker::generate_lock()
-            .acquire(&format!(
-                "{generation_scope}:{generation_owner}:{generation_repo}"
-            ))
-            .map_err(|error| error.to_string())?;
-        // Register only after the per-repository lock is held. Registering
-        // before it would let a rejected concurrent request overwrite the
-        // active request's token, making Cancel target the wrong process.
-        let generation_cancel =
-            super::super::wiki_worker::begin_generation_cancel(&generation_key)?;
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            super::super::wiki_worker::generate_wiki_pages_with_runtime_and_cancel(
-                &generation_owner,
-                &generation_repo,
-                generation_path.as_deref(),
-                generation_mode.as_deref(),
-                Some(runtime_selection),
-                Some(generation_cancel.clone()),
-            )
-            .map_err(|error| error.to_string())
-        }));
-        super::super::wiki_worker::finish_generation_cancel(&generation_key, &generation_cancel);
-        match result {
-            Ok(result) => result,
-            Err(payload) => resume_unwind(payload),
-        }
-    })
-    .await
-    .map_err(|_| "Wiki generation worker failed.".to_string());
-    result?
-}
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "result", rename_all = "kebab-case")]
@@ -164,6 +102,7 @@ pub(super) fn signal_generation_after_cancel<T>(
 /// used by the renderer command. The generated graph is supplied by the caller
 /// so headless acceptance can use a deterministic production `SnapshotBuild`
 /// without introducing a second journal or preparation implementation.
+#[cfg(test)]
 pub(super) async fn reserve_publication_at_path<R: Runtime>(
     app: AppHandle<R>,
     path: PathBuf,
@@ -232,8 +171,9 @@ pub(super) fn build_publication_from_generation(
 
 /// Build and durably reserve one generated publication at a trusted path.
 ///
-/// This is the post-generation production seam used by native prepare and by
-/// the headless acceptance driver. It deliberately performs no relay I/O.
+/// Legacy post-generation acceptance setup. Initial generation acceptance uses
+/// the generation claim and `complete_generation_at_path` instead.
+#[cfg(test)]
 pub(super) async fn reserve_generated_publication_at_path<R: Runtime>(
     app: AppHandle<R>,
     path: PathBuf,
@@ -303,14 +243,28 @@ pub(crate) async fn wiki_publication_prepare(
     workspace_mode: Option<String>,
     runtime_selection: Option<WikiRuntimeSelection>,
 ) -> Result<ScopedOperationResult<WikiPublicationPrepareResult>, String> {
+    super::wiki_generation_record::prepare(
+        app,
+        expected,
+        coordinate,
+        repo_path,
+        workspace_mode,
+        runtime_selection,
+    )
+    .await
+}
+
+pub(super) async fn prepare_registered(
+    app: AppHandle,
+    expected: OwnerScopeToken,
+    repo_path: Option<String>,
+    workspace_mode: Option<String>,
+    runtime_selection: Option<WikiRuntimeSelection>,
+    operation: Operation,
+    control: GenerationControl,
+) -> Result<ScopedOperationResult<WikiPublicationPrepareResult>, String> {
+    let coordinate = operation.resource_key.clone();
     let (owner, repo_d) = coordinate_parts(&coordinate)?;
-    let operation_id = uuid::Uuid::new_v4().to_string();
-    let generation_key = super::super::wiki_worker::generation_cancel_key(
-        &expected.scope.community,
-        &coordinate,
-        &operation_id,
-        0,
-    );
     let runtime_selection =
         resolve_wiki_runtime_selection(app.clone(), &expected, &coordinate, runtime_selection)
             .await?;
@@ -320,6 +274,15 @@ pub(crate) async fn wiki_publication_prepare(
     // self-association tag that older repository announcements may omit.
     runtime.repository_head().await?;
     let before_head = runtime.current_head().await?;
+    // A complete v1 publication is the only reusable input. Legacy or
+    // incomplete Wiki state remains publishable as a fresh v1 graph; transport
+    // and verification failures stay errors instead of becoming a fake cache
+    // miss.
+    let previous = match runtime.current_publication().await {
+        Ok(publication) => publication,
+        Err(error) if error.starts_with("Current Wiki is legacy or incomplete;") => None,
+        Err(error) => return Err(error),
+    };
     let generation = generate_native_wiki(
         &expected,
         owner,
@@ -327,7 +290,10 @@ pub(crate) async fn wiki_publication_prepare(
         repo_path.as_deref(),
         workspace_mode.as_deref(),
         runtime_selection,
-        generation_key,
+        NativeWikiGenerationContext {
+            control,
+            previous: previous.clone(),
+        },
     )
     .await?;
     // Long local capture/generation must never publish against a head that
@@ -337,7 +303,7 @@ pub(crate) async fn wiki_publication_prepare(
         return Err("Wiki repository head changed while generating; retry.".into());
     }
     if let Some(head) = &after_head {
-        if let Ok(Some(existing)) = runtime.current_publication().await {
+        if let Some(existing) = previous.as_ref() {
             let existing_revision = existing.source_revision.clone();
             let cadence = head
                 .tags
@@ -346,7 +312,13 @@ pub(crate) async fn wiki_publication_prepare(
                 .and_then(|tag| tag.as_slice().get(1))
                 .map(String::as_str)
                 .unwrap_or("manual");
-            if existing_revision == generation.snapshot.source_revision
+            if existing.head.id == head.id
+                && existing_revision == generation.snapshot.source_revision
+                && super::super::wiki_worker::all_pages_reused(
+                    &generation.snapshot,
+                    &generation.plan,
+                    existing,
+                )
                 && cadence == current_cadence(head)
             {
                 let final_head = runtime.current_head().await?;
@@ -375,12 +347,11 @@ pub(crate) async fn wiki_publication_prepare(
     let journal = super::owner_operations::journal_path(&app)?;
     super::wiki_publication_worker::start(app.clone());
     super::wiki_publication_worker::reserve(&app, &expected, &coordinate);
-    let result = reserve_generated_publication_at_path(
+    let result = super::wiki_generation_record::complete_generation_at_path(
         app.clone(),
         journal,
         expected.clone(),
-        operation_id,
-        coordinate.clone(),
+        &operation,
         WikiPublicationBuildInput {
             owner: owner.to_owned(),
             repo_d: repo_d.to_owned(),
@@ -399,7 +370,9 @@ pub(crate) async fn wiki_publication_prepare(
     assert_current(app, &expected).await?;
     Ok(ScopedOperationResult {
         token: expected,
-        value: as_prepare_result(result.value)?,
+        value: WikiPublicationPrepareResult::Created {
+            job: job_from_operation(&result.value)?,
+        },
     })
 }
 
@@ -603,7 +576,14 @@ pub(crate) async fn wiki_publication_regenerate(
         repo_path.as_deref(),
         workspace_mode.as_deref(),
         runtime_selection,
-        generation_key,
+        NativeWikiGenerationContext {
+            control: GenerationControl {
+                key: generation_key,
+                cancel: None,
+                permit: None,
+            },
+            previous: None,
+        },
     )
     .await?;
     let after_head = runtime.current_head().await?;
@@ -716,7 +696,7 @@ pub(crate) async fn wiki_publication_regenerate(
     })
 }
 
-fn record_from_publication(
+pub(super) fn record_from_publication(
     publication: crew_wiki::snapshot_v1_build::SnapshotPublication,
     coordinate: String,
     cadence: &str,
@@ -885,6 +865,16 @@ pub(crate) async fn wiki_publication_cancel(
         &operation.id,
         operation.revision,
     );
+    if super::wiki_generation_record::WikiGenerationRecord::read(&operation)?.is_some() {
+        let path = super::owner_operations::journal_path(&app)?;
+        let result =
+            super::wiki_generation_record::cancel(app.clone(), path, expected.clone(), &operation)
+                .await?;
+        return Ok(ScopedOperationResult {
+            token: expected,
+            value: job_from_operation(&result.value)?,
+        });
+    }
     // A prepare/regenerate call may still own a local runtime while the
     // renderer submits Cancel. This flag only reaches the process registered
     // for this exact owner/community/repository; it never touches an employee

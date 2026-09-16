@@ -360,6 +360,21 @@ pub(super) async fn run_due_with_context<R: Runtime>(
             if current.resource_key != summary.resource_key {
                 return Err("Wiki recovery row changed coordinate; reload.".into());
             }
+            if super::wiki_generation_record::WikiGenerationRecord::read(&current)?.is_some() {
+                let key = crate::wiki_worker::generation_cancel_key(
+                    &scope.scope.community,
+                    &current.resource_key,
+                    &current.id,
+                    0,
+                );
+                if current.reconciled || crate::wiki_worker::generation_is_active(&key)? {
+                    continue;
+                }
+                super::wiki_generation_record::finish(app.clone(), path.clone(), scope.clone(), &current,
+                    Some("Wiki generation was interrupted before publication. Generate again from source.")).await?;
+                processed = processed.saturating_add(1);
+                continue;
+            }
             let owner = match PublicKey::from_hex(&current.scope.owner) {
                 Ok(owner) => owner,
                 Err(_) => return Err("Wiki recovery row has an invalid owner.".into()),

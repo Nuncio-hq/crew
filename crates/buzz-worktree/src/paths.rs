@@ -11,6 +11,9 @@ pub const LEASE_DIRECTORY: &str = "buzz-thread-workspace-leases";
 /// Directory for path-keyed exclusive turn leases (shared checkouts).
 pub const PATH_LEASE_DIRECTORY: &str = "buzz-thread-workspace-path-leases";
 
+/// Lock file serializing mutations to Git's shared worktree metadata.
+pub const WORKTREE_METADATA_LOCK_FILE: &str = "buzz-thread-worktree-metadata.lock";
+
 /// Directory for versioned lifecycle records (one file per full root).
 pub const LIFECYCLE_RECORD_DIRECTORY: &str = "buzz-thread-workspace-lifecycle";
 
@@ -34,6 +37,11 @@ pub fn lease_lock_path(common_git: &Path, root_event_id: &str) -> Result<PathBuf
 /// Directory holding path-keyed exclusive turn lockfiles.
 pub fn path_lease_dir(common_git: &Path) -> PathBuf {
     common_git.join(PATH_LEASE_DIRECTORY)
+}
+
+/// Lock path for mutations to the repository's shared worktree metadata.
+pub fn worktree_metadata_lock_path(common_git: &Path) -> PathBuf {
+    common_git.join(WORKTREE_METADATA_LOCK_FILE)
 }
 
 /// Lockfile path for a canonical checkout path (sha256 stem).

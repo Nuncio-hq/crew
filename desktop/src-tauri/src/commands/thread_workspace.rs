@@ -81,7 +81,10 @@ pub async fn remove_thread_worktree(
     branch: String,
     root_event_id: String,
 ) -> Result<ThreadWorkspaceActionResult, String> {
-    use buzz_worktree::{advance_eviction_generation, try_acquire_exclusive, LeaseError};
+    use buzz_worktree::{
+        advance_eviction_generation, try_acquire_exclusive, try_acquire_repository_metadata,
+        LeaseError,
+    };
 
     let target = validate_target(&repository_path, &branch, &root_event_id).await?;
     let worktree = std::fs::canonicalize(worktree_path)
@@ -143,6 +146,20 @@ pub async fn remove_thread_worktree(
             super::project_worktree_auth::IGNORED_LOCAL_EVICTION_REFUSAL,
         ));
     }
+
+    let _metadata_lease = match try_acquire_repository_metadata(&revalidated.common_git) {
+        Ok(lease) => lease,
+        Err(LeaseError::Busy) => {
+            return Ok(refused(
+                "Free local space is unavailable while repository worktree metadata is busy; try again.",
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not acquire repository worktree metadata lease: {error}"
+            ));
+        }
+    };
 
     git_output_dir(
         &revalidated.common_git,

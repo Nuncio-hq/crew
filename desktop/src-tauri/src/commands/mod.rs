@@ -101,6 +101,8 @@ mod thread_workspace_git;
 mod thread_workspace_tests;
 mod updater;
 mod user_input;
+mod wiki_generation_record;
+mod wiki_native_generation;
 mod wiki_publication_commands;
 mod wiki_publication_driver;
 #[cfg(all(test, unix))]

@@ -4,8 +4,13 @@ import test from "node:test";
 
 import {
   defaultBranchCommit,
+  isFailedWikiGeneration,
+  isCanceledWikiGeneration,
+  parseWikiPage,
+  parseWikiToc,
   wikiCanCancelRecovery,
   wikiFreshness,
+  wikiGenerationStatusLabel,
   wikiRecoveryActionLabel,
   wikiRecoveryAffordance,
 } from "./wikiEvents.ts";
@@ -56,6 +61,48 @@ test("freshness follows the exact advertised HEAD ref", () => {
     commit: COMMIT,
   });
   assert.equal(wikiFreshness(toc(), state), "fresh");
+});
+
+test("a Wiki TOC without a branch keeps branch readback unknown", () => {
+  const parsed = parseWikiToc({
+    id: "toc",
+    pubkey: "c".repeat(64),
+    created_at: 1,
+    kind: 30623,
+    tags: [
+      ["d", "crew/_toc"],
+      ["a", `30617:${"c".repeat(64)}:crew`],
+    ],
+    content: JSON.stringify({ sections: [] }),
+    sig: "d".repeat(128),
+  });
+  assert.equal(parsed?.branch, "");
+});
+
+test("a v1 Wiki page retains its immutable slug and exposes its logical slug", () => {
+  const addressSlug = `p1-${"b".repeat(64)}`;
+  const event = {
+    id: "f".repeat(64),
+    pubkey: "c".repeat(64),
+    kind: 30623,
+    content: "Runtime body",
+    created_at: 1,
+    tags: [
+      ["d", `crew/${addressSlug}`],
+      ["a", `30617:${"c".repeat(64)}:crew`],
+      ["wiki-version", "1"],
+      ["wiki-snapshot", "12345678-1234-4234-9234-123456789abc"],
+      ["wiki-slug", "runtime"],
+      ["title", "Runtime"],
+    ],
+    sig: "d".repeat(128),
+  };
+
+  const parsed = parseWikiPage(event);
+  assert.equal(parsed?.slug, addressSlug);
+  assert.equal(parsed?.logicalSlug, "runtime");
+  assert.equal(parsed?.event, event);
+  assert.equal(parsed?.event.tags[0]?.[1], `crew/${addressSlug}`);
 });
 
 test("a verified different HEAD commit is stale", () => {
@@ -201,6 +248,52 @@ test("terminal and non-durable rows expose no publication action or Cancel", () 
     false,
     "an already cancelled row has nothing left to stop",
   );
+});
+
+test("initial native generation exposes only Cancel and no page count", () => {
+  const generation = job({
+    phase: "generation",
+    nativeStatus: "preparing",
+    reconciled: false,
+    done: 0,
+    total: 0,
+  });
+
+  assert.equal(wikiGenerationStatusLabel(generation), "Generating Wiki…");
+  assert.equal(wikiRecoveryAffordance(generation), "none");
+  assert.equal(wikiCanCancelRecovery(generation), true);
+  assert.doesNotMatch(wikiGenerationStatusLabel(generation), /0\/0/);
+  assert.equal(
+    wikiGenerationStatusLabel({ ...generation, phase: "preparing" }),
+    "Preparing Wiki publication…",
+  );
+});
+
+test("a canceled native generation keeps its message and unlocks Generate", () => {
+  const canceled = job({
+    phase: "generation",
+    nativeStatus: "canceled",
+    reconciled: true,
+    error: "Wiki generation was interrupted before publication.",
+  });
+
+  assert.equal(isCanceledWikiGeneration(canceled), true);
+  assert.equal(wikiRecoveryAffordance(canceled), "none");
+  assert.equal(wikiCanCancelRecovery(canceled), false);
+  assert.equal(wikiGenerationStatusLabel(canceled), "Generation: canceled");
+});
+
+test("a terminal runtime generation error is failed, not canceled", () => {
+  const failed = job({
+    phase: "generation",
+    nativeStatus: "canceled",
+    reconciled: true,
+    error: "Wiki runtime returned invalid page output.",
+  });
+
+  assert.equal(isCanceledWikiGeneration(failed), false);
+  assert.equal(isFailedWikiGeneration(failed), true);
+  assert.equal(wikiGenerationStatusLabel(failed), "Generation: failed");
 });
 
 test("both Wiki recovery surfaces use the shared affordance helper", () => {

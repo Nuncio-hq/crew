@@ -965,26 +965,53 @@ exact-head review and installed release acceptance remain separate gates.
 
 ## Wiki installed-runtime generation (#363)
 
+`desktop/src/features/wiki/ui/WikiLibraryScreen.test.mjs` mounts the production
+library, Wiki page, dialog, and runtime/recovery hooks. It covers grouped-project
+navigation, saved-runtime readback before opening the dialog, Escape without a
+save or generation, runtime-save failure, and saving an edited profile before
+native prepare. Catalog refresh during editing must retain the draft. These
+JSDOM/IPC tests do not prove installed generation or native process
+cancellation.
+
 The production Wiki generation seam is covered by the native
 `managed_agents::wiki_runtime`, `wiki_runtime_settings`, and
 `managed_agents::discovery::bounded_command` lanes:
 
 ```text
 cargo test --manifest-path desktop/src-tauri/Cargo.toml wiki_runtime --lib
+cargo test --manifest-path desktop/src-tauri/Cargo.toml wiki_worker::incremental_tests --lib
 cargo test --manifest-path desktop/src-tauri/Cargo.toml bounded_command --lib
 ```
 
-These tests bind explicit runtime/profile/model validation, owner/community
-preference persistence, immutable source prompt construction, Codex-style
-stdin delivery, isolated disposable state, nonzero failure, cancellation and
-bounded input/output/process cleanup. Native generation also has a 15-minute
+These tests bind runtime/profile/model validation, including the deferred
+Claude constructor rejection, null model normalization and omission of the CLI
+override for Codex while Hermes continues to require a named profile,
+owner/community preference persistence,
+immutable source prompt construction, Codex-style stdin delivery, isolated
+disposable state, nonzero failure, cancellation and bounded input/output/process
+cleanup. Installed Wiki construction checks the shared native containment
+policy before creating disposable state: macOS uses the fixed no-fork
+`sandbox-exec` profile, Windows uses the bounded runner's Job Object, and
+unsupported Unix platforms return a typed failure. A production-bound fake
+runtime regression attempts a fork and verifies the macOS wrapper denies it.
+Native generation also has a 15-minute
 job budget around the 180-second per-page process bound. The legacy unsigned
 preview remains a heuristic fixture; a native publication call with no stored
 or supplied selection fails closed. Fake-process GREEN tests do not certify
-provider auth, effective generation model, or an installed runtime; #348 must
-run one exact staged runtime with a disposable copied profile/config and
-record source revision, runtime/model/profile, output and no employee-session
+provider auth, effective generation model, or an installed runtime; Claude Wiki
+generation remains deferred until a compatible authenticated path is verified;
+#348 must run one exact staged runtime with a disposable copied profile/config
+and record source revision, runtime/model/profile, output and no employee-session
 mutation.
+
+Incremental tests in `desktop/src-tauri/src/wiki_incremental_tests.rs` bind
+the production planner/generator seam to verified signed publications. A
+counting generator proves zero runtime construction for unchanged sources,
+one call for one affected page, metadata/steering invalidation, and removal
+from the next manifest. Generation-journal tests also force Cancel to win
+before no-op settlement and require the foreground result to honor that
+terminal revision. These deterministic tests do not establish installed
+process cancellation or a real incremental relay update.
 
 The Hermes child command sets `HERMES_SAFE_MODE=1` and passes Hermes'
 top-level `--safe-mode` flag, while retaining the copied profile's
@@ -1003,14 +1030,23 @@ dotenv bytes remain byte-identical, a missing `.env` is created empty, and the
 child receives a fresh empty private managed directory. The production-bound
 fake-process regression stages a real profile copy, preserves safe dotenv
 bytes, verifies the private directory, and emulates native reassertion at the
-child boundary; it catches removal of the CLI guard or profile-binding seam
-without claiming that an installed Hermes provider or model has run. These
-tests live in `desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs` so
-the runtime implementation remains under the repository file-size gate.
+child boundary. Native installed runs also require Hermes' bounded
+`--usage-file` report for every generated page. A report must identify a
+completed, non-failed API call and its effective provider/model; when the staged
+profile declares both values, either mismatch fails the generation instead of
+silently accepting provider fallback. The report stays inside disposable state
+and only validated, non-secret identifiers enter diagnostics. These regressions
+catch removal of the CLI guard, profile binding, telemetry requirement, or
+effective-model fence without claiming that a fake process ran an installed
+provider. They live in
+`desktop/src-tauri/src/managed_agents/wiki_runtime_tests.rs` so the runtime
+implementation remains under the repository file-size gate.
 
-This source-level guard does not close the installed-runtime acceptance gap.
-No native Hermes launch, provider/auth check, effective-model receipt, or
-staging generation is implied. The #363 installed-runtime acceptance must run
+The source-level guard intentionally keeps Claude out of Wiki until its
+installed compatibility is verified. The containment wiring and its fork-denial
+regression do not imply a native Hermes launch, provider/auth check,
+effective-model receipt, or staging generation. The #363 installed-runtime
+acceptance must run
 in the #348 staging environment; #348 owns that environment and #363 owns the
 runtime acceptance result. Mutable Hermes source or wrappers require
 revalidation.

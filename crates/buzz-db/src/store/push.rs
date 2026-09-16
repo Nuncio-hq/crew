@@ -2251,7 +2251,6 @@ mod postgres_tests {
 
         let pool = PgPoolOptions::new()
             .max_connections(1)
-            .acquire_timeout(Duration::from_millis(250))
             .connect(&crate::test_support::database_url())
             .await
             .expect("connect size-one matcher pool");

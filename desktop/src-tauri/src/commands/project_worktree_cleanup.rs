@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use buzz_worktree::advance_eviction_generation;
+use buzz_worktree::{advance_eviction_generation, try_acquire_repository_metadata, LeaseError};
 
 use super::project_worktree_auth::{
     authorize_verified_channel_mutation, IGNORED_LOCAL_EVICTION_REFUSAL,
@@ -67,6 +67,21 @@ pub async fn evict_project_worktree(
         });
     }
 
+    let _metadata_lease = match try_acquire_repository_metadata(&authorized.prepared.common_git) {
+        Ok(lease) => lease,
+        Err(LeaseError::Busy) => {
+            return Ok(ThreadWorkspaceActionResult {
+                status: ThreadWorkspaceActionStatus::Refused,
+                message: "Free local space is unavailable while repository worktree metadata is busy; try again.".to_string(),
+            });
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not acquire repository worktree metadata lease: {error}"
+            ));
+        }
+    };
+
     git_output_dir(
         &authorized.prepared.common_git,
         [
@@ -102,6 +117,20 @@ pub async fn prune_project_worktrees(
     repository_path: String,
 ) -> Result<ThreadWorkspaceActionResult, String> {
     let (_, common_git) = resolve_repo(&repository_path).await?;
+    let _metadata_lease = match try_acquire_repository_metadata(&common_git) {
+        Ok(lease) => lease,
+        Err(LeaseError::Busy) => {
+            return Ok(ThreadWorkspaceActionResult {
+                status: ThreadWorkspaceActionStatus::Refused,
+                message: "Repository worktree metadata is busy; try again.".to_string(),
+            });
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not acquire repository worktree metadata lease: {error}"
+            ));
+        }
+    };
     git_output_dir(&common_git, ["worktree", "prune"]).await?;
     Ok(ThreadWorkspaceActionResult {
         status: ThreadWorkspaceActionStatus::Completed,

@@ -920,6 +920,45 @@ async fn concurrent_distinct_roots_create_distinct_worktrees() {
 }
 
 #[tokio::test]
+async fn metadata_lease_blocks_real_worktree_create_until_released() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "a".repeat(64);
+    let plan = plan_thread_worktree(&workspace, &root)
+        .await
+        .expect("worktree plan succeeds");
+    let metadata_lease = buzz_worktree::try_acquire_repository_metadata(&plan.common_git)
+        .expect("test holds repository metadata lease");
+
+    let blocked = tokio::time::timeout(
+        Duration::from_secs(6),
+        ensure_planned_thread_worktree(&plan),
+    )
+    .await
+    .expect("metadata lock wait remains bounded");
+    let error = blocked.expect_err("worktree creation must wait for the metadata lease");
+    assert!(
+        error
+            .to_string()
+            .contains("timed out waiting for the repository worktree metadata lock"),
+        "unexpected metadata lock error: {error:#}"
+    );
+    assert!(
+        !plan.worktree_path.exists(),
+        "a held metadata lease must prevent Git worktree mutation"
+    );
+
+    drop(metadata_lease);
+    let (workspace_metadata, ensure_kind) = ensure_planned_thread_worktree(&plan)
+        .await
+        .expect("worktree creation succeeds after lease release");
+    assert_eq!(ensure_kind, EnsureKind::Created);
+    assert_eq!(workspace_metadata.root_event_id, root);
+    assert!(workspace_metadata.worktree_path.join("README.md").is_file());
+
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
 async fn concurrent_distinct_roots_with_the_same_prefix_cannot_both_succeed() {
     let (fixture, workspace, _) = git_fixture().await;
     let first_root = format!("{}{}", "e".repeat(12), "1".repeat(52));

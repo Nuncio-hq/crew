@@ -1,4 +1,4 @@
-//! Page generation — heuristic default; optional OpenAI-compatible LLM.
+//! Caller-agnostic page generation with a deterministic preview implementation.
 
 use crate::git_snapshot::RepoSnapshot;
 use crate::publish::PageDraft;
@@ -16,11 +16,12 @@ pub trait Generator {
     ) -> Result<String, WikiError>;
 }
 
-/// Deterministic generator used in tests and when no API key is present.
+/// Deterministic generator used by tests and the legacy unsigned preview.
 pub struct HeuristicGenerator;
 
-/// Select the day-one generator. OpenAI-compatible HTTP is behind the `llm`
-/// feature and `CREW_WIKI_API_KEY`; without those, heuristic is canonical.
+/// Return the legacy deterministic generator. This function does not read
+/// credentials or select an HTTP provider; native callers supply their installed
+/// runtime through the `Generator` trait.
 pub fn generator_from_env() -> HeuristicGenerator {
     HeuristicGenerator
 }

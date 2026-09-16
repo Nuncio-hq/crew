@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   WIKI_EMPTY_REPO_COPY,
   WIKI_GONE_FOLDER_COPY,
+  WIKI_MISSING_LOCAL_ERROR,
   WIKI_NO_LOCAL_CHECKOUT_COPY,
   classifyWikiRepoProbe,
 } from "./wikiRepoProbe.ts";
@@ -75,6 +76,19 @@ test("worker missing-local-path with no folder uses No local checkout found", ()
   });
   assert.equal(probe.kind, "missing-local");
   assert.equal(probe.copy, "No local checkout found.");
+  assert.equal(probe.showGenerate, true);
+});
+
+test("native missing-source terminal error uses the existing workspace copy", () => {
+  const probe = classifyWikiRepoProbe({
+    jobError: WIKI_MISSING_LOCAL_ERROR,
+    localWorkspacePath: "/Users/oscar/Projects/crew",
+    localWorkspaceStatus: "linked",
+    remoteBranch: "main",
+    remoteCommit: "abc123",
+  });
+  assert.equal(probe.kind, "missing-local-gone");
+  assert.equal(probe.copy, WIKI_GONE_FOLDER_COPY);
   assert.equal(probe.showGenerate, true);
 });
 
