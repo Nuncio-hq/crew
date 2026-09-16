@@ -87,6 +87,7 @@ function harness() {
       },
       setTimeout,
       clearTimeout,
+      TextEncoder,
       crypto: globalThis.crypto,
       console,
       URL,

@@ -10,8 +10,13 @@ import {
 import { subscribeControlResults } from "@/features/agents/controlResultDispatch";
 import { awaitCancelTurnOutcome } from "@/features/agents/lib/cancelTurnOutcome";
 import {
+  ADAPTER_STRICT_STEER_DEADLINE_MS,
   awaitSteerTurnOutcome,
+  STEER_PROMPT_MAX_BYTES,
+  STEER_UI_BUDGET_MS,
+  steerPromptByteLength,
   type SteerTurnOutcome,
+  type SteerTurnOutcomeResult,
 } from "@/features/agents/lib/steerTurnOutcome";
 
 /** Exact run selected in the thread Activity view. */
@@ -77,6 +82,7 @@ export function ThreadSelectedRunControls({
   const [, bump] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => subscribeActiveAgentTurns(bump), []);
   const steerInputId = React.useId();
+  const steerBudgetId = React.useId();
   const selectionKey = JSON.stringify(selection);
   const targetOwned = !!selection && owned.has(selection.agentPubkey);
   const gate = React.useMemo(
@@ -88,8 +94,13 @@ export function ThreadSelectedRunControls({
       relay,
       targetOwned,
       current: true,
-      claimed: false,
-      retire: () => {},
+      // Steer and Stop latch independently: an unconfirmed Steer must not
+      // disable Stop, which is the operator's only way back.
+      steerClaimed: false,
+      stopClaimed: false,
+      // A set, not a slot: Stop and Steer can both be waiting, and a single
+      // slot would let the second overwrite the first's teardown.
+      disposers: new Set<() => void>(),
       // selectionKey includes every primitive identity field, not object reference.
     }),
     [selectionKey, viewer, relay, targetOwned],
@@ -99,11 +110,17 @@ export function ThreadSelectedRunControls({
     text: string;
   } | null>(null);
   const [steerDraft, setSteerDraft] = React.useState("");
+  // The native control counts UTF-8 bytes, so the composer must too: a
+  // character cap would admit a prompt the adapter then refuses.
+  const promptBytes = steerPromptByteLength(steerDraft);
+  const promptBytesLeft = STEER_PROMPT_MAX_BYTES - promptBytes;
+  const promptOverBudget = promptBytesLeft < 0;
   React.useLayoutEffect(() => {
     gate.current = true;
     return () => {
       gate.current = false;
-      gate.retire();
+      for (const dispose of [...gate.disposers]) dispose();
+      gate.disposers.clear();
     };
   }, [gate]);
   const target = gate.selection;
@@ -115,8 +132,8 @@ export function ThreadSelectedRunControls({
     gate.targetOwned &&
     isLive(target);
   const stop = async () => {
-    if (!target || !eligible() || gate.claimed) return;
-    gate.claimed = true;
+    if (!target || !eligible() || gate.stopClaimed) return;
+    gate.stopClaimed = true;
     setFeedback({
       gate,
       text: "Waiting for the selected run to acknowledge Stop…",
@@ -143,11 +160,16 @@ export function ThreadSelectedRunControls({
           // Unknown delivery still waits for the correlated harness result.
         },
         scheduleTimeout: (onTimeout) => {
-          gate.retire = onTimeout;
-          const timer = setTimeout(onTimeout, 10_000);
+          const timer = setTimeout(onTimeout, ADAPTER_STRICT_STEER_DEADLINE_MS);
+          const dispose = () => {
+            clearTimeout(timer);
+            gate.disposers.delete(dispose);
+            onTimeout();
+          };
+          gate.disposers.add(dispose);
           return () => {
             clearTimeout(timer);
-            gate.retire = () => {};
+            gate.disposers.delete(dispose);
           };
         },
       });
@@ -162,10 +184,11 @@ export function ThreadSelectedRunControls({
               : "The selected run is no longer available to stop.";
       setFeedback({ gate, text });
       // An unconfirmed send may already have taken effect; do not automatically replay it.
-      if (outcome !== "sent" && outcome !== "unconfirmed") gate.claimed = false;
+      if (outcome !== "sent" && outcome !== "unconfirmed")
+        gate.stopClaimed = false;
     } catch (error) {
       if (!gate.current) return;
-      gate.claimed = !notAttempted;
+      gate.stopClaimed = !notAttempted;
       setFeedback({
         gate,
         text:
@@ -177,9 +200,16 @@ export function ThreadSelectedRunControls({
   };
   const steer = async () => {
     const prompt = steerDraft.trim();
-    if (!publishSteer || !target || !prompt || !eligible() || gate.claimed)
+    if (
+      !publishSteer ||
+      !target ||
+      !prompt ||
+      promptOverBudget ||
+      !eligible() ||
+      gate.steerClaimed
+    )
       return;
-    gate.claimed = true;
+    gate.steerClaimed = true;
     setFeedback({
       gate,
       text: "Waiting for the selected run to acknowledge Steer…",
@@ -187,7 +217,18 @@ export function ThreadSelectedRunControls({
     const requestId = crypto.randomUUID();
     let notAttempted = false;
     try {
-      const result = await awaitSteerTurnOutcome({
+      const applyOutcome = (settled: SteerTurnOutcomeResult) => {
+        setFeedback({
+          gate,
+          text: steerFeedback(settled.outcome, settled.error),
+        });
+        if (settled.outcome === "appended") setSteerDraft("");
+        // Only an unconfirmed send is replay-unsafe. The adapter's terminal
+        // outcomes prove that this request can be retried safely if needed.
+        gate.steerClaimed = settled.outcome === "unconfirmed";
+      };
+      let pendingDispose: () => void = () => {};
+      const pending = awaitSteerTurnOutcome({
         requestId,
         channelId: target.channelId,
         conversationId: target.conversationId,
@@ -206,27 +247,28 @@ export function ThreadSelectedRunControls({
             );
           }
         },
+        // The UI budget must outlast the adapter's own request deadline;
+        // otherwise its `expired` answer always arrives too late to be seen.
         scheduleTimeout: (onTimeout) => {
-          gate.retire = onTimeout;
-          const timer = setTimeout(onTimeout, 10_000);
-          return () => {
-            clearTimeout(timer);
-            gate.retire = () => {};
-          };
+          const timer = setTimeout(onTimeout, STEER_UI_BUDGET_MS);
+          return () => clearTimeout(timer);
+        },
+        // A terminal outcome that lands after the UI budget downgrades an
+        // unconfirmed request to a retryable one and releases the claim.
+        onLateOutcome: (late) => {
+          gate.disposers.delete(pendingDispose);
+          if (!gate.current) return;
+          applyOutcome(late);
         },
       });
+      pendingDispose = pending.dispose;
+      gate.disposers.add(pendingDispose);
+      const result = await pending.result;
       if (!gate.current) return;
-      setFeedback({
-        gate,
-        text: steerFeedback(result.outcome, result.error),
-      });
-      if (result.outcome === "appended") setSteerDraft("");
-      // Only an unconfirmed send is replay-unsafe. The adapter's terminal
-      // outcomes prove that this request can be retried safely if needed.
-      gate.claimed = result.outcome === "unconfirmed";
+      applyOutcome(result);
     } catch (error) {
       if (!gate.current) return;
-      gate.claimed = !notAttempted;
+      gate.steerClaimed = !notAttempted;
       setFeedback({
         gate,
         text:
@@ -250,7 +292,7 @@ export function ThreadSelectedRunControls({
           <button
             type="button"
             className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={gate.claimed}
+            disabled={gate.stopClaimed}
             onClick={() => {
               void stop();
             }}
@@ -270,8 +312,9 @@ export function ThreadSelectedRunControls({
                 aria-label="Steer selected run"
                 className="min-h-16 w-full resize-y rounded-md border border-input/60 bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-hidden transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
                 value={steerDraft}
-                disabled={gate.claimed}
-                maxLength={16 * 1024}
+                disabled={gate.steerClaimed}
+                aria-describedby={steerBudgetId}
+                aria-invalid={promptOverBudget}
                 onChange={(event) => setSteerDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -282,10 +325,24 @@ export function ThreadSelectedRunControls({
                 placeholder="Send guidance to this run"
                 rows={2}
               />
+              <p
+                className={
+                  promptOverBudget
+                    ? "text-2xs text-destructive"
+                    : "text-2xs text-muted-foreground"
+                }
+                id={steerBudgetId}
+              >
+                {promptOverBudget
+                  ? `${-promptBytesLeft} bytes over the ${STEER_PROMPT_MAX_BYTES} byte limit`
+                  : `${promptBytesLeft} bytes left`}
+              </p>
               <button
                 type="button"
                 className="inline-flex h-8 items-center justify-center self-start rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={gate.claimed || !steerDraft.trim()}
+                disabled={
+                  gate.steerClaimed || !steerDraft.trim() || promptOverBudget
+                }
                 onClick={() => {
                   void steer();
                 }}

@@ -30,7 +30,8 @@ const selection = Object.freeze({
 });
 function harness() {
   const listeners = new Set(),
-    results = new Map();
+    results = new Map(),
+    timers = [];
   const state = {
     viewer: selection.viewerPubkey,
     relay: selection.relayUrl,
@@ -82,8 +83,17 @@ function harness() {
         if (id in deps) return deps[id];
         throw Error(id);
       },
-      setTimeout,
-      clearTimeout,
+      // Controlled timers: the UI budget must be crossable without waiting
+      // out the real one, and a late terminal outcome must be observable.
+      setTimeout: (fn, ms) => {
+        const timer = { fn, ms, cancelled: false, fired: false };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimeout: (timer) => {
+        if (timer) timer.cancelled = true;
+      },
+      TextEncoder,
       crypto: globalThis.crypto,
       console,
     });
@@ -127,9 +137,19 @@ function harness() {
       requestId: state.sends.at(-1)?.requestId,
       ...overrides,
     });
+  const runTimers = (predicate = () => true) => {
+    for (const timer of [...timers]) {
+      if (timer.cancelled || timer.fired || !predicate(timer)) continue;
+      timer.fired = true;
+      timer.fn();
+    }
+  };
   return {
     Component,
+    steerBudget: deps["@/features/agents/lib/steerTurnOutcome"],
     state,
+    timers,
+    runTimers,
     publishStop,
     publishSteer,
     result,
@@ -506,5 +526,126 @@ test("queued cancellation feedback reports the actual harness outcome", async ()
   assert.match(
     view.getByRole("status").textContent,
     /Queued work was cancelled/,
+  );
+});
+
+test("the Steer UI budget outlasts the adapter request deadline", async () => {
+  const { STEER_UI_BUDGET_MS, ADAPTER_STRICT_STEER_DEADLINE_MS } =
+    harness().steerBudget;
+  assert.ok(
+    STEER_UI_BUDGET_MS > ADAPTER_STRICT_STEER_DEADLINE_MS,
+    "an equal budget makes the adapter's expired answer unobservable",
+  );
+});
+test("a terminal Steer outcome after the UI budget releases the claim", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      { target: { value: "hold the line" } },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () => h.runTimers());
+  assert.match(view.getByRole("status").textContent, /unconfirmed/);
+  assert.equal(
+    view.getByRole("button", { name: "Steer selected run" }).disabled,
+    true,
+  );
+  await act(async () => h.steerResult({ status: "expired" }));
+  assert.match(view.getByRole("status").textContent, /expired/);
+  assert.equal(
+    view.getByRole("button", { name: "Steer selected run" }).disabled,
+    false,
+  );
+  // The correlation is terminal now: a repeat frame must not reopen it.
+  await act(async () => h.steerResult({ status: "appended" }));
+  assert.match(view.getByRole("status").textContent, /expired/);
+});
+test("unmounting disposes a Steer correlation that outlived its budget", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      { target: { value: "hold the line" } },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () => h.runTimers());
+  assert.equal(h.results.size, 1);
+  await act(async () => view.unmount());
+  assert.equal(h.results.size, 0);
+});
+test("an unconfirmed Steer leaves Stop available as the way back", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      { target: { value: "may have applied" } },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  await act(async () => h.steerResult({ status: "unconfirmed" }));
+  const stopButton = view.getByRole("button", { name: "Stop selected run" });
+  assert.equal(stopButton.disabled, false);
+  await act(async () => stopButton.click());
+  assert.equal(h.state.sends.length, 2);
+  assert.equal(h.state.sends[1].target.turnId, selection.turnId);
+});
+test("the Steer composer enforces the native byte cap, not a character cap", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+    }),
+  );
+  const textbox = view.getByRole("textbox", { name: "Steer selected run" });
+  // 8193 two-byte characters: under a 16384 character cap, over the byte cap.
+  const overBudget = "é".repeat(8193);
+  await act(async () => {
+    fireEvent.change(textbox, { target: { value: overBudget } });
+  });
+  assert.equal(textbox.value.length, 8193);
+  assert.equal(
+    view.getByRole("button", { name: "Steer selected run" }).disabled,
+    true,
+  );
+  assert.match(view.container.textContent, /2 bytes over the 16384 byte limit/);
+  await act(async () => fireEvent.keyDown(textbox, { key: "Enter" }));
+  assert.equal(h.state.sends.length, 0);
+  await act(async () => {
+    fireEvent.change(textbox, { target: { value: "é".repeat(8192) } });
+  });
+  assert.match(view.container.textContent, /0 bytes left/);
+  assert.equal(
+    view.getByRole("button", { name: "Steer selected run" }).disabled,
+    false,
   );
 });

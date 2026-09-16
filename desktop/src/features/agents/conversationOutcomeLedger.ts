@@ -199,15 +199,10 @@ function aggregateSignedOutcome(
   const priorCancelled =
     prior?.cancelledAgentSlots ??
     (prior?.outcome === "cancelled" ? [cancelledSlotFromEntry(prior)] : []);
-  const resolvesPriorFailure =
-    incoming.outcome === "completed" ||
-    incoming.outcome === "cancelled" ||
-    incoming.outcome === "error";
   const failedAgentSlots = priorFailed.filter(
     (slot) =>
-      !resolvesPriorFailure ||
       outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) !==
-        incomingSlot,
+      incomingSlot,
   );
   const cancelledAgentSlots = priorCancelled.filter(
     (slot) =>
