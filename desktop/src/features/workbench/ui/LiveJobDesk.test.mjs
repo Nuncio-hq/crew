@@ -224,6 +224,13 @@ test("one live run steers that exact run from its own labelled input", async () 
   assert.equal(input.payload.sessionId, selection.sessionId);
   assert.equal(input.payload.turnId, selection.turnId);
   assert.equal(input.payload.prompt, "stay on the failing test");
+
+  // Keyboard is a first-class path out of the disclosure, and focus must
+  // return to the control that opened it.
+  const toggle = view.getByRole("button", { name: "Steer run" });
+  await act(async () => fireEvent.keyDown(textbox, { key: "Escape" }));
+  assert.equal(view.queryByRole("textbox", { name: "Steer this run" }), null);
+  assert.equal(dom.window.document.activeElement, toggle);
 });
 
 test("a live run this viewer does not own keeps the agent-scoped controls", async () => {

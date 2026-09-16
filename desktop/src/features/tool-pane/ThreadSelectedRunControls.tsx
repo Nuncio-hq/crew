@@ -303,7 +303,12 @@ export function ThreadSelectedRunControls({
     <div
       className={
         compact
-          ? "flex flex-col gap-1.5"
+          ? // Once the input or a status line is showing, the block takes its
+            // own full-width row: as a shrink-wrapped flex item beside the
+            // strip's sentence it would render a button-width textarea.
+            steerOpen || feedback?.gate === gate
+            ? "flex basis-full flex-col gap-1.5"
+            : "flex flex-col gap-1.5"
           : controlsEnabled
             ? "flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
             : "flex flex-col gap-2 p-2"

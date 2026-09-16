@@ -848,7 +848,10 @@ are `appended`, `stale_target`, `rejected`, `busy`, and `expired`; an uncertain
 publication remains unconfirmed and is never replayed automatically. Every control
 frame is answered: a malformed frame is rejected with a bounded reason rather
 than dropped, and a queued request the adapter never received settles as
-`stale_target` (replay-safe) instead of `unconfirmed`. Publication
+`stale_target` (replay-safe) instead of `unconfirmed`. The boundary is the write
+to the adapter, not the shape of the answer: a prompt that ends while a written
+steer is still pending settles as `unconfirmed`, because the adapter may already
+have applied it. Publication
 feedback unlocks retry only for confirmed `not_attempted`; a correlated adapter
 terminal outcome also releases the claim. A correlated rejection carries the
 adapter's own reason — control-character scrubbed and bounded to 240 bytes —
