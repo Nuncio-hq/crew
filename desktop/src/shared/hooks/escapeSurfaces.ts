@@ -32,3 +32,21 @@ export function acquireEscapeSurface(): () => void {
     activeEscapeSurfaceCount -= 1;
   };
 }
+
+/**
+ * Marks an element that handles Escape itself.
+ *
+ * Surfaces that claim Escape in the *capture* phase (the focus thread drawer)
+ * decide before the element ever sees the key, so `defaultPrevented` cannot
+ * tell them a nested control owns it. The marker is the capture-phase form of
+ * the same contract: a listener that stops propagation must first ask whether
+ * the key landed inside a control that claims it.
+ */
+export const ESCAPE_OWNER_ATTRIBUTE = "data-escape-owner";
+
+/** True when the event landed inside an element marked as an Escape owner. */
+export function escapeIsClaimedByNestedOwner(target: EventTarget | null) {
+  if (!target || typeof (target as Element).closest !== "function")
+    return false;
+  return (target as Element).closest(`[${ESCAPE_OWNER_ATTRIBUTE}]`) !== null;
+}

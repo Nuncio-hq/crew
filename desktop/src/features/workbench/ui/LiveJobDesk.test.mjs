@@ -36,7 +36,13 @@ const selection = Object.freeze({
  * the compact controls, and the chrome constants are the production modules,
  * so a stub cannot hide a wrong scope, a wrong payload, or wrong copy.
  */
-function harness({ runs, owned = true } = {}) {
+function harness({
+  runs,
+  owned = true,
+  show = true,
+  outcome,
+  reduceMotion,
+} = {}) {
   const results = new Map();
   const state = {
     viewer: selection.viewerPubkey,
@@ -46,6 +52,9 @@ function harness({ runs, owned = true } = {}) {
     sends: [],
     openedTabs: [],
     stops: [],
+    show,
+    outcome,
+    reduceMotion,
   };
   const deps = {
     react: React,
@@ -72,6 +81,10 @@ function harness({ runs, owned = true } = {}) {
         stopAgent: async (pubkey, name) =>
           state.stops.push({ ...args, pubkey, name }),
       }),
+    },
+    "motion/react": { useReducedMotion: () => state.reduceMotion ?? false },
+    "@/features/agents/recentConversationOutcomes": {
+      useRecentOutcomeForConversation: () => state.outcome ?? null,
     },
     "@/features/tool-pane/toolPaneStore": {
       openThreadToolPane: (tab) => state.openedTabs.push(tab),
@@ -112,7 +125,7 @@ function harness({ runs, owned = true } = {}) {
           turnId: turn.turnId,
           liveness: "Working",
         })),
-        show: state.show ?? true,
+        show: state.show,
         targetName: "Worker",
         targetPubkey: selection.agentPubkey,
       }),
@@ -157,6 +170,10 @@ function harness({ runs, owned = true } = {}) {
   real(
     "@/features/agents/lib/steerTurnOutcome",
     "../../agents/lib/steerTurnOutcome.ts",
+  );
+  real(
+    "@/shared/hooks/escapeSurfaces",
+    "../../../shared/hooks/escapeSurfaces.ts",
   );
   real(
     "@/features/tool-pane/ThreadSelectedRunControls",
@@ -228,9 +245,137 @@ test("one live run steers that exact run from its own labelled input", async () 
   // Keyboard is a first-class path out of the disclosure, and focus must
   // return to the control that opened it.
   const toggle = view.getByRole("button", { name: "Steer run" });
-  await act(async () => fireEvent.keyDown(textbox, { key: "Escape" }));
+  await act(async () => dispatchEscape(textbox));
   assert.equal(view.queryByRole("textbox", { name: "Steer this run" }), null);
   assert.equal(dom.window.document.activeElement, toggle);
+});
+
+/**
+ * The real webview path: a bubbling keydown on the textarea itself, under the
+ * focus thread drawer's capture-phase Escape claim. The drawer decides before
+ * the key ever reaches the element, so `defaultPrevented` cannot tell it the
+ * steer input owns the key — only the escape-owner marker can.
+ */
+function dispatchEscape(node) {
+  node.dispatchEvent(
+    new dom.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function loadModule(relative) {
+  const source = ts.transpileModule(
+    fs.readFileSync(new URL(relative, import.meta.url), "utf8"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+      },
+    },
+  ).outputText;
+  const exports = {};
+  vm.runInNewContext(source, { exports, require: () => ({}) });
+  return exports;
+}
+
+function mountDrawerEscapeClaim(closes) {
+  const { escapeIsClaimedByNestedOwner: claim } = loadModule(
+    "../../../shared/hooks/escapeSurfaces.ts",
+  );
+  const handler = (event) => {
+    if (event.key !== "Escape") return;
+    if (claim(event.target)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closes.push("thread");
+  };
+  dom.window.addEventListener("keydown", handler, { capture: true });
+  return () => dom.window.removeEventListener("keydown", handler, true);
+}
+
+test("Escape in the steer input closes it instead of the thread drawer", async () => {
+  const { render, act, fireEvent, waitFor } = await import(
+    "@testing-library/react"
+  );
+  const h = harness();
+  const closes = [];
+  const release = mountDrawerEscapeClaim(closes);
+  try {
+    const view = render(React.createElement(h.Component, props));
+    await waitFor(() =>
+      assert.ok(view.queryByRole("button", { name: "Steer run" })),
+    );
+    await act(async () =>
+      view.getByRole("button", { name: "Steer run" }).click(),
+    );
+    const textbox = view.getByRole("textbox", { name: "Steer this run" });
+    fireEvent.change(textbox, { target: { value: "keep going" } });
+    await act(async () => dispatchEscape(textbox));
+    // The input closed and the thread stayed open.
+    assert.equal(view.queryByRole("textbox", { name: "Steer this run" }), null);
+    assert.deepEqual(closes, []);
+    // A second Escape, now outside the input, still dismisses the thread.
+    await act(async () =>
+      dispatchEscape(view.getByRole("button", { name: "Steer run" })),
+    );
+    assert.deepEqual(closes, ["thread"]);
+  } finally {
+    release();
+  }
+});
+
+test("a stopped run leaves a bounded neutral trace where the strip was", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const endedAt = Date.now();
+  const h = harness({
+    show: false,
+    reduceMotion: true,
+    outcome: {
+      outcome: "cancelled",
+      agentPubkey: selection.agentPubkey,
+      endedAt,
+      channelId: selection.channelId,
+    },
+  });
+  const view = render(React.createElement(h.Component, props));
+  assert.match(
+    view.getByTestId("live-job-desk-stopped").textContent,
+    /Worker · Run stopped/,
+  );
+  // Bounded: the window is measured from the recorded end time, so a run that
+  // ended long ago leaves nothing behind.
+  view.unmount();
+  const stale = harness({
+    show: false,
+    reduceMotion: true,
+    outcome: {
+      outcome: "cancelled",
+      agentPubkey: selection.agentPubkey,
+      endedAt: endedAt - 60_000,
+      channelId: selection.channelId,
+    },
+  });
+  const staleView = render(React.createElement(stale.Component, props));
+  assert.equal(staleView.queryByTestId("live-job-desk-stopped"), null);
+  await act(async () => {});
+});
+
+test("a completed run leaves no stopped trace", async () => {
+  const { render } = await import("@testing-library/react");
+  const h = harness({
+    show: false,
+    outcome: {
+      outcome: "completed",
+      agentPubkey: selection.agentPubkey,
+      endedAt: Date.now(),
+      channelId: selection.channelId,
+    },
+  });
+  const view = render(React.createElement(h.Component, props));
+  assert.equal(view.queryByTestId("live-job-desk-stopped"), null);
 });
 
 test("a live run this viewer does not own keeps the agent-scoped controls", async () => {

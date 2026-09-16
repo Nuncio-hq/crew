@@ -211,8 +211,12 @@ async function loadNarrowDrawer(standalone = false) {
       ),
     ]),
   );
+  // The real escape-ownership module: a nested control that marks itself as
+  // the Escape owner must keep the drawer from swallowing the key.
+  const escapeSurfaces = load("../../shared/hooks/escapeSurfaces.ts", {});
   const Drawer = load("../channels/ui/FocusThreadDrawer.tsx", {
     ...common,
+    "@/shared/hooks/escapeSurfaces": escapeSurfaces,
     "motion/react": { motion, useReducedMotion: () => true },
     "@/features/channels/lib/threadFocusLayout": {
       THREAD_FOCUS_DRAWER_TRAVEL_PX: 0,

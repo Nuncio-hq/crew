@@ -99,6 +99,9 @@ function harness() {
     });
     return exports;
   }
+  deps["@/shared/hooks/escapeSurfaces"] = load(
+    new URL("../../shared/hooks/escapeSurfaces.ts", import.meta.url),
+  );
   deps["@/features/agents/ui/agentActivityChrome"] = load(
     new URL("../agents/ui/agentActivityChrome.ts", import.meta.url),
   );
@@ -652,3 +655,64 @@ test("the Steer composer enforces the native byte cap, not a character cap", asy
     false,
   );
 });
+
+/**
+ * Activity's own steer input has no disclosure to dismiss, but it must still
+ * claim Escape: a capture-phase surface above it would otherwise read the
+ * operator's dismissal as "close the whole thread panel".
+ */
+test("Escape in the Activity steer input closes nothing and keeps the panel", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const h = harness();
+  const closes = [];
+  const escapeSurfaces = loadEscapeSurfaces();
+  const handler = (event) => {
+    if (event.key !== "Escape") return;
+    if (escapeSurfaces.escapeIsClaimedByNestedOwner(event.target)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closes.push("thread");
+  };
+  dom.window.addEventListener("keydown", handler, { capture: true });
+  try {
+    const view = render(
+      React.createElement(h.Component, {
+        selection,
+        publishStop: h.publishStop,
+        publishSteer: h.publishSteer,
+      }),
+    );
+    const textbox = view.getByRole("textbox", { name: "Steer selected run" });
+    await act(async () =>
+      textbox.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    assert.ok(view.getByRole("textbox", { name: "Steer selected run" }));
+    assert.deepEqual(closes, []);
+  } finally {
+    dom.window.removeEventListener("keydown", handler, true);
+  }
+});
+
+function loadEscapeSurfaces() {
+  const source = ts.transpileModule(
+    fs.readFileSync(
+      new URL("../../shared/hooks/escapeSurfaces.ts", import.meta.url),
+      "utf8",
+    ),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+      },
+    },
+  ).outputText;
+  const exports = {};
+  vm.runInNewContext(source, { exports, require: () => ({}) });
+  return exports;
+}

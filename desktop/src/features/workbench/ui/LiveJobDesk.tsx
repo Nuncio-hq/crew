@@ -1,4 +1,7 @@
+import * as React from "react";
+import { useReducedMotion } from "motion/react";
 import { AGENT_ACTIVITY_CHROME } from "@/features/agents/ui/agentActivityChrome";
+import { useRecentOutcomeForConversation } from "@/features/agents/recentConversationOutcomes";
 import { useComposerAgentStop } from "@/features/channels/ui/useComposerAgentStop";
 import { THREAD_PANEL_MESSAGE_GUTTER_CLASS } from "@/features/messages/lib/messageThreadPanelLayout";
 import { ThreadSelectedRunControls } from "@/features/tool-pane/ThreadSelectedRunControls";
@@ -29,8 +32,18 @@ export function LiveJobDesk({
   threadRootId: string;
 }) {
   const desk = useLiveJobDesk({ channelId, threadRootId });
+  const outcome = useRecentOutcomeForConversation(desk.conversationId);
   const only = desk.runs.length === 1 ? desk.runs[0] : null;
-  if (!desk.show) return null;
+  // The strip vanishes the instant the run ends, taking its Stop confirmation
+  // with it. Leave the run's own terminal outcome in its place for a bounded
+  // window so the operator sees that the stop actually landed.
+  if (!desk.show)
+    return outcome?.outcome === "cancelled" ? (
+      <StoppedRunTrace
+        endedAt={outcome.endedAt}
+        name={desk.nameFor(outcome.agentPubkey)}
+      />
+    ) : null;
   if (only && desk.conversationId) {
     return (
       <SingleRunDesk
@@ -218,6 +231,64 @@ function SingleRunDesk({
         publishStop={publishStop}
         selection={selection}
       />
+    </DeskRow>
+  );
+}
+
+/** How long the neutral stopped trace stays where the strip was. */
+const STOPPED_TRACE_MS = 8_000;
+const STOPPED_TRACE_FADE_MS = 500;
+
+/**
+ * The run's own cancellation outcome, rendered in the strip's place.
+ *
+ * It reads the same conversation outcome ledger the thread status chip reads,
+ * so no new event and no separate UI state can disagree with it. The window is
+ * measured from the recorded end time, not from mount, so a remount inside the
+ * window shows the remainder rather than restarting the clock.
+ */
+function StoppedRunTrace({ endedAt, name }: { endedAt: number; name: string }) {
+  const reduceMotion = useReducedMotion() ?? false;
+  const holdMs = reduceMotion
+    ? STOPPED_TRACE_MS
+    : STOPPED_TRACE_MS + STOPPED_TRACE_FADE_MS;
+  const [phase, setPhase] = React.useState<"visible" | "fading" | "gone">(() =>
+    Date.now() - endedAt >= holdMs ? "gone" : "visible",
+  );
+  React.useEffect(() => {
+    // A clock that moved backwards must not extend the window past its budget.
+    const elapsed = Math.max(0, Date.now() - endedAt);
+    if (elapsed >= holdMs) {
+      setPhase("gone");
+      return;
+    }
+    setPhase(
+      elapsed >= STOPPED_TRACE_MS && !reduceMotion ? "fading" : "visible",
+    );
+    const timers = [
+      setTimeout(() => setPhase("gone"), holdMs - elapsed),
+      ...(reduceMotion || elapsed >= STOPPED_TRACE_MS
+        ? []
+        : [setTimeout(() => setPhase("fading"), STOPPED_TRACE_MS - elapsed)]),
+    ];
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+    };
+  }, [endedAt, holdMs, reduceMotion]);
+  if (phase === "gone") return null;
+  return (
+    <DeskRow>
+      <DeskText>
+        <span
+          className={cn(
+            reduceMotion ? undefined : "transition-opacity duration-500",
+            phase === "fading" ? "opacity-0" : "opacity-100",
+          )}
+          data-testid="live-job-desk-stopped"
+        >
+          {name} · {AGENT_ACTIVITY_CHROME.runStopped}
+        </span>
+      </DeskText>
     </DeskRow>
   );
 }

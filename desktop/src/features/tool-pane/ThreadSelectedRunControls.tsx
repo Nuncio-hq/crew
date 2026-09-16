@@ -1,6 +1,7 @@
 import * as React from "react";
 import { AGENT_ACTIVITY_CHROME } from "@/features/agents/ui/agentActivityChrome";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { ESCAPE_OWNER_ATTRIBUTE } from "@/shared/hooks/escapeSurfaces";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 import { normalizeRelayUrl } from "@/shared/lib/normalizeRelayUrl";
@@ -299,6 +300,40 @@ export function ThreadSelectedRunControls({
     }
   };
   const controlsEnabled = eligible();
+  // Keys are handled on the element itself, not through React's delegated
+  // root listener: an ancestor that claims keydown first would otherwise
+  // silently swallow Escape, which is exactly what the webview did.
+  const steerKeyHandler = React.useRef<(event: KeyboardEvent) => void>(
+    () => {},
+  );
+  React.useLayoutEffect(() => {
+    steerKeyHandler.current = (event: KeyboardEvent) => {
+      if (event.isComposing || event.altKey || event.metaKey || event.ctrlKey)
+        return;
+      if (event.key === "Escape") {
+        // Claim Escape even when there is no disclosure to close: the
+        // surfaces above (thread drawer, thread panel) must not read a
+        // dismissal aimed at this input as "close the thread".
+        event.preventDefault();
+        closeSteerInput();
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void steer();
+      }
+    };
+  });
+  const attachSteerInput = React.useCallback(
+    (node: HTMLTextAreaElement | null) => {
+      if (!node) return;
+      const onKeyDown = (event: KeyboardEvent) =>
+        steerKeyHandler.current(event);
+      node.addEventListener("keydown", onKeyDown);
+      return () => node.removeEventListener("keydown", onKeyDown);
+    },
+    [],
+  );
   return (
     <div
       className={
@@ -359,23 +394,14 @@ export function ThreadSelectedRunControls({
               <textarea
                 id={steerInputId}
                 aria-label={steerInputLabel}
+                {...{ [ESCAPE_OWNER_ATTRIBUTE]: "steer-input" }}
                 className="min-h-16 w-full resize-y rounded-md border border-input/60 bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-hidden transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
                 value={steerDraft}
                 disabled={gate.steerClaimed}
                 aria-describedby={steerBudgetId}
                 aria-invalid={promptOverBudget}
                 onChange={(event) => setSteerDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape" && compact) {
-                    event.preventDefault();
-                    closeSteerInput();
-                    return;
-                  }
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void steer();
-                  }
-                }}
+                ref={attachSteerInput}
                 placeholder="Send guidance to this run"
                 rows={2}
               />

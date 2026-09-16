@@ -98,6 +98,11 @@ function harness() {
     });
     return exports;
   }
+  // The real module: the attribute the drawer looks for is a contract, not a
+  // string this test gets to choose.
+  deps["@/shared/hooks/escapeSurfaces"] = load(
+    new URL("../../shared/hooks/escapeSurfaces.ts", import.meta.url),
+  );
   deps["@/features/agents/ui/agentActivityChrome"] = load(
     new URL("../agents/ui/agentActivityChrome.ts", import.meta.url),
   );

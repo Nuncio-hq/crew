@@ -30,6 +30,9 @@ export const AGENT_ACTIVITY_CHROME = {
   stop: "Stop",
   /** Thread-wide stop: names its scope so it cannot be read as one run. */
   stopAllRuns: "Stop all runs",
+  /** Neutral trace left where the strip was after the operator stopped a run.
+      Same words the Activity transcript uses for a cancelled turn. */
+  runStopped: "Run stopped",
   seemsStuck: "seems stuck",
   workingFallback: "Working",
   retrying: (attempt: number, maxAttempts: number) =>
