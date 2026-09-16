@@ -5,8 +5,8 @@ use sha2::Digest;
 
 use super::storage::{read, sql_error, validate_id, validate_scope};
 use super::{
-    ManagedAgentDeletionSummary, Operation, OperationKind, OperationScope, OperationStatus,
-    OperationStore, StoreError,
+    ManagedAgentDeletionSummary, ManagedAgentDeletionTargetKind, Operation, OperationKind,
+    OperationScope, OperationStatus, OperationStore, StoreError,
 };
 
 const MAX_DELETE_RECORDS: usize = 4096;
@@ -356,6 +356,13 @@ fn cascade_parent_id(operation: &Operation) -> Result<Option<String>, StoreError
         .map_err(|_| StoreError::Corrupt)
 }
 
+/// Whether this record is a persona cascade coordinator.
+fn has_cascade(operation: &Operation) -> Result<bool, StoreError> {
+    serde_json::from_value::<ManagedDeletePayload>(operation.payload.clone())
+        .map(|payload| payload.cascade.is_some())
+        .map_err(|_| StoreError::Corrupt)
+}
+
 fn parent_contains_child(parent: &Operation, child: &Operation) -> Result<bool, StoreError> {
     let payload: ManagedDeletePayload =
         serde_json::from_value(parent.payload.clone()).map_err(|_| StoreError::Corrupt)?;
@@ -446,7 +453,16 @@ impl OperationStore {
                 // delete entries.
                 continue;
             }
+            // A coordinator carries the cascade; a plain instance deletion
+            // does not. That structural difference is all the recovery surface
+            // needs to name the work, and it exposes no payload content.
+            let target_kind = if has_cascade(&operation)? {
+                ManagedAgentDeletionTargetKind::Persona
+            } else {
+                ManagedAgentDeletionTargetKind::Agent
+            };
             summaries.push(ManagedAgentDeletionSummary {
+                target_kind,
                 id: operation.id,
                 owner: operation.scope.owner,
                 community: operation.scope.community,
