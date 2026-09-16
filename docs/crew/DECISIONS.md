@@ -2324,3 +2324,21 @@ normalization, command construction and provenance labels. Installed
 acceptance must separately prove the real default/auth path in the #348
 staging environment without exposing credentials or treating Codex's ordinary
 read-only sandbox as snapshot-only isolation.
+
+## D-082 — A reviewable receipt outranks `stopped` on the thread status chip
+
+- **Status:** Accepted
+- **Date:** 2026-09-16
+- **Issue:** #354
+
+Stopping an agent cancels the runs the owner named, not the whole thread. When
+a later, non-cancelled run leaves an unreviewed receipt, the thread status chip
+reports `ready-to-review` rather than `stopped`, so that work is not hidden
+behind a terminal-looking label. The mission inbox already kept such a receipt
+reviewable; the chip now agrees with it.
+
+The successor must be provable: the receipt and the cancelled slot must both
+name their session and turn, and they must differ. A receipt that cannot be
+placed against a run keeps the `stopped` reading, because presenting cancelled
+work as reviewable is the worse error. The conversation outcome ledger's own
+precedence is unchanged — this decision governs presentation only.

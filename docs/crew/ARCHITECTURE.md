@@ -845,13 +845,28 @@ arbitrates bounded expiry against that append, so an expired request cannot be
 appended later. The receiver remains attached across an optional plan
 continuation and is cleared when the task returns to the pool. Strict outcomes
 are `appended`, `stale_target`, `rejected`, `busy`, and `expired`; an uncertain
-publication remains unconfirmed and is never replayed automatically. Publication
+publication remains unconfirmed and is never replayed automatically. Every control
+frame is answered: a malformed frame is rejected with a bounded reason rather
+than dropped, and a queued request the adapter never received settles as
+`stale_target` (replay-safe) instead of `unconfirmed`. Publication
 feedback unlocks retry only for confirmed `not_attempted`; a correlated adapter
-terminal outcome also releases the claim. A correlated rejection
-keeps the adapter's specific reason visible, with generic feedback when no
-reason is supplied. Unconfirmed delivery keeps its claim and never enables a
-blind retry. The transcript remains mounted alongside these controls; installed
-workflow acceptance remains tracked by #354/#357.
+terminal outcome also releases the claim. A correlated rejection carries the
+adapter's own reason — control-character scrubbed and bounded to 240 bytes —
+into the control result and the Steer feedback line, with generic feedback when
+the adapter supplies none. The client wait is deliberately longer than the
+adapter's own request deadline, and the correlation outlives that wait, so a
+late terminal outcome still downgrades an unconfirmed request to a retryable
+one. Unconfirmed delivery keeps its claim and never enables a blind retry;
+Steer and Stop latch independently, so an unconfirmed Steer never removes Stop.
+
+Thread-level controls sit directly above the thread composer, bound to the same
+owner-scoped publication seam as the Activity tab: they name the working agent
+and offer Steer and Stop when exactly one run is live, and point at Activity
+when several are, because choosing a target for the operator would be guessing.
+A thread with no live run shows nothing. The Activity tab keeps the full run
+picker, and the thread-wide control is named "Stop all runs" so the two scopes
+cannot be confused. The transcript remains mounted alongside these controls;
+installed workflow acceptance remains tracked by #354/#357.
 
 ## Installed Wiki runtime authentication (#363)
 
