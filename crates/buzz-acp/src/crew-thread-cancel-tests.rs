@@ -626,7 +626,42 @@ fn malformed_steer_frames_always_answer_with_a_terminal_rejection() {
             error.contains(expected),
             "{field}: unexpected reason {error}"
         );
+        if field == "prompt" {
+            // Every identifier in this case is valid, so the rejection must
+            // echo all of them: the caller correlates on string equality and
+            // a dropped echo strands its control on an unanswerable request.
+            assert_eq!(frame.payload["requestId"], request_id.to_string());
+            assert_eq!(frame.payload["channelId"], channel.to_string());
+            assert_eq!(frame.payload["conversationId"], conversation.to_string());
+            assert_eq!(frame.payload["sessionId"], "session");
+            assert_eq!(frame.payload["turnId"], "turn");
+        }
     }
+}
+
+#[test]
+fn a_neutral_prompt_completion_is_replay_safe_only_before_the_write() {
+    // The prompt loop only holds a steer after its write succeeded, so a
+    // neutral completion of a dispatched request leaves the outcome unknown.
+    let (status, reason) = classify_steer_ack(Ok(pool::SteerAck::PromptCompletedNeutral), true);
+    assert_eq!(status, "unconfirmed");
+    assert!(reason.is_some(), "an unconfirmed outcome must say why");
+    let (status, _) = classify_steer_ack(Ok(pool::SteerAck::PromptCompletedNeutral), false);
+    assert_eq!(status, "stale_target");
+    // A dispatched request is not downgraded across the board: the adapter's
+    // own terminal outcomes stay terminal.
+    let (status, _) = classify_steer_ack(
+        Ok(pool::SteerAck::Err(pool::SteerError::StrictTargetMismatch)),
+        true,
+    );
+    assert_eq!(status, "stale_target");
+    let (status, _) = classify_steer_ack(
+        Ok(pool::SteerAck::Success {
+            session_id: "session".into(),
+        }),
+        true,
+    );
+    assert_eq!(status, "appended");
 }
 
 #[tokio::test]

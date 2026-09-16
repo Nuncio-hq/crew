@@ -161,8 +161,8 @@ struct ParsedSteerRequest<'a> {
 /// Largest steer prompt the observer control accepts, in bytes.
 pub(crate) const MAX_STEER_PROMPT_BYTES: usize = 16 * 1024;
 
-/// Longest raw identifier echoed back on a rejected frame.
-const MAX_ECHOED_ID_BYTES: usize = 128;
+/// Longest raw identifier echoed back on a rejected frame, in characters.
+const MAX_ECHOED_ID_CHARS: usize = 128;
 
 /// Echo an unvalidated identifier so the caller can still correlate.
 fn echo_id(payload: &serde_json::Value, key: &str) -> Option<String> {
@@ -170,7 +170,7 @@ fn echo_id(payload: &serde_json::Value, key: &str) -> Option<String> {
     Some(
         crate::acp::bound_steer_reason(Some(value))?
             .chars()
-            .take(MAX_ECHOED_ID_BYTES)
+            .take(MAX_ECHOED_ID_CHARS)
             .collect(),
     )
 }
@@ -230,6 +230,10 @@ fn parse_steer_payload(
 /// `dispatched` is the only thing that separates "the queued request was
 /// dropped before any write" (replay-safe `stale_target`) from "the request
 /// reached the adapter and its answer was lost" (`unconfirmed`, no replay).
+/// It is consulted for a lost ack and for the neutral prompt-completed answer
+/// alike: the prompt loop only holds a steer after the write succeeded, so a
+/// neutral answer to a written request proves nothing about whether the
+/// adapter applied it.
 pub(crate) fn classify_steer_ack(
     ack: Result<pool::SteerAck, tokio::sync::oneshot::error::RecvError>,
     dispatched: bool,
@@ -244,6 +248,12 @@ pub(crate) fn classify_steer_ack(
         {
             (outcome, reason)
         }
+        // A prompt that ended while the written steer was still pending may
+        // already have consumed it. Only an undispatched one is replay-safe.
+        Ok(pool::SteerAck::PromptCompletedNeutral) if dispatched => (
+            "unconfirmed".into(),
+            Some("the selected run ended before it answered the steer".into()),
+        ),
         Ok(pool::SteerAck::Err(pool::SteerError::StrictTargetMismatch))
         | Ok(pool::SteerAck::PromptCompletedNeutral)
         | Ok(pool::SteerAck::Err(pool::SteerError::PromptCompleted)) => {
