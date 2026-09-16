@@ -98,6 +98,9 @@ function harness() {
     });
     return exports;
   }
+  deps["@/features/agents/ui/agentActivityChrome"] = load(
+    new URL("../agents/ui/agentActivityChrome.ts", import.meta.url),
+  );
   deps["@/features/agents/lib/cancelTurnOutcome"] = load(
     new URL("../agents/lib/cancelTurnOutcome.ts", import.meta.url),
   );
@@ -307,4 +310,40 @@ test("native owner mismatch prevents selecting an actionable run", async () => {
     true,
   );
   assert.equal(view.queryByRole("button", { name: "Stop selected run" }), null);
+});
+
+test("a draft composed for one run is never carried to the run selected next", async () => {
+  const { render, act, fireEvent, waitFor } = await import(
+    "@testing-library/react"
+  );
+  const h = harness();
+  const second = { ...selection, sessionId: "session-2", turnId: "turn-2" };
+  h.state.turns.push(second);
+  const view = render(React.createElement(h.Component, props));
+  await choose(view, fireEvent, waitFor);
+  const draft = view.getByRole("textbox", { name: "Steer selected run" });
+  await act(async () =>
+    fireEvent.change(draft, {
+      target: { value: "guidance for the first run" },
+    }),
+  );
+  const picker = view.getByRole("combobox", { name: "Activity live run" });
+  await act(async () =>
+    fireEvent.change(picker, {
+      target: { value: JSON.stringify([second.sessionId, second.turnId]) },
+    }),
+  );
+  const swapped = view.getByRole("textbox", { name: "Steer selected run" });
+  assert.equal(swapped.value, "", "the successor run must start with no draft");
+  await act(async () => {
+    fireEvent.change(swapped, { target: { value: "guidance for the second" } });
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  assert.equal(h.state.sends.length, 1);
+  assert.equal(h.state.sends[0].input.payload.turnId, second.turnId);
+  assert.equal(h.state.sends[0].input.payload.sessionId, second.sessionId);
+  assert.equal(
+    h.state.sends[0].input.payload.prompt,
+    "guidance for the second",
+  );
 });

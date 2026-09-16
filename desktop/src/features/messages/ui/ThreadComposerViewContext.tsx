@@ -1,6 +1,5 @@
 import type { TimelineMessage } from "@/features/messages/types";
 import { threadViewContext } from "@/features/messages/lib/crewViewContextModel";
-import { ThreadInlineRunControls } from "@/features/tool-pane/ThreadInlineRunControls";
 import { ComposerViewContextProvider } from "./composerViewContext";
 import type { ProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel";
 
@@ -35,17 +34,6 @@ export function ThreadComposerViewContext({
         threadTitle: threadHead.body ?? "",
       })}
     >
-      {channelId ? (
-        <ThreadInlineRunControls
-          agentNames={
-            model?.activePubkey
-              ? { [model.activePubkey]: model.activeName }
-              : undefined
-          }
-          channelId={channelId}
-          rootEventId={threadHead.id}
-        />
-      ) : null}
       {children}
     </ComposerViewContextProvider>
   );

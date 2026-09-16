@@ -859,13 +859,16 @@ late terminal outcome still downgrades an unconfirmed request to a retryable
 one. Unconfirmed delivery keeps its claim and never enables a blind retry;
 Steer and Stop latch independently, so an unconfirmed Steer never removes Stop.
 
-Thread-level controls sit directly above the thread composer, bound to the same
-owner-scoped publication seam as the Activity tab: they name the working agent
-and offer Steer and Stop when exactly one run is live, and point at Activity
-when several are, because choosing a target for the operator would be guessing.
-A thread with no live run shows nothing. The Activity tab keeps the full run
-picker, and the thread-wide control is named "Stop all runs" so the two scopes
-cannot be confused. The transcript remains mounted alongside these controls;
+The live job desk under the thread head is the one thread-level control strip.
+Bound to the same owner-scoped publication seam as the Activity tab, it names
+the working agent and offers Steer and Stop for an exact run when the thread has
+exactly one live run this viewer owns; it points at Activity when several are
+live, because choosing a target for the operator would be guessing. When no run
+identity is known yet — or the live run is not this viewer's to control — the
+desk keeps its agent-scoped controls, whose labels name the agent they act on:
+Steer focuses the composer, Stop stops that agent. The Activity tab keeps the
+full run picker, and the thread-wide control is named "Stop all runs" so the
+three scopes cannot be confused. The transcript remains mounted alongside these controls;
 installed workflow acceptance remains tracked by #354/#357.
 
 ## Installed Wiki runtime authentication (#363)

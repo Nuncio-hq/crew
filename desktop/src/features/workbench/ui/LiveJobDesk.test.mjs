@@ -31,16 +31,21 @@ const selection = Object.freeze({
   turnId: "turn",
 });
 
-function harness({ runs } = {}) {
-  const listeners = new Set(),
-    results = new Map();
+/**
+ * The desk is exercised through the real run-control seam: the publisher hook,
+ * the compact controls, and the chrome constants are the production modules,
+ * so a stub cannot hide a wrong scope, a wrong payload, or wrong copy.
+ */
+function harness({ runs, owned = true } = {}) {
+  const results = new Map();
   const state = {
     viewer: selection.viewerPubkey,
     relay: selection.relayUrl,
-    owned: new Set([selection.agentPubkey]),
+    owned: owned ? new Set([selection.agentPubkey]) : new Set(),
     turns: runs ?? [{ ...selection }],
     sends: [],
     openedTabs: [],
+    stops: [],
   };
   const deps = {
     react: React,
@@ -54,43 +59,35 @@ function harness({ runs } = {}) {
       useCurrentOwnedAgentPubkeys: () => state.owned,
     },
     "@/shared/lib/normalizeRelayUrl": { normalizeRelayUrl: (x) => x },
-    "@/shared/lib/pubkey": {
-      normalizePubkey: (value) => value.toLowerCase(),
-      truncatePubkey: (value) => value.slice(0, 8),
+    "@/shared/lib/cn": { cn: (...parts) => parts.filter(Boolean).join(" ") },
+    "@/shared/ui/button": {
+      Button: ({ size, variant, ...props }) =>
+        React.createElement("button", { type: "button", ...props }),
     },
-    "@/features/agents/conversationId": {
-      deriveAgentConversationIdOrNull: () => selection.conversationId,
+    "@/features/messages/lib/messageThreadPanelLayout": {
+      THREAD_PANEL_MESSAGE_GUTTER_CLASS: "px-5",
+    },
+    "@/features/channels/ui/useComposerAgentStop": {
+      useComposerAgentStop: (args) => ({
+        stopAgent: async (pubkey, name) =>
+          state.stops.push({ ...args, pubkey, name }),
+      }),
+    },
+    "@/features/tool-pane/toolPaneStore": {
+      openThreadToolPane: (tab) => state.openedTabs.push(tab),
     },
     "@/features/agents/activeAgentTurnsStore": {
       walkActiveAgentTurns: (fn) =>
         state.turns.forEach((turn) => {
           fn(turn.agentPubkey, turn, 0);
         }),
-      subscribeActiveAgentTurns: (fn) => {
-        listeners.add(fn);
-        return () => listeners.delete(fn);
-      },
+      subscribeActiveAgentTurns: () => () => {},
     },
     "@/features/agents/controlResultDispatch": {
       subscribeControlResults: (agent, fn) => {
         results.set(agent, fn);
         return () => results.delete(agent);
       },
-    },
-    "@/features/agents/activeConversationAgentTurnSummaries": {
-      useActiveTurnSummariesForConversation: () =>
-        state.turns.length === 0
-          ? []
-          : [
-              {
-                agentPubkey: selection.agentPubkey,
-                progressLabel: "Working",
-                runs: state.turns,
-              },
-            ],
-    },
-    "./toolPaneStore": {
-      openThreadToolPane: (tab) => state.openedTabs.push(tab),
     },
     "@/shared/api/ownerOperations": {
       captureOwnerOperationScope: async () => ({
@@ -104,6 +101,21 @@ function harness({ runs } = {}) {
         state.sends.push({ command, input });
         return { status: "accepted" };
       },
+    },
+    "../hooks/useLiveJobDesk": {
+      useLiveJobDesk: () => ({
+        conversationId: selection.conversationId,
+        nameFor: () => "Worker",
+        runs: state.turns.map((turn) => ({
+          agentPubkey: turn.agentPubkey,
+          sessionId: turn.sessionId,
+          turnId: turn.turnId,
+          liveness: "Working",
+        })),
+        show: state.show ?? true,
+        targetName: "Worker",
+        targetPubkey: selection.agentPubkey,
+      }),
     },
   };
   function load(path) {
@@ -119,16 +131,8 @@ function harness({ runs } = {}) {
       exports,
       require: (id) => {
         if (id in deps) return deps[id];
-        if (id.startsWith("./")) {
-          const base = new URL(`${id}.tsx`, import.meta.url);
-          return load(
-            fs.existsSync(base) ? base : new URL(`${id}.ts`, import.meta.url),
-          );
-        }
         throw Error(id);
       },
-      // Mirrors the build's automatic JSX runtime for files that do not
-      // import React themselves.
       React,
       setTimeout,
       clearTimeout,
@@ -139,36 +143,36 @@ function harness({ runs } = {}) {
     });
     return exports;
   }
-  // The real chrome module, so a stub cannot hide wrong copy.
-  deps["@/features/agents/ui/agentActivityChrome"] = load(
-    new URL("../agents/ui/agentActivityChrome.ts", import.meta.url),
+  const real = (id, relative) => {
+    deps[id] = load(new URL(relative, import.meta.url));
+  };
+  real(
+    "@/features/agents/ui/agentActivityChrome",
+    "../../agents/ui/agentActivityChrome.ts",
   );
-  deps["@/features/agents/lib/cancelTurnOutcome"] = load(
-    new URL("../agents/lib/cancelTurnOutcome.ts", import.meta.url),
+  real(
+    "@/features/agents/lib/cancelTurnOutcome",
+    "../../agents/lib/cancelTurnOutcome.ts",
   );
-  deps["@/features/agents/lib/steerTurnOutcome"] = load(
-    new URL("../agents/lib/steerTurnOutcome.ts", import.meta.url),
+  real(
+    "@/features/agents/lib/steerTurnOutcome",
+    "../../agents/lib/steerTurnOutcome.ts",
   );
-  const module = load(
-    new URL("./ThreadInlineRunControls.tsx", import.meta.url),
+  real(
+    "@/features/tool-pane/ThreadSelectedRunControls",
+    "../../tool-pane/ThreadSelectedRunControls.tsx",
   );
-  return { module, Component: module.ThreadInlineRunControls, state, results };
+  real(
+    "@/features/tool-pane/useThreadRunControlPublisher",
+    "../../tool-pane/useThreadRunControlPublisher.ts",
+  );
+  const module = load(new URL("./LiveJobDesk.tsx", import.meta.url));
+  return { Component: module.LiveJobDesk, state };
 }
 
-const props = {
-  channelId: selection.channelId,
-  rootEventId: selection.rootEventId,
-  agentNames: { [selection.agentPubkey]: "Worker" },
-};
+const props = { channelId: selection.channelId, threadRootId: "root" };
 
-test("the inline strip is absent for a thread with no live run", async () => {
-  const { render } = await import("@testing-library/react");
-  const h = harness({ runs: [] });
-  const view = render(React.createElement(h.Component, props));
-  assert.equal(view.queryByTestId("thread-inline-run-controls"), null);
-});
-
-test("one live run offers Stop bound to that exact run through the shared seam", async () => {
+test("one live run binds Stop to that exact run through the shared seam", async () => {
   const { render, act, waitFor } = await import("@testing-library/react");
   const h = harness();
   const view = render(React.createElement(h.Component, props));
@@ -176,22 +180,21 @@ test("one live run offers Stop bound to that exact run through the shared seam",
     assert.ok(view.queryByRole("button", { name: "Stop run" })),
   );
   assert.match(
-    view.getByTestId("thread-inline-run-agent").textContent,
+    view.getByTestId("live-job-desk-run-agent").textContent,
     /Worker is working/,
   );
-  assert.match(view.container.textContent, /Working/);
+  assert.equal(view.queryByRole("button", { name: "Stop Worker" }), null);
   await act(async () => view.getByRole("button", { name: "Stop run" }).click());
   assert.equal(h.state.sends.length, 1);
   const [{ command, input }] = h.state.sends;
   assert.equal(command, "send_scoped_observer_control");
   assert.equal(input.agentPubkey, selection.agentPubkey);
   assert.equal(input.payload.type, "cancel_turn");
-  assert.equal(input.payload.channelId, selection.channelId);
   assert.equal(input.payload.conversationId, selection.conversationId);
   assert.equal(input.payload.turnId, selection.turnId);
 });
 
-test("one live run steers that exact run, and Escape closes the input", async () => {
+test("one live run steers that exact run from its own labelled input", async () => {
   const { render, act, fireEvent, waitFor } = await import(
     "@testing-library/react"
   );
@@ -200,9 +203,15 @@ test("one live run steers that exact run, and Escape closes the input", async ()
   await waitFor(() =>
     assert.ok(view.queryByRole("button", { name: "Steer run" })),
   );
-  const toggle = view.getByRole("button", { name: "Steer run" });
-  await act(async () => toggle.click());
-  const textbox = view.getByRole("textbox", { name: "Steer selected run" });
+  await act(async () =>
+    view.getByRole("button", { name: "Steer run" }).click(),
+  );
+  // A name of its own: Activity's input keeps "Steer selected run".
+  assert.equal(
+    view.queryByRole("textbox", { name: "Steer selected run" }),
+    null,
+  );
+  const textbox = view.getByRole("textbox", { name: "Steer this run" });
   await act(async () => {
     fireEvent.change(textbox, {
       target: { value: "stay on the failing test" },
@@ -215,13 +224,34 @@ test("one live run steers that exact run, and Escape closes the input", async ()
   assert.equal(input.payload.sessionId, selection.sessionId);
   assert.equal(input.payload.turnId, selection.turnId);
   assert.equal(input.payload.prompt, "stay on the failing test");
+});
 
-  await act(async () => fireEvent.keyDown(textbox, { key: "Escape" }));
-  assert.equal(
-    view.queryByRole("textbox", { name: "Steer selected run" }),
-    null,
+test("a live run this viewer does not own keeps the agent-scoped controls", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const h = harness({ owned: false });
+  const view = render(React.createElement(h.Component, props));
+  assert.equal(view.queryByRole("button", { name: "Stop run" }), null);
+  assert.match(
+    view.getByTestId("live-job-desk").textContent,
+    /Worker is working — steer if stuck/,
   );
-  assert.equal(dom.window.document.activeElement, toggle);
+  await act(async () =>
+    view.getByRole("button", { name: "Stop Worker" }).click(),
+  );
+  assert.equal(h.state.sends.length, 0);
+  assert.equal(h.state.stops.length, 1);
+  assert.equal(h.state.stops[0].pubkey, selection.agentPubkey);
+});
+
+test("no known run identity keeps the honest agent-scoped strip", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const h = harness({ runs: [] });
+  const view = render(React.createElement(h.Component, props));
+  assert.ok(view.getByTestId("live-job-desk-steer"));
+  assert.equal(view.queryByRole("button", { name: "Stop run" }), null);
+  await act(async () => view.getByTestId("live-job-desk-stop").click());
+  assert.equal(h.state.stops.length, 1);
+  assert.equal(h.state.sends.length, 0);
 });
 
 test("several live runs point at Activity instead of guessing a target", async () => {
@@ -241,26 +271,4 @@ test("several live runs point at Activity instead of guessing a target", async (
   );
   assert.deepEqual(h.state.openedTabs, ["activity"]);
   assert.equal(h.state.sends.length, 0);
-});
-
-test("liveRunsForThread drops incomplete and duplicate run identities", () => {
-  const { liveRunsForThread } = harness().module;
-  // Cross-realm values: compare shape, not identity.
-  assert.equal(
-    JSON.stringify(
-      liveRunsForThread([
-        {
-          agentPubkey: "agent",
-          runs: [
-            { sessionId: "s", turnId: "t" },
-            { sessionId: "s", turnId: "t" },
-            { sessionId: "s", turnId: null },
-            { sessionId: "", turnId: "t" },
-          ],
-        },
-        { agentPubkey: "other" },
-      ]).map((run) => [run.agentPubkey, run.sessionId, run.turnId]),
-    ),
-    JSON.stringify([["agent", "s", "t"]]),
-  );
 });

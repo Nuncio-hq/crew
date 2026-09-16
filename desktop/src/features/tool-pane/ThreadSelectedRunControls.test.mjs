@@ -99,6 +99,9 @@ function harness() {
     });
     return exports;
   }
+  deps["@/features/agents/ui/agentActivityChrome"] = load(
+    new URL("../agents/ui/agentActivityChrome.ts", import.meta.url),
+  );
   deps["@/features/agents/lib/cancelTurnOutcome"] = load(
     new URL("../agents/lib/cancelTurnOutcome.ts", import.meta.url),
   );

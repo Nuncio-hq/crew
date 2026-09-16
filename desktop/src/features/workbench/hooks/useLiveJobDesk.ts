@@ -5,8 +5,10 @@ import { useActiveAgentsForConversation } from "@/features/agents/activeAgentTur
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import { useActiveTurnSummariesForConversation } from "@/features/agents/activeConversationAgentTurnSummaries";
 import {
   collectLiveJobSignals,
+  liveRunsForThread,
   shouldShowLiveJobDesk,
 } from "../lib/liveJobDesk";
 import { userInputBelongsToThread } from "../lib/workbenchTranscript";
@@ -59,20 +61,35 @@ export function useLiveJobDesk(args: {
       ? normalizePubkey(missionRow.agents[0].pubkey)
       : null;
   }, [activeAgentPubkeys, missionRow?.agents, pendingOnThread]);
-  const targetName = React.useMemo(() => {
-    if (!targetPubkey) return "Agent";
-    const named =
-      managedAgents.find(
-        (agent) => normalizePubkey(agent.pubkey) === targetPubkey,
-      )?.name ??
-      missionRow?.agents.find(
-        (agent) => normalizePubkey(agent.pubkey) === targetPubkey,
-      )?.name;
-    return named || "Agent";
-  }, [managedAgents, missionRow?.agents, targetPubkey]);
+  // The exact run identities come from the same store the Activity picker
+  // reads, keyed by the same derived conversation id, so the strip can never
+  // offer a run Activity would not have listed.
+  const summaries = useActiveTurnSummariesForConversation(conversationId);
+  const runs = React.useMemo(
+    () => (conversationId ? liveRunsForThread(summaries) : []),
+    [conversationId, summaries],
+  );
+  const nameFor = React.useCallback(
+    (pubkey: string | null) => {
+      if (!pubkey) return "Agent";
+      const normalized = normalizePubkey(pubkey);
+      const named =
+        managedAgents.find(
+          (agent) => normalizePubkey(agent.pubkey) === normalized,
+        )?.name ??
+        missionRow?.agents.find(
+          (agent) => normalizePubkey(agent.pubkey) === normalized,
+        )?.name;
+      return named || "Agent";
+    },
+    [managedAgents, missionRow?.agents],
+  );
+  const targetName = nameFor(targetPubkey);
 
   return {
     conversationId,
+    nameFor,
+    runs,
     show,
     targetName,
     targetPubkey,

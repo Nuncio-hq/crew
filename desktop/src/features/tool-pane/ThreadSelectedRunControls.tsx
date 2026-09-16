@@ -1,4 +1,5 @@
 import * as React from "react";
+import { AGENT_ACTIVITY_CHROME } from "@/features/agents/ui/agentActivityChrome";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
@@ -87,6 +88,11 @@ export function ThreadSelectedRunControls({
   const [, bump] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => subscribeActiveAgentTurns(bump), []);
   const steerInputId = React.useId();
+  // The two steer inputs coexist on screen, so their accessible names must
+  // differ: assistive tech would otherwise present one target twice.
+  const steerInputLabel = compact
+    ? AGENT_ACTIVITY_CHROME.steerThisRunLabel
+    : AGENT_ACTIVITY_CHROME.steerSelectedRunLabel;
   const steerBudgetId = React.useId();
   // The inline strip keeps the steer input behind a disclosure so the row
   // stays one line until the operator asks for it.
@@ -315,7 +321,7 @@ export function ThreadSelectedRunControls({
                 className="inline-flex h-7 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                 onClick={() => setSteerOpen((open) => !open)}
               >
-                Steer run
+                {AGENT_ACTIVITY_CHROME.steerRun}
               </button>
             ) : null}
             <button
@@ -330,7 +336,9 @@ export function ThreadSelectedRunControls({
                 void stop();
               }}
             >
-              {compact ? "Stop run" : "Stop selected run"}
+              {compact
+                ? AGENT_ACTIVITY_CHROME.stopRun
+                : AGENT_ACTIVITY_CHROME.stopSelectedRun}
             </button>
           </div>
           {publishSteer && steerOpen ? (
@@ -341,11 +349,11 @@ export function ThreadSelectedRunControls({
                 }
                 htmlFor={steerInputId}
               >
-                Steer selected run
+                {steerInputLabel}
               </label>
               <textarea
                 id={steerInputId}
-                aria-label="Steer selected run"
+                aria-label={steerInputLabel}
                 className="min-h-16 w-full resize-y rounded-md border border-input/60 bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-hidden transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
                 value={steerDraft}
                 disabled={gate.steerClaimed}
@@ -388,7 +396,9 @@ export function ThreadSelectedRunControls({
                   void steer();
                 }}
               >
-                {compact ? "Send steer" : "Steer selected run"}
+                {compact
+                  ? AGENT_ACTIVITY_CHROME.sendSteer
+                  : AGENT_ACTIVITY_CHROME.steerSelectedRunLabel}
               </button>
             </div>
           ) : null}

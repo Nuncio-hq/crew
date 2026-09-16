@@ -94,7 +94,11 @@ export function ThreadActivityRunControls({
           {publisher.error}
         </p>
       ) : null}
+      {/* Keyed by run identity: a draft or feedback composed for one run can
+          never be shown for, or sent to, the run selected after it. The
+          wrapper is deliberately not keyed — it owns the captured scope. */}
       <ThreadSelectedRunControls
+        key={chosen ? threadRunKey(chosen.run) : "none"}
         selection={chosen?.run ?? null}
         publishStop={publishStop}
         publishSteer={publishSteer}

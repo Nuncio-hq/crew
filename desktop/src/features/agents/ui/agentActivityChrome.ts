@@ -12,6 +12,21 @@ export const AGENT_ACTIVITY_CHROME = {
   /** Counts runs, not agents: one agent can hold several live runs. */
   runsWorking: (count: number) => (count === 1 ? "1 run" : `${count} runs`),
   viewActivity: "View activity",
+  openActivity: "Open Activity",
+  /** Thread strip when no exact run identity is known: agent-scoped copy. */
+  agentWorkingHint: (name: string) => `${name} is working — steer if stuck`,
+  /** Agent-scoped Steer: focuses the composer, so it names the agent. */
+  steerAgent: (name: string) => `Steer ${name}`,
+  /** Agent-scoped Stop: stops the agent, not one run — the name says so. */
+  stopAgent: (name: string) => `Stop ${name}`,
+  steerRun: "Steer run",
+  stopRun: "Stop run",
+  sendSteer: "Send steer",
+  /** Compact steer input: a name Activity's own input cannot collide with. */
+  steerThisRunLabel: "Steer this run",
+  /** Full Activity steer input. */
+  steerSelectedRunLabel: "Steer selected run",
+  stopSelectedRun: "Stop selected run",
   stop: "Stop",
   /** Thread-wide stop: names its scope so it cannot be read as one run. */
   stopAllRuns: "Stop all runs",
