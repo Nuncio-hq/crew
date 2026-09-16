@@ -87,4 +87,44 @@ mod tests {
         assert_eq!(dirs, unique);
         assert_eq!(dirs.len(), 2);
     }
+
+    /// Binds the production `!cfg!(debug_assertions)` expression through the
+    /// wired `command_search_dirs` entry point: inverting it would still pass
+    /// under whichever profile this test happens to run in, so both branches
+    /// are asserted against the real executable's directory rather than a
+    /// fake one, and each branch's assertion would fail if the expression
+    /// were flipped for that profile.
+    #[test]
+    fn the_wired_entry_point_orders_by_the_real_build_profile() {
+        use super::command_search_dirs;
+
+        // A fake workspace root, so this test's own build output never
+        // collides with (and dedups away) the real executable's directory.
+        let workspace = Path::new("/src/crew-under-test");
+        let exe_dir = std::env::current_exe()
+            .expect("current test binary must resolve")
+            .parent()
+            .expect("executable has a parent directory")
+            .to_path_buf();
+
+        let dirs = command_search_dirs(workspace);
+
+        if cfg!(debug_assertions) {
+            assert!(
+                dirs.first().is_some_and(|dir| dir.starts_with(workspace)),
+                "a dev build must search the workspace it just rebuilt first",
+            );
+            assert_eq!(
+                dirs.last().map(|dir| dir.as_path()),
+                Some(exe_dir.as_path()),
+                "a dev build still falls back to the executable's own directory last",
+            );
+        } else {
+            assert_eq!(
+                dirs.first().map(|dir| dir.as_path()),
+                Some(exe_dir.as_path()),
+                "a shipped build must search its bundled sidecars first",
+            );
+        }
+    }
 }
