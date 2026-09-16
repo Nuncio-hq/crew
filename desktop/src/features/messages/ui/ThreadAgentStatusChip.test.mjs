@@ -330,6 +330,102 @@ test("buildThreadAgentStatusChipView renders owner cancellation as stopped", () 
   assert.match(view?.title ?? "", /Claude Opus stopped 45s ago/);
 });
 
+test("buildThreadAgentStatusChipView keeps a successor receipt reviewable after a stop", () => {
+  const view = buildThreadAgentStatusChipView(
+    [],
+    {
+      outcome: "cancelled",
+      agentPubkey: AGENT_A,
+      endedAt: NOW - 45_000,
+      channelId: "chan-1",
+      cancelledAgentSlots: [
+        {
+          agentPubkey: AGENT_A,
+          triggeringEventIds: ["cancelled-parent"],
+          sessionId: "cancelled-session",
+          turnId: "cancelled-turn",
+        },
+      ],
+    },
+    PROFILE_A,
+    NOW,
+    [],
+    {
+      id: "successor-receipt",
+      channelId: "chan-1",
+      conversationId: "thread-a",
+      rootEventId: "e".repeat(64),
+      parentEventId: "successor-parent",
+      agentPubkey: AGENT_A,
+      sessionId: "successor-session",
+      turnId: "successor-turn",
+      createdAt: NOW - 30_000,
+      summary: "A later run finished after the stop",
+      verify: "pnpm check",
+      reviewed: false,
+    },
+  );
+
+  // Stopped would hide work the owner still has to review.
+  assert.equal(view?.state, "ready-to-review");
+});
+
+test("buildThreadAgentStatusChipView still reports stopped for the cancelled run's own receipt", () => {
+  const cancelled = {
+    outcome: "cancelled",
+    agentPubkey: AGENT_A,
+    endedAt: NOW - 45_000,
+    channelId: "chan-1",
+    cancelledAgentSlots: [
+      {
+        agentPubkey: AGENT_A,
+        triggeringEventIds: ["cancelled-parent"],
+        sessionId: "cancelled-session",
+        turnId: "cancelled-turn",
+      },
+    ],
+  };
+  const receipt = {
+    id: "cancelled-receipt",
+    channelId: "chan-1",
+    conversationId: "thread-a",
+    rootEventId: "e".repeat(64),
+    parentEventId: "cancelled-parent",
+    agentPubkey: AGENT_A,
+    sessionId: "cancelled-session",
+    turnId: "cancelled-turn",
+    createdAt: NOW - 30_000,
+    summary: "Work the owner stopped",
+    verify: "pnpm check",
+    reviewed: false,
+  };
+  const view = buildThreadAgentStatusChipView(
+    [],
+    cancelled,
+    PROFILE_A,
+    NOW,
+    [],
+    receipt,
+  );
+  assert.equal(view?.state, "stopped");
+
+  // An already-reviewed successor is not pending work either.
+  const reviewed = buildThreadAgentStatusChipView(
+    [],
+    cancelled,
+    PROFILE_A,
+    NOW,
+    [],
+    {
+      ...receipt,
+      sessionId: "successor-session",
+      turnId: "successor-turn",
+      reviewed: true,
+    },
+  );
+  assert.equal(reviewed?.state, "stopped");
+});
+
 test("ThreadAgentStatusChip renders nothing when conversation has no agents", () => {
   resetActiveAgentTurnsStore();
   const html = renderToStaticMarkup(

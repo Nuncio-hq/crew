@@ -41,6 +41,8 @@ export type ThreadRunControlsProps = {
     status: "accepted" | "unknown" | "not_attempted";
     message?: string;
   }>;
+  /** Compact row for the inline thread strip: Steer is a disclosure. */
+  compact?: boolean;
   publishSteer?: (
     selection: ThreadRunSelection,
     requestId: string,
@@ -73,6 +75,7 @@ export function ThreadSelectedRunControls({
   selection,
   publishStop,
   publishSteer,
+  compact = false,
 }: ThreadRunControlsProps) {
   const viewer = useIdentityQuery().data?.pubkey ?? "";
   const relay = normalizeRelayUrl(
@@ -83,6 +86,15 @@ export function ThreadSelectedRunControls({
   React.useEffect(() => subscribeActiveAgentTurns(bump), []);
   const steerInputId = React.useId();
   const steerBudgetId = React.useId();
+  // The inline strip keeps the steer input behind a disclosure so the row
+  // stays one line until the operator asks for it.
+  const [steerOpen, setSteerOpen] = React.useState(!compact);
+  const steerToggleRef = React.useRef<HTMLButtonElement>(null);
+  const closeSteerInput = () => {
+    if (!compact) return;
+    setSteerOpen(false);
+    steerToggleRef.current?.focus();
+  };
   const selectionKey = JSON.stringify(selection);
   const targetOwned = !!selection && owned.has(selection.agentPubkey);
   const gate = React.useMemo(
@@ -282,27 +294,49 @@ export function ThreadSelectedRunControls({
   return (
     <div
       className={
-        controlsEnabled
-          ? "flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
-          : "flex flex-col gap-2 p-2"
+        compact
+          ? "flex flex-col gap-1.5"
+          : controlsEnabled
+            ? "flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
+            : "flex flex-col gap-2 p-2"
       }
     >
       {controlsEnabled ? (
         <>
-          <button
-            type="button"
-            className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={gate.stopClaimed}
-            onClick={() => {
-              void stop();
-            }}
-          >
-            Stop selected run
-          </button>
-          {publishSteer ? (
+          <div className={compact ? "flex items-center gap-1.5" : "contents"}>
+            {compact && publishSteer ? (
+              <button
+                type="button"
+                ref={steerToggleRef}
+                aria-expanded={steerOpen}
+                aria-controls={steerInputId}
+                className="inline-flex h-7 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                onClick={() => setSteerOpen((open) => !open)}
+              >
+                Steer run
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={
+                compact
+                  ? "inline-flex h-7 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+                  : "inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+              }
+              disabled={gate.stopClaimed}
+              onClick={() => {
+                void stop();
+              }}
+            >
+              {compact ? "Stop run" : "Stop selected run"}
+            </button>
+          </div>
+          {publishSteer && steerOpen ? (
             <div className="flex flex-col gap-1.5 text-sm">
               <label
-                className="text-xs font-medium text-foreground"
+                className={
+                  compact ? "sr-only" : "text-xs font-medium text-foreground"
+                }
                 htmlFor={steerInputId}
               >
                 Steer selected run
@@ -317,6 +351,11 @@ export function ThreadSelectedRunControls({
                 aria-invalid={promptOverBudget}
                 onChange={(event) => setSteerDraft(event.target.value)}
                 onKeyDown={(event) => {
+                  if (event.key === "Escape" && compact) {
+                    event.preventDefault();
+                    closeSteerInput();
+                    return;
+                  }
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     void steer();
@@ -347,7 +386,7 @@ export function ThreadSelectedRunControls({
                   void steer();
                 }}
               >
-                Steer selected run
+                {compact ? "Send steer" : "Steer selected run"}
               </button>
             </div>
           ) : null}

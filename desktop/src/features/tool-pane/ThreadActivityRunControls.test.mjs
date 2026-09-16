@@ -81,8 +81,12 @@ function harness() {
       exports,
       require: (id) => {
         if (id in deps) return deps[id];
-        if (id.startsWith("./"))
-          return load(new URL(`${id}.tsx`, import.meta.url));
+        if (id.startsWith("./")) {
+          const base = new URL(`${id}.tsx`, import.meta.url);
+          return load(
+            fs.existsSync(base) ? base : new URL(`${id}.ts`, import.meta.url),
+          );
+        }
         throw Error(id);
       },
       setTimeout,

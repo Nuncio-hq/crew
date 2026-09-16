@@ -28,6 +28,7 @@ import {
 } from "@/features/agents/agentAttention";
 import type { AgentReceiptSummary } from "@/features/agents/agentReceiptStore";
 import type { ConnectionState } from "@/features/agents/ui/agentSessionTypes";
+import { receiptMatchesCancelledRun } from "@/features/agents/lib/cancelledRunReceipts";
 
 export type MissionInboxState =
   | "needsYou"
@@ -111,31 +112,6 @@ function connectionStateForAgents(
 
 function isSleepingAgent(input: MissionInboxInput, pubkey: string): boolean {
   return input.sleepingAgentPubkeys?.has(pubkey.toLowerCase()) ?? false;
-}
-
-function receiptMatchesCancelledRun(
-  receipt: AgentReceiptSummary,
-  outcome: ConversationOutcomeEntry,
-): boolean {
-  if (outcome.outcome !== "cancelled") return false;
-  const cancelledSlots = outcome.cancelledAgentSlots ?? [
-    {
-      agentPubkey: outcome.agentPubkey,
-      triggeringEventIds: outcome.triggeringEventIds ?? [],
-      sessionId: outcome.sessionId,
-      turnId: outcome.turnId,
-    },
-  ];
-  return cancelledSlots.some(
-    (slot) =>
-      receipt.agentPubkey === slot.agentPubkey &&
-      Boolean(slot.sessionId) &&
-      Boolean(slot.turnId) &&
-      receipt.sessionId === slot.sessionId &&
-      receipt.turnId === slot.turnId &&
-      slot.triggeringEventIds.length > 0 &&
-      slot.triggeringEventIds.includes(receipt.parentEventId),
-  );
 }
 
 function latestRequest(requests: readonly NeedsYouRequest[]) {

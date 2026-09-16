@@ -1,23 +1,14 @@
 import * as React from "react";
-import { useIdentityQuery } from "@/shared/api/hooks";
-import { useCommunities } from "@/features/communities/useCommunities";
-import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 import { useActiveTurnSummariesForConversation } from "@/features/agents/activeConversationAgentTurnSummaries";
-import {
-  captureOwnerOperationScope,
-  type OwnerOperationScope,
-} from "@/shared/api/ownerOperations";
-import { invokeTauri } from "@/shared/api/tauri";
-import { normalizeRelayUrl } from "@/shared/lib/normalizeRelayUrl";
 import {
   ThreadSelectedRunControls,
   type ThreadRunSelection,
 } from "./ThreadSelectedRunControls";
-
-type Publication = {
-  status: "accepted" | "unknown" | "not_attempted";
-  message?: string;
-};
+import {
+  threadRunKey,
+  useThreadRunControlPublisher,
+  type ThreadRunCommitment,
+} from "./useThreadRunControlPublisher";
 
 /** Explicit run selection over existing live observer identities and native owner capture. */
 export function ThreadActivityRunControls({
@@ -31,135 +22,35 @@ export function ThreadActivityRunControls({
   conversationId: string;
   agentPubkey: string;
 }) {
-  const viewerPubkey = useIdentityQuery().data?.pubkey ?? "";
-  const relayUrl = normalizeRelayUrl(
-    useCommunities().activeCommunity?.relayUrl ?? "",
-  );
-  const owned = useCurrentOwnedAgentPubkeys(viewerPubkey).has(agentPubkey);
-  const scopeKey = JSON.stringify([
-    relayUrl,
-    viewerPubkey,
+  const publisher = useThreadRunControlPublisher({
     channelId,
     rootEventId,
     conversationId,
     agentPubkey,
-    owned,
-  ]);
-  const epoch = React.useMemo(
-    () => ({ key: scopeKey, current: true }),
-    [scopeKey],
-  );
-  const [native, setNative] = React.useState<{
-    epoch: typeof epoch;
-    token: OwnerOperationScope | null;
-    error?: string;
-  } | null>(null);
+  });
+  const { epoch, token } = publisher;
   const [selected, setSelected] = React.useState<{
     epoch: typeof epoch;
     run: ThreadRunSelection;
-    token: OwnerOperationScope;
+    token: NonNullable<ThreadRunCommitment>["token"];
   } | null>(null);
-  React.useLayoutEffect(() => {
-    epoch.current = true;
-    return () => {
-      epoch.current = false;
-    };
-  }, [epoch]);
-  React.useEffect(() => {
-    if (!owned) return;
-    let current = true;
-    void captureOwnerOperationScope()
-      .then((token) => {
-        if (!current || !epoch.current) return;
-        const expectedOrigin = new URL(relayUrl.replace(/^ws/, "http")).origin;
-        if (
-          token.scope.owner !== viewerPubkey ||
-          token.scope.community !== expectedOrigin
-        ) {
-          setNative({
-            epoch,
-            token: null,
-            error:
-              "Owner or community changed. Reopen Activity to select a run.",
-          });
-        } else setNative({ epoch, token });
-      })
-      .catch(() => {
-        if (current && epoch.current)
-          setNative({
-            epoch,
-            token: null,
-            error: "Run controls are unavailable. Reopen Activity to retry.",
-          });
-      });
-    return () => {
-      current = false;
-    };
-  }, [epoch, owned, relayUrl, viewerPubkey]);
   const summaries = useActiveTurnSummariesForConversation(conversationId);
   const runs =
     summaries.find((entry) => entry.agentPubkey === agentPubkey)?.runs ?? [];
   const chosen = selected?.epoch === epoch ? selected : null;
-  const token = native?.epoch === epoch ? native.token : null;
-  const keyFor = (run: { sessionId: string; turnId: string }) =>
-    JSON.stringify([run.sessionId, run.turnId]);
   const candidates = [
     ...new Map(
       runs
         .filter((run) => run.sessionId && run.turnId)
-        .map((run) => [keyFor(run), run]),
+        .map((run) => [threadRunKey(run), run]),
     ).values(),
   ];
-  const value = chosen ? keyFor(chosen.run) : "";
-  const stillListed = candidates.some((run) => keyFor(run) === value);
-  const publishStop = async (
-    run: ThreadRunSelection,
-    requestId: string,
-  ): Promise<Publication> => {
-    if (!epoch.current || !chosen || keyFor(chosen.run) !== keyFor(run)) {
-      return {
-        status: "not_attempted",
-        message: "The selected run changed before sending.",
-      };
-    }
-    return invokeTauri<Publication>("send_scoped_observer_control", {
-      agentPubkey: run.agentPubkey,
-      expectedScope: chosen.token,
-      payload: {
-        type: "cancel_turn",
-        channelId: run.channelId,
-        conversationId: run.conversationId,
-        turnId: run.turnId,
-        requestId,
-      },
-    });
-  };
-  const publishSteer = async (
-    run: ThreadRunSelection,
-    requestId: string,
-    prompt: string,
-  ): Promise<Publication> => {
-    if (!epoch.current || !chosen || keyFor(chosen.run) !== keyFor(run)) {
-      return {
-        status: "not_attempted",
-        message: "The selected run changed before sending.",
-      };
-    }
-    return invokeTauri<Publication>("send_scoped_observer_control", {
-      agentPubkey: run.agentPubkey,
-      expectedScope: chosen.token,
-      payload: {
-        type: "steer_turn",
-        channelId: run.channelId,
-        conversationId: run.conversationId,
-        sessionId: run.sessionId,
-        turnId: run.turnId,
-        requestId,
-        prompt,
-      },
-    });
-  };
-  if (!owned) return null;
+  const value = chosen ? threadRunKey(chosen.run) : "";
+  const stillListed = candidates.some((run) => threadRunKey(run) === value);
+  const { publishStop, publishSteer } = publisher.publishersFor(
+    chosen ? { run: chosen.run, token: chosen.token } : null,
+  );
+  if (!publisher.owned) return null;
   return (
     <div className="border-b border-border/60 bg-muted/10 p-2">
       <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
@@ -171,7 +62,7 @@ export function ThreadActivityRunControls({
           disabled={!token}
           onChange={(event) => {
             const run = candidates.find(
-              (candidate) => keyFor(candidate) === event.target.value,
+              (candidate) => threadRunKey(candidate) === event.target.value,
             );
             if (!run || !token) {
               setSelected(null);
@@ -180,16 +71,7 @@ export function ThreadActivityRunControls({
             setSelected({
               epoch,
               token,
-              run: Object.freeze({
-                relayUrl,
-                viewerPubkey,
-                channelId,
-                rootEventId,
-                conversationId,
-                agentPubkey,
-                sessionId: run.sessionId,
-                turnId: run.turnId,
-              }),
+              run: publisher.buildSelection(run.sessionId, run.turnId),
             });
           }}
         >
@@ -198,18 +80,18 @@ export function ThreadActivityRunControls({
             <option value={value}>Selected run finished or unavailable</option>
           ) : null}
           {candidates.map((run) => (
-            <option key={keyFor(run)} value={keyFor(run)}>
+            <option key={threadRunKey(run)} value={threadRunKey(run)}>
               Run {run.turnId.slice(0, 8)}
             </option>
           ))}
         </select>
       </label>
-      {native?.epoch === epoch && native.error ? (
+      {publisher.error ? (
         <p
           className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
           role="status"
         >
-          {native.error}
+          {publisher.error}
         </p>
       ) : null}
       <ThreadSelectedRunControls

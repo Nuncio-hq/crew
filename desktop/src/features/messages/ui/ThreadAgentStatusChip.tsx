@@ -31,6 +31,7 @@ import {
 import { mergeOwnedAgentPubkeys } from "@/features/agents/knownAgentPubkeys";
 import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
 import type { ConnectionState } from "@/features/agents/ui/agentSessionTypes";
+import { receiptIsFromUncancelledRun } from "@/features/agents/lib/cancelledRunReceipts";
 
 const MAX_CHIP_AVATARS = 2;
 
@@ -145,19 +146,36 @@ export function buildThreadAgentStatusChipView(
       : outcome?.outcome === "cancelled"
         ? [outcome.agentPubkey]
         : [];
+  // A stop cancels the runs it named, not the thread. An unreviewed receipt
+  // from a run the cancel did not cover is still work waiting on the owner,
+  // and `Stopped` would hide it — the reviewable receipt wins.
+  const reviewableSuccessor =
+    summaries.length === 0 &&
+    outcome?.outcome === "cancelled" &&
+    receipt !== null &&
+    !receipt.reviewed &&
+    receiptIsFromUncancelledRun(receipt, outcome)
+      ? receipt
+      : null;
   const pubkeys =
     summaries.length > 0
       ? summaries.map((summary) => summary.agentPubkey)
-      : cancelledPubkeys.length > 0
-        ? cancelledPubkeys
-        : receipt
-          ? [receipt.agentPubkey]
-          : outcome
-            ? [outcome.agentPubkey]
-            : [];
+      : reviewableSuccessor
+        ? [reviewableSuccessor.agentPubkey]
+        : cancelledPubkeys.length > 0
+          ? cancelledPubkeys
+          : receipt
+            ? [receipt.agentPubkey]
+            : outcome
+              ? [outcome.agentPubkey]
+              : [];
   if (pubkeys.length === 0) return null;
   const { names, displayAgents } = buildAgentSlots(pubkeys, profiles);
-  if (summaries.length === 0 && outcome?.outcome === "cancelled") {
+  if (
+    summaries.length === 0 &&
+    outcome?.outcome === "cancelled" &&
+    !reviewableSuccessor
+  ) {
     const ago = formatCompactAgo(Math.max(0, now - outcome.endedAt));
     return {
       state: "stopped",
@@ -172,7 +190,12 @@ export function buildThreadAgentStatusChipView(
     connectionState,
     needsYou: false,
     now,
-    outcome: summaries.length > 0 ? null : (outcome?.outcome ?? null),
+    // A superseded cancel no longer describes the newest state, and
+    // `cancelled` short-circuits the receipt branch to idle.
+    outcome:
+      summaries.length > 0 || reviewableSuccessor
+        ? null
+        : (outcome?.outcome ?? null),
     receipt,
     turns: summaries.map((summary) => ({
       agentPubkey: summary.agentPubkey,
