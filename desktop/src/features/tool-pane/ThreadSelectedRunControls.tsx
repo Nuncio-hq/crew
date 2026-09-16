@@ -8,9 +8,11 @@ import {
   subscribeActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
 import { subscribeControlResults } from "@/features/agents/controlResultDispatch";
-import { awaitCancelTurnOutcome } from "@/features/agents/lib/cancelTurnOutcome";
 import {
-  ADAPTER_STRICT_STEER_DEADLINE_MS,
+  awaitCancelTurnOutcome,
+  STOP_UI_BUDGET_MS,
+} from "@/features/agents/lib/cancelTurnOutcome";
+import {
   awaitSteerTurnOutcome,
   STEER_PROMPT_MAX_BYTES,
   STEER_UI_BUDGET_MS,
@@ -172,7 +174,7 @@ export function ThreadSelectedRunControls({
           // Unknown delivery still waits for the correlated harness result.
         },
         scheduleTimeout: (onTimeout) => {
-          const timer = setTimeout(onTimeout, ADAPTER_STRICT_STEER_DEADLINE_MS);
+          const timer = setTimeout(onTimeout, STOP_UI_BUDGET_MS);
           const dispose = () => {
             clearTimeout(timer);
             gate.disposers.delete(dispose);

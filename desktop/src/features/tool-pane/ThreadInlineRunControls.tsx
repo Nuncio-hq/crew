@@ -86,7 +86,7 @@ export function ThreadInlineRunControls({
         />
       ) : (
         <>
-          <span>{AGENT_ACTIVITY_CHROME.agentsWorking(runs.length)}</span>
+          <span>{AGENT_ACTIVITY_CHROME.runsWorking(runs.length)}</span>
           <button
             className="inline-flex h-7 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted/70 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             onClick={() => openThreadToolPane("activity")}

@@ -61,12 +61,6 @@ function harness({ runs } = {}) {
     "@/features/agents/conversationId": {
       deriveAgentConversationIdOrNull: () => selection.conversationId,
     },
-    "@/features/agents/ui/agentActivityChrome": {
-      AGENT_ACTIVITY_CHROME: {
-        isWorking: "is working",
-        agentsWorking: (count) => `${count} runs`,
-      },
-    },
     "@/features/agents/activeAgentTurnsStore": {
       walkActiveAgentTurns: (fn) =>
         state.turns.forEach((turn) => {
@@ -145,6 +139,10 @@ function harness({ runs } = {}) {
     });
     return exports;
   }
+  // The real chrome module, so a stub cannot hide wrong copy.
+  deps["@/features/agents/ui/agentActivityChrome"] = load(
+    new URL("../agents/ui/agentActivityChrome.ts", import.meta.url),
+  );
   deps["@/features/agents/lib/cancelTurnOutcome"] = load(
     new URL("../agents/lib/cancelTurnOutcome.ts", import.meta.url),
   );
@@ -237,6 +235,7 @@ test("several live runs point at Activity instead of guessing a target", async (
   const view = render(React.createElement(h.Component, props));
   assert.equal(view.queryByRole("button", { name: "Stop run" }), null);
   assert.match(view.container.textContent, /2 runs/);
+  assert.doesNotMatch(view.container.textContent, /agents? working/);
   await act(async () =>
     view.getByRole("button", { name: "Open Activity" }).click(),
   );

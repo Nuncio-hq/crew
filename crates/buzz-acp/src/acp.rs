@@ -5238,7 +5238,11 @@ done
         session_id: &str,
         turn_id: &str,
         request_id: &str,
-    ) -> (Option<String>, crate::pool::SteerAck) {
+    ) -> (
+        Option<String>,
+        crate::pool::SteerAck,
+        crate::pool::SteerDispatchMarker,
+    ) {
         client.strict_steering_supported = true;
         client.set_observer_context(ObserverContext {
             turn_id: Some(turn_id.to_owned()),
@@ -5247,6 +5251,7 @@ done
         let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
         client.install_steer_rx(steer_rx);
         let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let dispatched = crate::pool::SteerDispatchMarker::default();
         let target = crate::pool::StrictSteerTarget {
             session_id: session_id.to_owned(),
             turn_id: turn_id.to_owned(),
@@ -5257,7 +5262,7 @@ done
                 prompt_blocks: vec!["strict steer body".into()],
                 strict_target: Some(target),
                 ack_tx,
-                dispatched: Default::default(),
+                dispatched: dispatched.clone(),
             })
             .await
             .expect("strict steer send should succeed");
@@ -5268,7 +5273,7 @@ done
             .read_until_response_with_idle_timeout(session_id, 999, idle, hard_deadline, max_dur)
             .await;
         let ack = ack_rx.await.expect("strict steer ack must be received");
-        (std::fs::read_to_string(capture_path).ok(), ack)
+        (std::fs::read_to_string(capture_path).ok(), ack, dispatched)
     }
 
     #[tokio::test]
@@ -5281,8 +5286,11 @@ done
             r#"{{"jsonrpc":"2.0","id":0,"result":{{"requestId":"{request}","turnId":"{turn}","outcome":"appended"}}}}"#
         );
         let mut client = spawn_steer_capture_script(&capture, &response).await;
-        let (written, ack) =
+        let (written, ack, dispatched) =
             run_one_strict_steer(&mut client, &capture, session, turn, request).await;
+        // The marker is what separates "never sent" from "answer lost"; a
+        // written request must always carry it.
+        assert!(dispatched.was_dispatched());
         let written = written.expect("strict steer request must have been written");
         let msg: serde_json::Value =
             serde_json::from_str(&written).expect("strict steer line must be valid JSON");
@@ -5304,12 +5312,34 @@ done
         let request = "44444444-4444-4444-8444-444444444444";
         let response = r#"{"jsonrpc":"2.0","id":0,"result":{"requestId":"wrong","turnId":"wrong","outcome":"appended"}}"#;
         let mut client = spawn_steer_capture_script(&capture, response).await;
-        let (_written, ack) =
+        let (_written, ack, _dispatched) =
             run_one_strict_steer(&mut client, &capture, "session-mismatch", turn, request).await;
         assert!(matches!(
             ack,
             crate::pool::SteerAck::Err(crate::pool::SteerError::StrictResponseMismatch)
         ));
+    }
+
+    #[tokio::test]
+    async fn strict_steer_rejection_carries_the_adapter_message_to_the_operator() {
+        let capture = capture_path("strict_reason");
+        let turn = "55555555-5555-4555-8555-555555555555";
+        let request = "66666666-6666-4666-8666-666666666666";
+        let response = r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32602,"message":"expectedTurnId must be a UUID"}}"#;
+        let mut client = spawn_steer_capture_script(&capture, response).await;
+        let (_written, ack, dispatched) =
+            run_one_strict_steer(&mut client, &capture, "session-reason", turn, request).await;
+        assert!(dispatched.was_dispatched());
+        match ack {
+            crate::pool::SteerAck::Err(crate::pool::SteerError::StrictOutcome {
+                outcome,
+                reason,
+            }) => {
+                assert_eq!(outcome, "rejected");
+                assert_eq!(reason.as_deref(), Some("expectedTurnId must be a UUID"));
+            }
+            other => panic!("strict rejection must carry its reason, got {other:?}"),
+        }
     }
 
     /// Run `initialize` against a script that replies with `init_result` as
@@ -5394,6 +5424,16 @@ done
         assert!(
             supported,
             "strict Activity Steer requires the exact strictTurnTarget capability"
+        );
+
+        // buzz-agent advertises only the strict contract; strict must stay on.
+        let strict_only = strict_steering_supported_after_initialize(
+            r#"{"protocolVersion":2,"_meta":{"steering":{"supported":false,"strictTurnTarget":true}}}"#,
+        )
+        .await;
+        assert!(
+            strict_only,
+            "strict Activity Steer must not depend on the parameterless capability"
         );
 
         let unsupported = strict_steering_supported_after_initialize(

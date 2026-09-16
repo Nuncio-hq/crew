@@ -9,6 +9,8 @@ export const AGENT_ACTIVITY_CHROME = {
   agentsWorking: (count: number) =>
     count === 1 ? "1 agent working" : `${count} agents working`,
   agentsWorkingLabel: "Agents working",
+  /** Counts runs, not agents: one agent can hold several live runs. */
+  runsWorking: (count: number) => (count === 1 ? "1 run" : `${count} runs`),
   viewActivity: "View activity",
   stop: "Stop",
   /** Thread-wide stop: names its scope so it cannot be read as one run. */
