@@ -190,8 +190,6 @@ fn stop_managed_agent_process_with<R: tauri::Runtime, T: FnMut(u32) -> Result<()
     let prior_updated_at = record.updated_at.clone();
     let prior_last_stopped_at = record.last_stopped_at.clone();
     let prior_last_exit_code = record.last_exit_code;
-    let prior_last_error = record.last_error.clone();
-    let prior_last_error_code = record.last_error_code;
     let mut errors = Vec::new();
     for key in keys {
         if let Err(error) = stop_managed_agent_pair(app, record, runtimes, &key, &mut terminate) {
@@ -224,13 +222,16 @@ fn stop_managed_agent_process_with<R: tauri::Runtime, T: FnMut(u32) -> Result<()
         record.updated_at = prior_updated_at;
         record.last_stopped_at = prior_last_stopped_at;
         record.last_exit_code = prior_last_exit_code;
-        record.last_error = prior_last_error.or_else(|| {
-            Some(format!(
-                "failed to stop one or more managed-agent runtimes: {}",
-                errors.join("; ")
-            ))
-        });
-        record.last_error_code = prior_last_error_code;
+        // The stop failure is the newest thing known about this instance and
+        // the one the operator has to act on, so it replaces any older
+        // recorded error. The prior code described that older error; keeping
+        // it beside this message would pair a stale classification with a
+        // fresh cause.
+        record.last_error = Some(format!(
+            "failed to stop one or more managed-agent runtimes: {}",
+            errors.join("; ")
+        ));
+        record.last_error_code = None;
         Err(format!(
             "failed to stop one or more managed-agent runtimes: {}",
             errors.join("; ")

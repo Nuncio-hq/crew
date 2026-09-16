@@ -204,6 +204,7 @@ fn failed_pair_stop_preserves_record_recovery_fields() {
     record.runtime_pid = Some(4242);
     record.last_exit_code = Some(7);
     record.last_error = Some("prior stop error".into());
+    record.last_error_code = Some(7);
     let prior_updated_at = record.updated_at.clone();
     let key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), &record.relay_url)
         .expect("fixture runtime key");
@@ -222,7 +223,18 @@ fn failed_pair_stop_preserves_record_recovery_fields() {
     assert_eq!(record.updated_at, prior_updated_at);
     assert_eq!(record.last_stopped_at, None);
     assert_eq!(record.last_exit_code, Some(7));
-    assert_eq!(record.last_error.as_deref(), Some("prior stop error"));
+    // The newest failure is the one the operator has to act on, so it replaces
+    // the older message, and the code that classified that older message is
+    // cleared with it rather than left describing a different failure.
+    let reported = record
+        .last_error
+        .clone()
+        .expect("a stop failure is recorded");
+    assert!(
+        reported.contains("injected pair stop failure"),
+        "the fresh stop failure must be reported, got: {reported}"
+    );
+    assert_eq!(record.last_error_code, None);
     assert_eq!(runtimes.len(), 1, "failed runtime remains stoppable");
 }
 

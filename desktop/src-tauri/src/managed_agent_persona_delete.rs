@@ -117,8 +117,22 @@ impl PersonaFence {
         }
     }
 
+    /// Compare only the persona's stable identity.
+    ///
+    /// `updated_at` is captured for the durable record but deliberately left
+    /// out of this comparison: it changes on every persona edit, and a fence
+    /// that included it turned one edit made while a coordinator was still
+    /// unresolved into a permanently failing retry — the agent key stayed
+    /// claimed and neither the banner retry nor a re-confirmed delete could
+    /// ever finish. Identity is `id` + `d_tag` + `created_at`; none of them is
+    /// writable by a persona edit, so they still prove this is the same record
+    /// and that the tombstone coordinate has not moved. The deletion
+    /// preconditions are re-checked against the current record at finalize.
     fn matches(&self, persona: &crate::managed_agents::AgentDefinition) -> bool {
-        self == &Self::capture(persona)
+        let current = Self::capture(persona);
+        self.id == current.id
+            && self.d_tag == current.d_tag
+            && self.created_at == current.created_at
     }
 }
 
@@ -653,6 +667,55 @@ fn build_persona_cascade_payload(
     Ok((parent, children))
 }
 
+/// Retire a completed coordinator and its completed children so a recycled
+/// persona id can be deleted again through a fresh journal set.
+///
+/// Only terminal records are retired. A child that is still unresolved under a
+/// reconciled parent is a durable inconsistency, not something to clean up
+/// silently: it still owns a global instance claim, so it fails closed and the
+/// operator finishes that cleanup from the recovery surface first.
+fn supersede_reconciled_cascade<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    token: &OwnerScopeToken,
+    operation: &Operation,
+) -> Result<(), String> {
+    let payload: Payload = serde_json::from_value(operation.payload.clone())
+        .map_err(|_| "invalid persona deletion coordinator record")?;
+    let cascade = payload
+        .cascade
+        .ok_or_else(|| "persona deletion coordinator record has no cascade".to_string())?;
+    let mut journal = open_journal_store(app)?;
+    for target in &cascade.targets {
+        let Some(child) = load_scope_operation(app, token, &target.operation_id)? else {
+            continue;
+        };
+        if !child.reconciled {
+            return Err(
+                "the previous deletion of this persona has unfinished agent cleanup; \
+                 retry that cleanup before deleting again"
+                    .into(),
+            );
+        }
+        remove_terminal_operation(&mut journal, token, &child.id, child.revision)?;
+    }
+    remove_terminal_operation(&mut journal, token, &operation.id, operation.revision)
+}
+
+/// Remove one reconciled journal row, tolerating a concurrent removal.
+fn remove_terminal_operation(
+    journal: &mut crate::owner_operations::OperationStore,
+    token: &OwnerScopeToken,
+    operation_id: &str,
+    revision: u64,
+) -> Result<(), String> {
+    match journal.remove_reconciled(&token.scope, operation_id, revision) {
+        // A second delete of the same recycled persona may have retired the
+        // record already; the outcome we need is the same either way.
+        Ok(()) | Err(crate::owner_operations::StoreError::Missing) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 async fn begin_persona_cascade<R: tauri::Runtime>(
     app: &AppHandle<R>,
     token: OwnerScopeToken,
@@ -660,6 +723,7 @@ async fn begin_persona_cascade<R: tauri::Runtime>(
 ) -> Result<Operation, String> {
     assert_current(app.clone(), &token).await?;
     let parent_id = persona_cascade_operation_id(persona_id);
+    let mut superseded: Option<Operation> = None;
     if let Some(existing) = load_scope_operation(app, &token, &parent_id)? {
         if existing.kind != OperationKind::ManagedAgentDelete {
             return Err("persona deletion coordinator has an incompatible journal record".into());
@@ -673,10 +737,24 @@ async fn begin_persona_cascade<R: tauri::Runtime>(
         if cascade.persona.id != persona_id {
             return Err("persona deletion coordinator belongs to another persona".into());
         }
-        return Ok(existing);
+        if !existing.reconciled {
+            return Ok(existing);
+        }
+        // A reconciled coordinator carries a durable witness that the persona
+        // it froze was removed. A persona present under that id now is a
+        // different record — an inbound import reuses its `d` tag as the local
+        // id, so ids are recycled — and resuming the terminal coordinator
+        // would report a clean deletion while deleting nothing. Retire the
+        // terminal record set first so this deletion gets its own journal.
+        // The snapshot runs before any removal so a missing or undeletable
+        // persona cannot cost the journal its completed history.
+        superseded = Some(existing);
     }
 
     let (persona, records) = persona_snapshot(app, persona_id)?;
+    if let Some(existing) = superseded {
+        supersede_reconciled_cascade(app, &token, &existing)?;
+    }
     for record in &records {
         validate_delete_target(record, false)?;
     }
@@ -790,3 +868,7 @@ pub(crate) async fn delete_persona<R: tauri::Runtime>(
 #[cfg(all(test, unix))]
 #[path = "managed_agent_persona_delete_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "managed_agent_persona_delete_reuse_tests.rs"]
+mod reuse_tests;
