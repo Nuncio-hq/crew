@@ -518,3 +518,219 @@ fn production_linked_child_receipt_failure_persists_cascade_and_fresh_recovery_f
         );
     });
 }
+
+/// The macOS keychain can refuse a delete without proving the item is absent:
+/// an ACL/code-signature mismatch, a locked keychain, or a session that cannot
+/// show the unlock prompt all surface as `keyring unavailable` rather than
+/// "not found". Absence is unverifiable in that state, so the cascade must stop
+/// with a durable, retryable record instead of reporting a clean offboarding —
+/// and a later manual retry, once the keychain is reachable, must finish it.
+#[test]
+fn production_cascade_unreachable_keyring_stays_retryable_then_manual_retry_finishes() {
+    let _path_guard = managed_agents::lock_path_mutex();
+    let temp = tempfile::tempdir().expect("temporary app-data root");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).expect("temporary home");
+    let _env_guard = HomeGuard {
+        home: std::env::var_os("HOME"),
+        xdg_data_home: std::env::var_os("XDG_DATA_HOME"),
+    };
+    std::env::set_var("HOME", &home);
+    std::env::set_var("XDG_DATA_HOME", &home);
+
+    let owner_keys = nostr::Keys::generate();
+    let identifier = format!(
+        "xyz.nuncio.crew.persona-keyring-seam-{}",
+        uuid::Uuid::new_v4().simple()
+    );
+    let app = mock_app_with(identifier.clone(), Some(owner_keys.clone()));
+    let persona = persona();
+    managed_agents::save_personas(app.handle(), std::slice::from_ref(&persona))
+        .expect("persist linked persona fixture");
+
+    let pubkey = nostr::Keys::generate().public_key().to_hex();
+    let mut record = persona.clone().into_agent_record();
+    record.pubkey = pubkey.clone();
+    record.persona_id = Some(persona.id.clone());
+    record.relay_url = RELAY.into();
+    record.acp_command = "buzz-acp".into();
+    record.agent_command = "goose".into();
+    managed_agents::save_managed_agents(app.handle(), std::slice::from_ref(&record))
+        .expect("persist linked managed-agent fixture");
+
+    // The exact string the platform store returns when the keychain is
+    // reachable-but-refusing; `errSecItemNotFound` maps to a clean success and
+    // must not be confused with it.
+    let unavailable = "keyring unavailable: Platform secure storage failure: \
+                       SecKeychainItemDelete: interaction is not allowed";
+
+    tauri::async_runtime::block_on(async {
+        let token = capture(app.handle().clone())
+            .await
+            .expect("capture cascade owner/workspace scope")
+            .token;
+        let target_payload = Payload::new(RecordFence::capture(&record), Vec::new(), &pubkey)
+            .expect("build linked child payload");
+        let parent_id = persona_cascade_operation_id(&persona.id);
+        let (parent_payload, children) = build_persona_cascade_payload(
+            &persona,
+            &parent_id,
+            std::slice::from_ref(&target_payload),
+        )
+        .expect("build production persona cascade payload");
+        let parent = NewOperation {
+            id: parent_id.clone(),
+            kind: OperationKind::ManagedAgentDelete,
+            resource_key: parent_payload.fence.pubkey.clone(),
+            payload: serde_json::to_value(parent_payload).expect("encode cascade coordinator"),
+        };
+        let child_id = children
+            .first()
+            .expect("production cascade must prepare one child")
+            .id
+            .clone();
+        let mut operations = Vec::with_capacity(children.len() + 1);
+        operations.push(parent);
+        operations.extend(children);
+        let mut journal = crate::managed_agent_delete::open_journal_store(app.handle())
+            .expect("open production cascade journal");
+        let committed = journal
+            .create_managed_agent_delete_batch(
+                &token.scope,
+                operations,
+                native_now().expect("clock"),
+            )
+            .expect("atomically reserve parent and child operations");
+        let operation = committed
+            .into_iter()
+            .find(|candidate| candidate.id == parent_id)
+            .expect("load committed cascade coordinator");
+        drop(journal);
+
+        let failing_key_delete =
+            managed_agents::install_test_agent_key_delete(&pubkey, Err(unavailable.to_string()));
+        let first_attempt = resume_persona_cascade(
+            app.handle().clone(),
+            token.clone(),
+            operation.clone(),
+            false,
+        )
+        .await;
+        let first_error = first_attempt.expect_err("an unreachable keyring must propagate");
+        assert!(
+            first_error.starts_with("agent removed; key cleanup pending:"),
+            "the cascade must report pending key cleanup, got: {first_error}"
+        );
+        assert!(
+            first_error.contains("keyring unavailable"),
+            "the operator-facing error must name the platform cause, got: {first_error}"
+        );
+        assert_eq!(
+            failing_key_delete.calls(),
+            1,
+            "the cascade must call the production credential seam exactly once"
+        );
+
+        let journal = crate::managed_agent_delete::open_journal_store(app.handle())
+            .expect("reopen failed cascade journal");
+        let failed_parent = journal
+            .load(&operation.scope, &operation.id)
+            .expect("load failed cascade coordinator");
+        let failed_parent_payload: Payload = serde_json::from_value(failed_parent.payload.clone())
+            .expect("decode failed cascade coordinator");
+        let failed_child = journal
+            .load(&operation.scope, &child_id)
+            .expect("load failed cascade child");
+        let failed_child_payload: Payload = serde_json::from_value(failed_child.payload.clone())
+            .expect("decode failed cascade child");
+        assert_eq!(failed_parent.status, OperationStatus::Failed);
+        assert!(!failed_parent.reconciled);
+        assert_eq!(failed_child.status, OperationStatus::Failed);
+        assert!(!failed_child.reconciled);
+        assert!(
+            failed_child_payload.local_removed,
+            "the local record commit precedes key cleanup"
+        );
+        assert!(
+            !failed_child_payload.key_removed,
+            "an unverifiable key must never be recorded as removed"
+        );
+        assert!(
+            !failed_child_payload.tombstone_enqueued,
+            "the relay tombstone must wait behind key cleanup"
+        );
+        assert!(failed_child_payload.failures > 0);
+        assert_eq!(
+            failed_child_payload.last_error.as_deref(),
+            Some(unavailable),
+            "the durable record must keep the platform cause for the operator"
+        );
+        let failed_cascade = failed_parent_payload
+            .cascade
+            .as_ref()
+            .expect("failed coordinator cascade payload");
+        assert!(!failed_cascade.persona_removed);
+        assert!(!failed_cascade.targets[0].settled);
+        assert!(
+            pending_in_store(&journal, &pubkey).expect("inspect unresolved child claim"),
+            "the operation must stay claimed so recovery can retry it"
+        );
+        drop(journal);
+        assert!(
+            managed_agents::load_personas(app.handle())
+                .expect("load retained persona")
+                .iter()
+                .any(|candidate| candidate.id == persona.id),
+            "pending key cleanup must retain the persona definition"
+        );
+
+        // The coordinator is the single retry affordance the recovery surface
+        // exposes for a cascade; the child is driven from it.
+        assert!(
+            crate::managed_agent_delete::open_journal_store(app.handle())
+                .expect("open recovery listing journal")
+                .list_managed_agent_deletions()
+                .expect("list unresolved deletions")
+                .iter()
+                .any(|summary| summary.id == parent_id),
+            "a failed cascade must remain retryable from the recovery surface"
+        );
+
+        drop(failing_key_delete);
+        let key_delete = managed_agents::install_test_agent_key_delete(&pubkey, Ok(()));
+        resume_persona_cascade(app.handle().clone(), token.clone(), failed_parent, true)
+            .await
+            .expect("manual retry with a reachable keyring must finish the cascade");
+        assert_eq!(
+            key_delete.calls(),
+            1,
+            "manual retry must re-attempt the same credential cleanup"
+        );
+
+        let journal = crate::managed_agent_delete::open_journal_store(app.handle())
+            .expect("open recovered cascade journal");
+        let completed_parent = journal
+            .load(&operation.scope, &operation.id)
+            .expect("load completed cascade coordinator");
+        let completed_child_payload: Payload = serde_json::from_value(
+            journal
+                .load(&operation.scope, &child_id)
+                .expect("load completed cascade child")
+                .payload,
+        )
+        .expect("decode completed cascade child");
+        assert_eq!(completed_parent.status, OperationStatus::Complete);
+        assert!(completed_parent.reconciled);
+        assert!(completed_child_payload.key_removed);
+        assert!(completed_child_payload.tombstone_enqueued);
+        assert!(!pending_in_store(&journal, &pubkey).expect("inspect completed child claim"));
+        drop(journal);
+        assert!(
+            managed_agents::load_personas(app.handle())
+                .expect("load removed persona store")
+                .iter()
+                .all(|candidate| candidate.id != persona.id),
+            "a completed cascade must remove the persona definition"
+        );
+    });
+}
