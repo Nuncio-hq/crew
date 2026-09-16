@@ -1,8 +1,8 @@
 import * as React from "react";
 import { useReducedMotion } from "motion/react";
 import { AGENT_ACTIVITY_CHROME } from "@/features/agents/ui/agentActivityChrome";
-import { useRecentOutcomeForConversation } from "@/features/agents/recentConversationOutcomes";
 import { useComposerAgentStop } from "@/features/channels/ui/useComposerAgentStop";
+import { useThreadComposerFocus } from "@/features/messages/lib/threadComposerFocusRegistry";
 import { THREAD_PANEL_MESSAGE_GUTTER_CLASS } from "@/features/messages/lib/messageThreadPanelLayout";
 import { ThreadSelectedRunControls } from "@/features/tool-pane/ThreadSelectedRunControls";
 import { openThreadToolPane } from "@/features/tool-pane/toolPaneStore";
@@ -32,16 +32,16 @@ export function LiveJobDesk({
   threadRootId: string;
 }) {
   const desk = useLiveJobDesk({ channelId, threadRootId });
-  const outcome = useRecentOutcomeForConversation(desk.conversationId);
   const only = desk.runs.length === 1 ? desk.runs[0] : null;
   // The strip vanishes the instant the run ends, taking its Stop confirmation
   // with it. Leave the run's own terminal outcome in its place for a bounded
-  // window so the operator sees that the stop actually landed.
+  // window so the operator sees the ledger's cancelled outcome — an operator
+  // Stop, or a harness teardown that cancelled the run out from under it.
   if (!desk.show)
-    return outcome?.outcome === "cancelled" ? (
+    return desk.outcome?.outcome === "cancelled" ? (
       <StoppedRunTrace
-        endedAt={outcome.endedAt}
-        name={desk.nameFor(outcome.agentPubkey)}
+        endedAt={desk.outcome.endedAt}
+        name={desk.nameFor(desk.outcome.agentPubkey)}
       />
     ) : null;
   if (only && desk.conversationId) {
@@ -80,6 +80,7 @@ export function LiveJobDesk({
           conversationId={desk.conversationId}
           name={desk.targetName}
           pubkey={desk.targetPubkey}
+          threadRootId={threadRootId}
         />
       )}
     </DeskRow>
@@ -123,24 +124,27 @@ function AgentScopedControls({
   conversationId,
   name,
   pubkey,
+  threadRootId,
 }: {
   channelId: string;
   conversationId: string | null;
   name: string;
   pubkey: string | null;
+  threadRootId: string;
 }) {
   const { stopAgent } = useComposerAgentStop({ channelId, conversationId });
+  // The composer registers its own focus function under this thread's root
+  // id (see `threadComposerFocusRegistry`); no entry means no composer is
+  // mounted for this thread, so Steer is disabled rather than a silent
+  // no-op against a stale or absent DOM selector.
+  const focusComposer = useThreadComposerFocus(threadRootId);
   return (
     <>
       <DeskText>{AGENT_ACTIVITY_CHROME.agentWorkingHint(name)}</DeskText>
       <Button
         data-testid="live-job-desk-steer"
-        onClick={() => {
-          const editor = document.querySelector(
-            "[data-testid='thread-composer-overlay'] [contenteditable='true']",
-          );
-          if (editor instanceof HTMLElement) editor.focus();
-        }}
+        disabled={!focusComposer}
+        onClick={() => focusComposer?.()}
         size="sm"
         type="button"
         variant="ghost"
@@ -206,6 +210,7 @@ function SingleRunDesk({
           conversationId={conversationId}
           name={fallbackName}
           pubkey={fallbackPubkey}
+          threadRootId={threadRootId}
         />
       </DeskRow>
     );
@@ -285,6 +290,7 @@ function StoppedRunTrace({ endedAt, name }: { endedAt: number; name: string }) {
             phase === "fading" ? "opacity-0" : "opacity-100",
           )}
           data-testid="live-job-desk-stopped"
+          role="status"
         >
           {name} · {AGENT_ACTIVITY_CHROME.runStopped}
         </span>

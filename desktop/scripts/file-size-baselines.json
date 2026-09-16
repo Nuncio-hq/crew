@@ -12,9 +12,9 @@
       "recordedAt": "2026-08-23"
     },
     "src/features/messages/ui/MessageComposer.tsx": {
-      "lines": 1038,
-      "reason": "Upstream desktop-v0.5.23 is 1012 lines (composer-revision draft model #7124/#7133); Crew keeps ComposerUploadProgressOverlay, suppressLinkPreviews and removedMentionPubkeys edit forwarding (+27).",
-      "recordedAt": "2026-09-07"
+      "lines": 1043,
+      "reason": "Upstream desktop-v0.5.23 is 1012 lines (composer-revision draft model #7124/#7133); Crew keeps ComposerUploadProgressOverlay, suppressLinkPreviews and removedMentionPubkeys edit forwarding (+27); +5 to register the thread composer's focus function under its threadRootId (issue #354) — the registry and hook body are extracted to threadComposerFocusRegistry.ts and useThreadComposerFocusRegistration.ts per D-022, leaving only the wiring call in this file.",
+      "recordedAt": "2026-09-17"
     },
     "src/features/messages/ui/MessageRow.tsx": {
       "lines": 1008,

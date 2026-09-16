@@ -187,7 +187,13 @@ async function choose(view, fireEvent, waitFor) {
   const picker = view.getByRole("combobox", { name: "Activity live run" });
   await waitFor(() => assert.equal(picker.disabled, false));
   fireEvent.change(picker, {
-    target: { value: JSON.stringify([selection.sessionId, selection.turnId]) },
+    target: {
+      value: JSON.stringify([
+        selection.agentPubkey,
+        selection.sessionId,
+        selection.turnId,
+      ]),
+    },
   });
 }
 test("actual Activity requires explicit run choice and sends exact native scoped Stop", async () => {
@@ -265,7 +271,11 @@ test("replacing live run preserves old selection and cannot target successor", a
   assert.equal(view.queryByRole("button", { name: "Stop selected run" }), null);
   assert.equal(
     view.getByRole("combobox", { name: "Activity live run" }).value,
-    JSON.stringify([selection.sessionId, selection.turnId]),
+    JSON.stringify([
+      selection.agentPubkey,
+      selection.sessionId,
+      selection.turnId,
+    ]),
   );
   assert.equal(h.state.sends.length, 0);
 });
@@ -335,7 +345,13 @@ test("a draft composed for one run is never carried to the run selected next", a
   const picker = view.getByRole("combobox", { name: "Activity live run" });
   await act(async () =>
     fireEvent.change(picker, {
-      target: { value: JSON.stringify([second.sessionId, second.turnId]) },
+      target: {
+        value: JSON.stringify([
+          second.agentPubkey,
+          second.sessionId,
+          second.turnId,
+        ]),
+      },
     }),
   );
   const swapped = view.getByRole("textbox", { name: "Steer selected run" });

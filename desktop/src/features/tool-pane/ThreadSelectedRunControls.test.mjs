@@ -699,6 +699,135 @@ test("Escape in the Activity steer input closes nothing and keeps the panel", as
   }
 });
 
+/**
+ * Compact mode (LiveJobDesk) keeps the steer input behind a "Steer run"
+ * disclosure. After clicking the toggle, focus stays on the toggle button —
+ * not the textarea — so Escape there must still close the disclosure and
+ * refocus the toggle instead of falling through to an ancestor (the thread
+ * drawer) and closing the whole thread.
+ */
+test("Escape on the compact toggle closes only the disclosure and refocuses it", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const h = harness();
+  const escapeSurfaces = loadEscapeSurfaces();
+  let closes = 0;
+  const handler = (event) => {
+    if (event.key !== "Escape") return;
+    if (escapeSurfaces.escapeIsClaimedByNestedOwner(event.target)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closes++;
+  };
+  dom.window.addEventListener("keydown", handler, { capture: true });
+  try {
+    const view = render(
+      React.createElement(h.Component, {
+        selection,
+        publishStop: h.publishStop,
+        publishSteer: h.publishSteer,
+        compact: true,
+      }),
+    );
+    const toggle = view.getByRole("button", { name: "Steer run" });
+    await act(async () => toggle.click());
+    assert.ok(view.getByRole("textbox", { name: "Steer this run" }));
+    toggle.focus();
+    assert.equal(document.activeElement, toggle);
+
+    await act(async () =>
+      toggle.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    assert.equal(
+      closes,
+      0,
+      "the disclosure's Escape owner must keep the key from the drawer",
+    );
+    assert.equal(
+      view.queryByRole("textbox", { name: "Steer this run" }),
+      null,
+      "the disclosure closes",
+    );
+    assert.equal(document.activeElement, toggle, "focus returns to Steer run");
+
+    await act(async () =>
+      toggle.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    assert.equal(
+      closes,
+      1,
+      "with the disclosure closed, Escape falls through to the drawer",
+    );
+  } finally {
+    dom.window.removeEventListener("keydown", handler, true);
+  }
+});
+
+test("a modified Escape still closes the compact disclosure", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+      compact: true,
+    }),
+  );
+  await act(async () =>
+    view.getByRole("button", { name: "Steer run" }).click(),
+  );
+  const textbox = view.getByRole("textbox", { name: "Steer this run" });
+  await act(async () =>
+    textbox.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        key: "Escape",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  assert.equal(
+    view.queryByRole("textbox", { name: "Steer this run" }),
+    null,
+    "a modified Escape closes the disclosure just like a bare one",
+  );
+});
+
+test("Enter still sends from the compact textarea; Enter on the toggle does nothing", async () => {
+  const { render, act, fireEvent } = await import("@testing-library/react");
+  const h = harness();
+  const view = render(
+    React.createElement(h.Component, {
+      selection,
+      publishStop: h.publishStop,
+      publishSteer: h.publishSteer,
+      compact: true,
+    }),
+  );
+  const toggle = view.getByRole("button", { name: "Steer run" });
+  await act(async () => toggle.click());
+  await act(async () => fireEvent.keyDown(toggle, { key: "Enter" }));
+  assert.equal(h.state.sends.length, 0, "Enter on the toggle does not send");
+  const textbox = view.getByRole("textbox", { name: "Steer this run" });
+  fireEvent.change(textbox, { target: { value: "go" } });
+  await act(async () => fireEvent.keyDown(textbox, { key: "Enter" }));
+  assert.equal(h.state.sends.length, 1);
+  assert.equal(h.state.sends[0].prompt, "go");
+});
+
 function loadEscapeSurfaces() {
   const source = ts.transpileModule(
     fs.readFileSync(

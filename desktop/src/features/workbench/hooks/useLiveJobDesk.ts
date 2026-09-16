@@ -6,6 +6,7 @@ import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { useActiveTurnSummariesForConversation } from "@/features/agents/activeConversationAgentTurnSummaries";
+import { useRecentOutcomeForConversation } from "@/features/agents/recentConversationOutcomes";
 import {
   collectLiveJobSignals,
   liveRunsForThread,
@@ -52,7 +53,14 @@ export function useLiveJobDesk(args: {
     [activeAgentPubkeys.length, missionRow?.status, pendingOnThread.length],
   );
   const show = shouldShowLiveJobDesk(signals);
-  const managedAgents = useManagedAgentsQuery({ enabled: show }).data ?? [];
+  const outcome = useRecentOutcomeForConversation(conversationId);
+  // A cold mount into a just-cancelled thread renders StoppedRunTrace
+  // (`!show`) before it renders the strip, so the agent-name lookup must stay
+  // enabled through that trace window too — otherwise the trace reads the
+  // empty managed-agents cache and falls back to the generic "Agent" name.
+  const managedAgents =
+    useManagedAgentsQuery({ enabled: show || outcome?.outcome === "cancelled" })
+      .data ?? [];
   const targetPubkey = React.useMemo(() => {
     if (activeAgentPubkeys[0]) return normalizePubkey(activeAgentPubkeys[0]);
     const pendingPubkey = pendingOnThread[0]?.event.pubkey;
@@ -89,6 +97,7 @@ export function useLiveJobDesk(args: {
   return {
     conversationId,
     nameFor,
+    outcome,
     runs,
     show,
     targetName,

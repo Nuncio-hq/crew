@@ -22,12 +22,19 @@ export type ThreadRunCommitment = {
   token: OwnerOperationScope;
 } | null;
 
-/** Stable identity of one live run within its conversation. */
+/**
+ * Stable identity of one live run within its conversation.
+ *
+ * Includes the agent: `liveRunsForThread` allows two different agents to
+ * report the same session and turn id, and a key that omitted the agent
+ * would collapse those into one identity.
+ */
 export function threadRunKey(run: {
+  agentPubkey: string;
   sessionId: string;
   turnId: string;
 }): string {
-  return JSON.stringify([run.sessionId, run.turnId]);
+  return JSON.stringify([run.agentPubkey, run.sessionId, run.turnId]);
 }
 
 /**
@@ -130,16 +137,19 @@ export function useThreadRunControlPublisher({
   /**
    * Publishers bound to exactly one committed run.
    *
-   * The commitment is rechecked at send time: a run that was replaced while
-   * the request was being composed must never receive a successor's control.
+   * Staleness is already fenced before a send can reach here: the caller
+   * remounts `ThreadSelectedRunControls` under a `key={threadRunKey(run)}`
+   * when the committed run changes (so a stale closure cannot even render
+   * its send handler), `eligible()` re-reads `isLive(target)` at click time,
+   * and the native call is scoped by `expectedScope`. What this guard alone
+   * still owns is the epoch: `committed` and `run` are read from the same
+   * render here, so they can never disagree — only `epoch.current` going
+   * false (viewer/relay/scope change while the request was in flight) can
+   * turn a send into `not_attempted`.
    */
   const publishersFor = (committed: ThreadRunCommitment) => {
-    const guard = (run: ThreadRunSelection): ThreadRunPublication | null => {
-      if (
-        !epoch.current ||
-        !committed ||
-        threadRunKey(committed.run) !== threadRunKey(run)
-      ) {
+    const guard = (): ThreadRunPublication | null => {
+      if (!epoch.current || !committed) {
         return {
           status: "not_attempted",
           message: "The selected run changed before sending.",
@@ -152,7 +162,7 @@ export function useThreadRunControlPublisher({
         run: ThreadRunSelection,
         requestId: string,
       ): Promise<ThreadRunPublication> => {
-        const blocked = guard(run);
+        const blocked = guard();
         if (blocked || !committed)
           return blocked ?? { status: "not_attempted" };
         return invokeTauri<ThreadRunPublication>(
@@ -175,7 +185,7 @@ export function useThreadRunControlPublisher({
         requestId: string,
         prompt: string,
       ): Promise<ThreadRunPublication> => {
-        const blocked = guard(run);
+        const blocked = guard();
         if (blocked || !committed)
           return blocked ?? { status: "not_attempted" };
         return invokeTauri<ThreadRunPublication>(

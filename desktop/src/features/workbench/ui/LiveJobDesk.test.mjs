@@ -119,6 +119,7 @@ function harness({
       useLiveJobDesk: () => ({
         conversationId: selection.conversationId,
         nameFor: () => "Worker",
+        outcome: state.outcome ?? null,
         runs: state.turns.map((turn) => ({
           agentPubkey: turn.agentPubkey,
           sessionId: turn.sessionId,
@@ -129,6 +130,9 @@ function harness({
         targetName: "Worker",
         targetPubkey: selection.agentPubkey,
       }),
+    },
+    "@/features/messages/lib/threadComposerFocusRegistry": {
+      useThreadComposerFocus: () => state.focusComposer ?? null,
     },
   };
   function load(path) {
@@ -363,6 +367,22 @@ test("a stopped run leaves a bounded neutral trace where the strip was", async (
   await act(async () => {});
 });
 
+test("the stopped trace is a polite live region", async () => {
+  const { render } = await import("@testing-library/react");
+  const h = harness({
+    show: false,
+    reduceMotion: true,
+    outcome: {
+      outcome: "cancelled",
+      agentPubkey: selection.agentPubkey,
+      endedAt: Date.now(),
+      channelId: selection.channelId,
+    },
+  });
+  const view = render(React.createElement(h.Component, props));
+  assert.match(view.getByRole("status").textContent, /Worker · Run stopped/);
+});
+
 test("a completed run leaves no stopped trace", async () => {
   const { render } = await import("@testing-library/react");
   const h = harness({
@@ -404,6 +424,26 @@ test("no known run identity keeps the honest agent-scoped strip", async () => {
   await act(async () => view.getByTestId("live-job-desk-stop").click());
   assert.equal(h.state.stops.length, 1);
   assert.equal(h.state.sends.length, 0);
+});
+
+test("agent-scoped Steer is disabled with no composer registered, and focuses the registered one", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const h = harness({ runs: [] });
+  const view = render(React.createElement(h.Component, props));
+  const steer = view.getByTestId("live-job-desk-steer");
+  assert.equal(
+    steer.disabled,
+    true,
+    "no composer registered for this thread yet",
+  );
+  let focused = 0;
+  h.state.focusComposer = () => {
+    focused++;
+  };
+  view.rerender(React.createElement(h.Component, props));
+  assert.equal(view.getByTestId("live-job-desk-steer").disabled, false);
+  await act(async () => view.getByTestId("live-job-desk-steer").click());
+  assert.equal(focused, 1);
 });
 
 test("several live runs point at Activity instead of guessing a target", async () => {

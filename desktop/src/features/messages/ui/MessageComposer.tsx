@@ -24,6 +24,7 @@ import {
   takeQueuedAttachmentsForDraft,
 } from "@/features/messages/lib/backgroundMediaUploadStore";
 import { useComposerFocusOwnership } from "@/features/messages/lib/useComposerFocusOwnership";
+import { useThreadComposerFocusRegistration } from "@/features/messages/lib/useThreadComposerFocusRegistration";
 import { isMentionCodeContext } from "@/features/messages/lib/mentionCodeContext";
 import { useMentions } from "@/features/messages/lib/useMentions";
 import { getPersistentAgentAudienceScope } from "@/features/messages/lib/persistentAgentAudience";
@@ -324,6 +325,10 @@ function MessageComposerImpl({
   onLinkSelectionChangeRef.current = linkEditor.showFromCursor;
   onLinkShortcutRef.current = linkEditor.openFromShortcut;
   useComposerSpoilerParticles(richText.editor, composerScrollRef);
+  useThreadComposerFocusRegistration(
+    audienceContext?.threadRootId ?? null,
+    richText.focus,
+  );
   const { audience: persistentAudience, keepMentionedAgentsPinned } =
     useThreadAgentAudience({
       isAgentPubkey: mentions.isAgentPubkey,

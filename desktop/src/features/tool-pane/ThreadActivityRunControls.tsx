@@ -38,15 +38,17 @@ export function ThreadActivityRunControls({
   const runs =
     summaries.find((entry) => entry.agentPubkey === agentPubkey)?.runs ?? [];
   const chosen = selected?.epoch === epoch ? selected : null;
+  const keyOf = (run: { sessionId: string; turnId: string }) =>
+    threadRunKey({ agentPubkey, sessionId: run.sessionId, turnId: run.turnId });
   const candidates = [
     ...new Map(
       runs
         .filter((run) => run.sessionId && run.turnId)
-        .map((run) => [threadRunKey(run), run]),
+        .map((run) => [keyOf(run), run]),
     ).values(),
   ];
   const value = chosen ? threadRunKey(chosen.run) : "";
-  const stillListed = candidates.some((run) => threadRunKey(run) === value);
+  const stillListed = candidates.some((run) => keyOf(run) === value);
   const { publishStop, publishSteer } = publisher.publishersFor(
     chosen ? { run: chosen.run, token: chosen.token } : null,
   );
@@ -62,7 +64,7 @@ export function ThreadActivityRunControls({
           disabled={!token}
           onChange={(event) => {
             const run = candidates.find(
-              (candidate) => threadRunKey(candidate) === event.target.value,
+              (candidate) => keyOf(candidate) === event.target.value,
             );
             if (!run || !token) {
               setSelected(null);
@@ -80,7 +82,7 @@ export function ThreadActivityRunControls({
             <option value={value}>Selected run finished or unavailable</option>
           ) : null}
           {candidates.map((run) => (
-            <option key={threadRunKey(run)} value={threadRunKey(run)}>
+            <option key={keyOf(run)} value={keyOf(run)}>
               Run {run.turnId.slice(0, 8)}
             </option>
           ))}

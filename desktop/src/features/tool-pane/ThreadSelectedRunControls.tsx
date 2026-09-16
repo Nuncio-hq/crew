@@ -308,16 +308,21 @@ export function ThreadSelectedRunControls({
   );
   React.useLayoutEffect(() => {
     steerKeyHandler.current = (event: KeyboardEvent) => {
-      if (event.isComposing || event.altKey || event.metaKey || event.ctrlKey)
-        return;
+      // Escape closes the disclosure regardless of modifiers: a modified
+      // Escape must not fall through to the drawer's capture listener and
+      // close the whole thread out from under an in-progress draft.
       if (event.key === "Escape") {
-        // Claim Escape even when there is no disclosure to close: the
-        // surfaces above (thread drawer, thread panel) must not read a
-        // dismissal aimed at this input as "close the thread".
+        if (compact) return;
+        // The non-compact Activity input has no disclosure to dismiss, but
+        // it must still claim Escape so the surfaces above it (thread
+        // drawer, thread panel) do not read the dismissal as "close the
+        // thread".
         event.preventDefault();
         closeSteerInput();
         return;
       }
+      if (event.isComposing || event.altKey || event.metaKey || event.ctrlKey)
+        return;
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         void steer();
@@ -334,6 +339,30 @@ export function ThreadSelectedRunControls({
     },
     [],
   );
+  // The compact disclosure's Escape owner spans the whole open block (toggle
+  // + label + textarea + counter + Send steer): after clicking "Steer run"
+  // focus stays on the toggle, so Escape there must still close the
+  // disclosure and refocus the toggle instead of falling through to the
+  // drawer's capture listener and closing the whole thread.
+  const disclosureKeyHandler = React.useRef<(event: KeyboardEvent) => void>(
+    () => {},
+  );
+  React.useLayoutEffect(() => {
+    disclosureKeyHandler.current = (event: KeyboardEvent) => {
+      if (event.isComposing) return;
+      if (event.key !== "Escape") return;
+      if (!compact || !steerOpen) return;
+      event.preventDefault();
+      closeSteerInput();
+    };
+  });
+  const attachDisclosure = React.useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const onKeyDown = (event: KeyboardEvent) =>
+      disclosureKeyHandler.current(event);
+    node.addEventListener("keydown", onKeyDown);
+    return () => node.removeEventListener("keydown", onKeyDown);
+  }, []);
   return (
     <div
       className={
@@ -348,6 +377,13 @@ export function ThreadSelectedRunControls({
             ? "flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
             : "flex flex-col gap-2 p-2"
       }
+      // Escape owner spans the toggle, label, textarea, counter and Send
+      // steer: focus lands on the toggle after opening the disclosure, so
+      // ownership must not be scoped to the textarea alone.
+      {...(compact && steerOpen && publishSteer
+        ? { [ESCAPE_OWNER_ATTRIBUTE]: "steer-disclosure" }
+        : {})}
+      ref={compact ? attachDisclosure : undefined}
     >
       {controlsEnabled ? (
         <>
