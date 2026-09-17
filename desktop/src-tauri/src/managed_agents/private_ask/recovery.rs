@@ -51,3 +51,14 @@ pub(super) fn finish_after_process_with(
         Err(state) => PrivateAskFailure::State(state),
     }
 }
+
+/// Preserve the durable pending marker when the owned PID could not be
+/// recorded. The process boundary is unknown, so the root must survive for
+/// startup recovery rather than being removed here.
+pub(super) fn leave_process_pending_state(
+    run: OwnedRecapRun,
+    failure: RecapStateFailure,
+) -> PrivateAskFailure {
+    drop(run);
+    PrivateAskFailure::State(failure)
+}
