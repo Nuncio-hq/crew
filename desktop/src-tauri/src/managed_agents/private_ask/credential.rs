@@ -188,22 +188,27 @@ pub(super) fn observe_auth_evidence(
     evidence_from(runtime_id, staged)
 }
 
-/// Whether the stand-in secret store holds nothing for this process.
+/// Whether the stand-in secret store holds nothing for this observation.
 ///
-/// Set by the test that needs the negative direction. It is process-global and
-/// therefore set and cleared around one observation; the observation itself is
-/// synchronous, so no other test can interleave inside it.
+/// It is THREAD-local, not process-global. `observe_auth_evidence` runs
+/// synchronously on the thread that asked for the probe, so a thread-local is
+/// exactly as reachable as the previous global — and it cannot leak into
+/// another test running in parallel, which is what a process-global flag did:
+/// a test that wanted the "no credential" direction made every concurrent
+/// probe on the machine observe an empty store too.
 #[cfg(test)]
-static TEST_SECRET_STORE_EMPTY: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static TEST_SECRET_STORE_EMPTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 #[cfg(test)]
 pub(super) fn test_secret_store_is_empty() -> bool {
-    TEST_SECRET_STORE_EMPTY.load(std::sync::atomic::Ordering::Acquire)
+    TEST_SECRET_STORE_EMPTY.with(std::cell::Cell::get)
 }
 
 #[cfg(test)]
 pub(super) fn set_test_secret_store_empty(empty: bool) {
-    TEST_SECRET_STORE_EMPTY.store(empty, std::sync::atomic::Ordering::Release);
+    TEST_SECRET_STORE_EMPTY.with(|slot| slot.set(empty));
 }
 
 /// Turn one staging outcome into evidence. Shared by both observers so the

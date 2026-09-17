@@ -93,23 +93,15 @@ fn the_ledger_directory_derivation_mirrors_the_harnesss_own() {
     // first 16 hex characters of the relay-url digest and the lowercased agent
     // pubkey under the ledger base. If either side moves, this fails rather
     // than making every private Ask look like an agent that never ran.
-    let base = tempdir();
-    let previous = std::env::var_os("BUZZ_ACP_SESSION_LEDGER_DIR");
-    std::env::set_var("BUZZ_ACP_SESSION_LEDGER_DIR", base.path());
+    let base = Path::new("/tmp/ledger-base");
     let relay = "wss://relay.example/";
     let pubkey = "AB".repeat(32);
-    let derived = session_ledger_dir(relay, &pubkey).expect("a ledger directory");
     let relay_hash = hex::encode(Sha256::digest(relay.as_bytes()));
     assert_eq!(
-        derived,
-        base.path()
-            .join(&relay_hash[..16])
+        session_ledger_dir_under(base, relay, &pubkey),
+        base.join(&relay_hash[..16])
             .join(pubkey.to_ascii_lowercase())
     );
-    match previous {
-        Some(value) => std::env::set_var("BUZZ_ACP_SESSION_LEDGER_DIR", value),
-        None => std::env::remove_var("BUZZ_ACP_SESSION_LEDGER_DIR"),
-    }
 }
 
 #[test]

@@ -57,31 +57,52 @@ impl SessionObservation {
     }
 }
 
+/// The base directory `buzz-acp` spools its session ledger under.
+///
+/// `None` when this machine has neither the override nor a home directory, in
+/// which case there is nothing to observe and the caller refuses.
+pub(crate) fn session_ledger_base() -> Option<std::path::PathBuf> {
+    match std::env::var_os("BUZZ_ACP_SESSION_LEDGER_DIR") {
+        Some(base) if !base.is_empty() => Some(std::path::PathBuf::from(base)),
+        _ => {
+            let home = std::env::var_os("HOME").filter(|home| !home.is_empty())?;
+            Some(
+                std::path::PathBuf::from(home)
+                    .join(".local/share/nunciocrew/buzz-acp/session-ledger"),
+            )
+        }
+    }
+}
+
 /// Where `buzz-acp` keeps its session ledger for one (relay, agent) pair.
 ///
 /// This mirrors the harness's own derivation. The desktop cannot depend on the
 /// harness crate, so the mirror is pinned by a test: if either side moves, the
-/// test fails rather than every private Ask quietly looking like an agent that
-/// has never run.
+/// test fails rather than making every private Ask quietly look like an agent
+/// that has never run.
 ///
 /// `relay_url` must already be the normalized url the harness was launched
 /// with; an unnormalized one hashes to a different directory.
+pub(crate) fn session_ledger_dir_under(
+    base: &Path,
+    relay_url: &str,
+    agent_pubkey: &str,
+) -> std::path::PathBuf {
+    let relay_hash = hex::encode(Sha256::digest(relay_url.as_bytes()));
+    base.join(&relay_hash[..16])
+        .join(agent_pubkey.to_ascii_lowercase())
+}
+
+/// The ledger directory for one (relay, agent) pair on this machine.
 pub(crate) fn session_ledger_dir(
     relay_url: &str,
     agent_pubkey: &str,
 ) -> Option<std::path::PathBuf> {
-    let base = match std::env::var_os("BUZZ_ACP_SESSION_LEDGER_DIR") {
-        Some(base) if !base.is_empty() => std::path::PathBuf::from(base),
-        _ => {
-            let home = std::env::var_os("HOME").filter(|home| !home.is_empty())?;
-            std::path::PathBuf::from(home).join(".local/share/nunciocrew/buzz-acp/session-ledger")
-        }
-    };
-    let relay_hash = hex::encode(Sha256::digest(relay_url.as_bytes()));
-    Some(
-        base.join(&relay_hash[..16])
-            .join(agent_pubkey.to_ascii_lowercase()),
-    )
+    Some(session_ledger_dir_under(
+        &session_ledger_base()?,
+        relay_url,
+        agent_pubkey,
+    ))
 }
 
 /// One observation of a running employee session, taken from its own bytes.

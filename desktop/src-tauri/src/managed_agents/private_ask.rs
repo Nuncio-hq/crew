@@ -26,6 +26,7 @@ mod prompt;
 mod provider;
 mod recovery;
 mod runtime_paths;
+pub(crate) mod selection;
 mod session_evidence;
 mod validation;
 #[allow(unused_imports)]
