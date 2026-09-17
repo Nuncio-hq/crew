@@ -360,9 +360,16 @@ impl PrivateAskAttempt {
             Ok(citations) => citations,
             Err(failure) => {
                 // The run root is still closed out: a refused answer is a
-                // finished attempt, not an abandoned one.
-                run.cleanup().map_err(PrivateAskFailure::State)?;
-                return Err(failure);
+                // finished attempt, not an abandoned one. The generation is
+                // already marked finished above, so only the removal is left,
+                // and the refusal survives it — the same error policy as
+                // `finish_after_process`: the original reason unless cleanup
+                // itself failed, in which case the state error is the one the
+                // reader needs.
+                return Err(match run.cleanup() {
+                    Ok(()) => failure,
+                    Err(state) => PrivateAskFailure::State(state),
+                });
             }
         };
         let response = PrivateAskResponse {
