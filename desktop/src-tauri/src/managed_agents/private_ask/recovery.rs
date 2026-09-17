@@ -1,5 +1,6 @@
 use super::BoundedFailure;
-use super::{OwnedRecapRun, PrivateAskFailure, RecapStateFailure};
+use super::PrivateAskFailure;
+use crate::managed_agents::recap_state::{OwnedRecapRun, RecapStateFailure};
 
 pub(super) fn finish_before_spawn(
     run: OwnedRecapRun,
