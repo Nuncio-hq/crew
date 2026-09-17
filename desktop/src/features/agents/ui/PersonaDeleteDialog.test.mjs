@@ -1,31 +1,54 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { personaDeleteDescription } from "./PersonaDeleteDialog.tsx";
+import {
+  personaDeleteDescription,
+  personaDeleteTitle,
+} from "./PersonaDeleteDialog.tsx";
 
 // Regression guard for the persona-cascade consent copy: deleting a persona
-// with instances also archives each instance's identity on the relay
-// (NIP-IA 9035), a durable externally visible side effect. The confirmation
-// dialog must disclose it before the destructive confirm, exactly like the
-// direct agent-delete dialog does.
+// removes the persona definition, deletes linked instances, and archives each
+// instance's identity on the relay (NIP-IA 9035), a durable externally visible
+// side effect. The confirmation dialog must disclose those consequences before
+// the destructive confirm.
 
 const persona = { displayName: "Scout" };
 
+test("delete title names the persona", () => {
+  assert.equal(personaDeleteTitle(persona), "Delete Scout?");
+  assert.equal(personaDeleteTitle(null), "Delete agent?");
+});
+
 test("cascade delete discloses relay archival (plural)", () => {
-  const copy = personaDeleteDescription(persona, 3);
-  assert.match(copy, /deletes 3 agent instances/);
-  assert.match(copy, /archives their identities on the relay/);
+  const copy = personaDeleteDescription(persona, 3, 2);
+  assert.match(copy, /Remove the Scout persona definition/);
+  assert.match(copy, /Delete 3 linked agent instances/);
+  assert.match(copy, /archive their identities on the relay/);
+  assert.match(
+    copy,
+    /Messages, DM history, runtime installations, and worktrees remain in place/,
+  );
+  assert.match(
+    copy,
+    /Hermes profiles remain on this machine unless you explicitly choose Archive below/,
+  );
 });
 
 test("cascade delete discloses relay archival (singular)", () => {
-  const copy = personaDeleteDescription(persona, 1);
-  assert.match(copy, /deletes 1 agent instance /);
-  assert.match(copy, /archives its identity on the relay/);
+  const copy = personaDeleteDescription(persona, 1, 1);
+  assert.match(copy, /Remove the Scout persona definition/);
+  assert.match(copy, /Delete 1 linked agent instance/);
+  assert.match(copy, /archive its identity on the relay/);
 });
 
-test("no instances → no archival claim (nothing is archived)", () => {
+test("no instances keeps retained state and has no archival claim", () => {
   const copy = personaDeleteDescription(persona, 0);
-  assert.equal(copy, "Delete Scout.");
+  assert.match(copy, /Remove the Scout persona definition/);
+  assert.match(
+    copy,
+    /Messages, DM history, runtime installations, and worktrees remain in place/,
+  );
+  assert.match(copy, /Hermes profile data is untouched/);
   assert.doesNotMatch(copy, /archiv/i);
 });
 

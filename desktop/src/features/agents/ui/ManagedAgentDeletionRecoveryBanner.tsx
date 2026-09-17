@@ -4,6 +4,7 @@ import {
   useRetryManagedAgentDeletionMutation,
 } from "@/features/agents/managedAgentDeletionHooks";
 import { Button } from "@/shared/ui/button";
+import type { ManagedAgentDeletionSummary } from "@/shared/api/tauriManagedAgentDeletions";
 
 function communityOrigin(value: string): string {
   try {
@@ -18,6 +19,20 @@ function communityOrigin(value: string): string {
   } catch {
     return value.replace(/\/+$/, "").toLowerCase();
   }
+}
+
+/**
+ * Name the pending cleanup without leaking payload detail. The native summary
+ * is deliberately redacted across communities, so a persona coordinator is
+ * described by what it is rather than by its resource key — which for a
+ * persona is a synthetic digest, not an agent public key anyone can recognise.
+ */
+export function deletionTargetLabel(
+  operation: Pick<ManagedAgentDeletionSummary, "targetKind" | "resourceKey">,
+): string {
+  return operation.targetKind === "persona"
+    ? "Persona cleanup"
+    : `Agent ${operation.resourceKey.slice(0, 12)}…`;
 }
 
 export function ManagedAgentDeletionRecoveryBanner() {
@@ -41,8 +56,8 @@ export function ManagedAgentDeletionRecoveryBanner() {
     >
       <p className="font-medium">Agent cleanup needs attention</p>
       <p className="mt-1 text-xs opacity-80">
-        A pending deletion keeps its agent stopped until cleanup is retried in
-        the community that recorded it.
+        A pending deletion keeps any linked agent stopped until cleanup is
+        retried in the community that recorded it.
       </p>
       <ul className="mt-3 space-y-2">
         {query.data.map((operation) => {
@@ -59,7 +74,7 @@ export function ManagedAgentDeletionRecoveryBanner() {
               key={`${operation.id}:${operation.community}`}
             >
               <span className="min-w-0 break-all text-xs">
-                {operation.resourceKey.slice(0, 12)}… · {operation.community}
+                {deletionTargetLabel(operation)} · {operation.community}
               </span>
               {target && !isActive ? (
                 <Button

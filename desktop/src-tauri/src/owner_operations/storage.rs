@@ -14,13 +14,14 @@ use super::{
 
 /// Schema versions this binary can open. `0` is an empty file this opener
 /// initializes. Version 2 is the managed-agent deletion journal; version 3
-/// adds the Wiki successor relation on top of it. Keeping the intermediate
-/// version in the accepted set lets an existing journal upgrade atomically
-/// without treating an older, valid file as corrupt.
-pub(super) const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[0, 1, 2, 3];
+/// adds the Wiki successor relation on top of it; version 4 rebuilds the
+/// managed-agent claim indexes for coordinator/child rows. Keeping every
+/// intermediate version in the accepted set lets an existing journal upgrade
+/// atomically without treating an older, valid file as corrupt.
+pub(super) const SUPPORTED_SCHEMA_VERSIONS: &[i64] = &[0, 1, 2, 3, 4];
 
 /// Version written by the newest migration in this binary.
-pub(super) const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub(super) const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 pub(super) fn sql_error(error: rusqlite::Error) -> StoreError {
     if let rusqlite::Error::SqliteFailure(code, _) = &error {
@@ -209,6 +210,16 @@ impl OperationStore {
             // managed-delete index creation defensively for v2 journals that
             // were produced by the pre-merge Wiki branch.
             tx.execute_batch(include_str!("migration_2_to_3.sql"))
+                .map_err(sql_error)?;
+        }
+        let version: i64 = tx
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(sql_error)?;
+        if version == 3 {
+            // Version 4 keeps direct managed-agent claims exclusive while
+            // allowing a coordinator and its validated first child to share
+            // the child's resource key.
+            tx.execute_batch(include_str!("migration_3_to_4.sql"))
                 .map_err(sql_error)?;
         }
         let final_version: i64 = tx

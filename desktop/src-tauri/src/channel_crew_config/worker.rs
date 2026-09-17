@@ -22,7 +22,7 @@ struct Worker {
     wake: tokio::sync::Notify,
 }
 
-pub(crate) fn start(app: AppHandle) {
+pub(crate) fn start<R: tauri::Runtime>(app: AppHandle<R>) {
     if app.try_state::<Arc<Worker>>().is_none() {
         app.manage(Arc::new(Worker::default()));
     }
@@ -62,14 +62,14 @@ pub(crate) fn start(app: AppHandle) {
     });
 }
 
-pub(super) fn wake(app: &AppHandle) {
+pub(super) fn wake<R: tauri::Runtime>(app: &AppHandle<R>) {
     if let Some(worker) = app.try_state::<Arc<Worker>>() {
         worker.wake.notify_one();
     }
 }
 
-async fn run_due(
-    app: AppHandle,
+async fn run_due<R: tauri::Runtime>(
+    app: AppHandle<R>,
     scope: crate::app_state::owner_scope::OwnerScopeToken,
 ) -> Result<(), String> {
     let operations = super::service::operations(app.clone(), scope.clone()).await?;

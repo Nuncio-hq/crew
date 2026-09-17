@@ -2,7 +2,17 @@
 -- index is repeated here so journals created by either pre-merge v2 branch
 -- converge on the same v3 schema before the opener commits user_version.
 CREATE UNIQUE INDEX IF NOT EXISTS unresolved_managed_agent_delete
-    ON operations(resource_key)
+    ON operations(
+        CASE
+            WHEN json_valid(record_json) THEN
+                CASE
+                    WHEN json_type(record_json, '$.payload.cascade_parent') = 'text'
+                    THEN resource_key || ':' || json_extract(record_json, '$.payload.cascade_parent')
+                    ELSE resource_key
+                END
+            ELSE resource_key
+        END
+    )
     WHERE kind = 'managed-agent-delete' AND reconciled = 0;
 
 CREATE TABLE IF NOT EXISTS wiki_publication_successors (

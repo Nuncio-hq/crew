@@ -107,6 +107,16 @@ pub struct OperationSummary {
     pub updated_at: i64,
 }
 
+/// What an unresolved deletion record is cleaning up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedAgentDeletionTargetKind {
+    /// One managed-agent instance.
+    Agent,
+    /// A persona definition and every instance it cascades to.
+    Persona,
+}
+
 /// Redacted, app-global view of managed-agent deletion work. The payload is
 /// intentionally omitted so a workspace switch cannot expose another scope's
 /// cleanup details; callers can switch to `community` and load the operation
@@ -121,6 +131,11 @@ pub struct ManagedAgentDeletionSummary {
     pub community: String,
     /// Managed-agent public key whose local deletion is fenced.
     pub resource_key: String,
+    /// What the record is cleaning up, so a recovery surface can name the work
+    /// without a payload. Only this discriminator crosses the scope boundary;
+    /// the persona's own identifiers stay redacted like the rest of the
+    /// payload, because a persona d-tag can carry its authored name.
+    pub target_kind: ManagedAgentDeletionTargetKind,
     /// Expected revision for the next scoped CAS.
     pub revision: u64,
     /// Last recorded phase.
@@ -228,11 +243,20 @@ pub struct OperationStore {
     limits: Limits,
 }
 
+/// Namespace shared by the persona cascade coordinator and its deterministic
+/// operation/resource IDs. Keeping it in the owner-operation module gives the
+/// storage validator and the native coordinator one source of truth.
+pub(crate) const PERSONA_CASCADE_NAMESPACE: uuid::Uuid =
+    uuid::uuid!("34d6e7bb-4c17-5c64-8f0a-8e7e3c22d1d4");
+
 mod managed_delete_claim;
 mod mutations;
 mod storage;
 
-pub(crate) use managed_delete_claim::validate_record as validate_managed_agent_delete_record;
+pub(crate) use managed_delete_claim::{
+    persona_cascade_coordinator_resource_key,
+    validate_record as validate_managed_agent_delete_record,
+};
 
 #[cfg(all(test, unix))]
 mod tests;

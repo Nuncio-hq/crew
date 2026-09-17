@@ -1,7 +1,11 @@
 import * as React from "react";
 
 import { Badge } from "@/shared/ui/badge";
-import type { ManagedAgent, PresenceStatus } from "@/shared/api/types";
+import type {
+  ManagedAgent,
+  ManagedAgentTransportStatus,
+  PresenceStatus,
+} from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 
 /** Grace period after mount before treating "running + no presence" as "Starting…" */
@@ -14,6 +18,7 @@ export function AgentStatusBadge({
   presenceStatus,
   sentenceCase = false,
   status,
+  transportState,
 }: {
   className?: string;
   isWorking?: boolean;
@@ -21,6 +26,8 @@ export function AgentStatusBadge({
   presenceStatus: PresenceStatus | undefined;
   sentenceCase?: boolean;
   status: ManagedAgent["status"];
+  /** A known transport failure is not a startup state. */
+  transportState?: ManagedAgentTransportStatus["state"];
 }) {
   const [inGracePeriod, setInGracePeriod] = React.useState(true);
 
@@ -30,7 +37,12 @@ export function AgentStatusBadge({
   }, []);
 
   const isActive = status === "running" || status === "deployed";
+  const transportHasFailed =
+    transportState === "degraded" ||
+    transportState === "exhausted" ||
+    transportState === "auth_rejected";
   const isStarting =
+    !transportHasFailed &&
     !inGracePeriod &&
     presenceLoaded &&
     status === "running" &&

@@ -291,6 +291,8 @@ export function personaManagedAgentUpdate(
   agent: ManagedAgent,
   persona: AgentPersona,
   options: {
+    /** Explicit Hermes binding from the definition dialog; undefined is a no-op. */
+    hermesProfile?: string | null;
     previousPersona?: AgentPersona;
     runtimes?: readonly AcpRuntimeCatalogEntry[];
   } = {},
@@ -356,6 +358,15 @@ export function personaManagedAgentUpdate(
     const mcpCommand = runtime.mcpCommand ?? "";
     if (mcpCommand !== agent.mcpCommand) {
       input.mcpCommand = mcpCommand;
+      hasChanges = true;
+    }
+  }
+
+  if (options.hermesProfile !== undefined) {
+    const nextProfile = options.hermesProfile?.trim() || null;
+    const currentProfile = agent.hermesProfile?.trim() || null;
+    if (nextProfile !== currentProfile) {
+      input.hermesProfile = nextProfile;
       hasChanges = true;
     }
   }

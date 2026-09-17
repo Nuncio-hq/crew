@@ -83,8 +83,8 @@ pub(crate) async fn save(
     dispatch_prepared(&backend, prepared, uuid::Uuid::new_v4().to_string()).await
 }
 
-pub(super) async fn dispatch_prepared(
-    backend: &NativeBackend,
+pub(super) async fn dispatch_prepared<R: tauri::Runtime>(
+    backend: &NativeBackend<R>,
     prepared: Preparation,
     id: String,
 ) -> Result<crate::commands::ScopedOperationResult<CrewSaveResult>, String> {
@@ -182,8 +182,8 @@ pub(crate) async fn retry(
     scoped(expected, progress)
 }
 
-pub(super) async fn resume_loaded(
-    app: AppHandle,
+pub(super) async fn resume_loaded<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     loaded: Operation,
     manual: bool,
@@ -220,8 +220,8 @@ pub(crate) async fn status(
     scoped(expected, progress)
 }
 
-pub(super) async fn operations(
-    app: AppHandle,
+pub(super) async fn operations<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
 ) -> Result<Vec<Operation>, String> {
     let mut after = None;
