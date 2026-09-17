@@ -1,6 +1,6 @@
 #![cfg(unix)]
 use super::*;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::unix::fs::{symlink, PermissionsExt};
 
 fn canonical_tempdir() -> tempfile::TempDir {
@@ -80,6 +80,103 @@ fn cleanup_removes_only_the_finished_owned_generation() {
     run.cleanup().unwrap();
     assert!(!path.exists());
     assert_eq!(std::fs::read(untouched).unwrap(), b"unchanged");
+}
+
+#[test]
+fn cleanup_restores_manifest_after_partial_recursive_remove() {
+    let base = canonical_tempdir();
+    let run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    let path = run.path().to_owned();
+    let expected = run.manifest.clone();
+    let owner_path = path.join(MANIFEST);
+    let payload = path.join("payload");
+    std::fs::create_dir(&payload).unwrap();
+    std::fs::write(payload.join("file"), b"payload").unwrap();
+
+    // The partial removal is injected rather than provoked with a read-only
+    // directory. `remove_dir_all` walks a directory in readdir order, which is
+    // lexical enough on APFS to make an unremovable `z-`prefixed child fail
+    // *after* the manifest, but arbitrary on the hashed directories Linux CI
+    // runs on — there the walk could fail before the manifest was touched and
+    // the run would never exercise the restore path at all. The remover here
+    // reproduces the exact state that path exists for, on every filesystem.
+    // The removal is observed through the seam rather than inferred afterwards.
+    // Inode identity is NOT a portable "newly written" signal: ext4 hands the
+    // freed inode straight back, so the restored file legitimately reuses it.
+    // What proves the restore is that the manifest was observed *absent* part
+    // way through, and is present and correct once cleanup has returned.
+    let removed = std::cell::Cell::new(false);
+    let result = run.cleanup_with_remover(|path| {
+        let manifest = path.join(MANIFEST);
+        assert!(manifest.exists(), "the manifest exists before the removal");
+        std::fs::remove_file(&manifest).unwrap();
+        assert!(!manifest.exists(), "the original manifest is gone");
+        removed.set(true);
+        Err(std::io::Error::other("partial cleanup"))
+    });
+
+    assert_eq!(result, Err(RecapStateFailure::Io));
+    assert!(removed.get(), "the partial removal really happened");
+    assert!(path.exists());
+    assert!(
+        owner_path.exists(),
+        "the manifest removed mid-cleanup must be written back"
+    );
+    assert_eq!(read_manifest(&path).unwrap(), expected);
+    assert!(payload.join("file").exists());
+}
+
+#[test]
+fn partial_cleanup_never_overwrites_a_foreign_manifest() {
+    let base = canonical_tempdir();
+    let run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    let path = run.path().to_owned();
+    let payload = path.join("payload");
+    std::fs::write(&payload, b"payload").unwrap();
+    let mut foreign = run.manifest.clone();
+    foreign.run_id = "foreign-run".into();
+    let foreign_bytes = serde_json::to_vec(&foreign).unwrap();
+    let result = run.cleanup_with_remover(|path| {
+        std::fs::remove_file(path.join(MANIFEST)).unwrap();
+        std::fs::remove_file(path.join("payload")).unwrap();
+        let mut file = private_new_file(&path.join(MANIFEST)).unwrap();
+        file.write_all(&foreign_bytes).unwrap();
+        file.sync_all().unwrap();
+        Err(std::io::Error::other("partial cleanup"))
+    });
+    assert_eq!(result, Err(RecapStateFailure::Ownership));
+    assert_eq!(std::fs::read(path.join(MANIFEST)).unwrap(), foreign_bytes);
+    assert!(path.exists());
+}
+
+#[test]
+fn known_stopped_cleanup_accepts_finished_manifest_after_write_error() {
+    let base = canonical_tempdir();
+    let mut run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    run.mark_process_pending().unwrap();
+    let path = run.path().to_owned();
+    let mut persisted = run.manifest.clone();
+    persisted.phase = Phase::Finished;
+    std::fs::write(path.join(MANIFEST), serde_json::to_vec(&persisted).unwrap()).unwrap();
+    run.cleanup_known_stopped().unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn known_stopped_cleanup_rejects_replaced_manifest() {
+    let base = canonical_tempdir();
+    let mut run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    run.mark_process_pending().unwrap();
+    let path = run.path().to_owned();
+    let mut forged = run.manifest.clone();
+    forged.phase = Phase::Finished;
+    forged.run_id = "foreign-run".into();
+    std::fs::write(path.join(MANIFEST), serde_json::to_vec(&forged).unwrap()).unwrap();
+    assert_eq!(
+        run.cleanup_known_stopped(),
+        Err(RecapStateFailure::Ownership)
+    );
+    assert!(path.exists());
 }
 
 #[test]

@@ -1,0 +1,182 @@
+//! The effect-denying Seatbelt policy for one private Ask run root.
+//!
+//! The recap policy (`allow default` plus `deny process-fork`) contains the
+//! process tree but denies neither file effects nor network egress: a runtime
+//! that still has a write or HTTP tool can act on the machine even though no
+//! descendant can be forked. A private Ask carries the viewer's question into a
+//! full employee identity, so the boundary here denies the *effects* as well.
+//!
+//! Policy shape, verified on macOS 25.5 before it was written here:
+//!
+//! * `allow default` is the policy's default action, not an ordered rule —
+//!   placing it after a deny does not re-permit the denied operation.
+//! * Among ordered rules the later, more specific match wins, so the run-root
+//!   `file-write*` allowance must follow the blanket `file-write*` denial.
+//! * `allow default` is NOT a read allowance: `file-read*` is denied outright and
+//!   re-allowed only for the run root, the runtime executable's own directory and
+//!   the system directories a process needs to start. Without this the child could
+//!   read the employee's worktree, `~/.ssh` and `~/.claude` while looking
+//!   contained.
+//! * The root directory literal `/` must be allowed explicitly — a subpath rule
+//!   does not cover `/` itself, and without it path resolution fails and every
+//!   process aborts before `main`. Determined empirically; `/bin/echo` aborts
+//!   without it.
+//! * `file-read-metadata` stays open. Path resolution needs it on every ancestor
+//!   and it discloses names, not contents.
+//! * Network egress is a single loopback port: the desktop-owned CONNECT proxy
+//!   for this attempt. `(remote ip "localhost:<port>")` was verified on macOS
+//!   25.5 to permit exactly that port and to refuse a second loopback port. The
+//!   previous `remote ip "*:443"` rule was any host on 443, which no evidence
+//!   could bound.
+//! * There is deliberately NO mDNSResponder allowance. Name resolution is a
+//!   local UNIX-socket connect that `deny network-outbound` refuses, so the
+//!   child cannot resolve a name at all — verified: `gethostbyname` fails under
+//!   this policy. The proxy does every lookup, which is exactly why the set of
+//!   destinations it recorded is the complete set the child asked for.
+//! * `mach-lookup` is denied outright, with no allow-list. Verified on macOS
+//!   25.5: `/usr/bin/perl`, a Homebrew `node` and the real Hermes CPython
+//!   interpreter all still start under it, so the empirically minimal allow-list
+//!   is the empty one. A runtime that genuinely needs a Mach service will fail
+//!   loudly at launch rather than quietly reaching one.
+//!   NAMED LIMIT: this was measured on startup, not across a whole answered
+//!   run; the staging walkthrough re-checks it against the real runtimes.
+//! * `process-exec*` is deliberately *not* denied: `sandbox-exec` applies the
+//!   policy and then `execvp`s the runtime itself, so denying exec makes the
+//!   launch fail outright. `deny process-fork` is what stops new processes; an
+//!   in-place `execve` inherits this same policy and escapes nothing.
+
+use super::PrivateAskFailure;
+use std::path::{Path, PathBuf};
+
+/// Refuse a read allowance that would cover the directory holding every run
+/// root.
+///
+/// The runtime's own installation directory is readable, because a runtime has
+/// to load its own files. A runtime installed *above* the run roots turns that
+/// allowance into a read allowance for every other attempt's prompt, staged
+/// profile and retained state — the exact disclosure the narrowed read policy
+/// exists to stop. It is refused rather than narrowed: a policy that silently
+/// dropped the runtime's own directory would fail in the dynamic loader instead.
+///
+/// Only the ancestor direction is refused. A runtime directory *inside* the run
+/// roots is a different (and harmless) shape, and the probe's own fixtures sit
+/// that way.
+fn read_roots_clear_of_run_roots(
+    run_root: &Path,
+    runtime_directory: &Path,
+    extra_read_roots: &[PathBuf],
+) -> Result<(), PrivateAskFailure> {
+    // Every run root is a child of this directory, so covering it covers all of
+    // them. A run root with no parent is not one this recipe produced.
+    let run_roots = run_root
+        .parent()
+        .ok_or(PrivateAskFailure::ProcessContainmentUnverified)?;
+    // Canonicalized on both sides: a symlinked or `..`-bearing read root that
+    // resolves above the run roots is the same disclosure by another name, and
+    // a path that cannot be resolved is refused rather than assumed unrelated.
+    let run_roots = run_roots
+        .canonicalize()
+        .map_err(|_| PrivateAskFailure::ProcessContainmentUnverified)?;
+    for candidate in
+        std::iter::once(runtime_directory).chain(extra_read_roots.iter().map(AsRef::as_ref))
+    {
+        let candidate = candidate
+            .canonicalize()
+            .map_err(|_| PrivateAskFailure::ProcessContainmentUnverified)?;
+        // Component-wise, never a string prefix: `<base>/agents-runtime` is not
+        // an ancestor of `<base>/agents`, and `starts_with` knows that.
+        if run_roots.starts_with(&candidate) {
+            return Err(PrivateAskFailure::ProcessContainmentUnverified);
+        }
+    }
+    Ok(())
+}
+
+/// Build the Seatbelt policy text confining one attempt to `run_root`.
+///
+/// Returns [`PrivateAskFailure::ProcessContainmentUnverified`] on any platform
+/// where this boundary cannot be applied. There is deliberately no "no profile
+/// needed" success value: a missing boundary must stop the launch, not pass
+/// through it.
+pub(super) fn private_ask_containment_profile(
+    run_root: &Path,
+    runtime_directory: &Path,
+    extra_read_roots: &[PathBuf],
+    proxy_port: u16,
+) -> Result<String, PrivateAskFailure> {
+    #[cfg(target_os = "macos")]
+    {
+        // A port of zero is not a bound listener. Refusing it here stops a
+        // policy that would read as `localhost:0` — which SBPL accepts and
+        // which no proxy can ever be listening on.
+        if proxy_port == 0 {
+            return Err(PrivateAskFailure::ProcessContainmentUnverified);
+        }
+        read_roots_clear_of_run_roots(run_root, runtime_directory, extra_read_roots)?;
+        let root = sbpl_path(run_root)?;
+        let runtime = sbpl_path(runtime_directory)?;
+        // An npm-installed runtime is a `#!` script, so its interpreter's own
+        // directory must be readable too. The set is fixed by the caller from
+        // the resolved shebang, never from caller-supplied text.
+        let mut extra = String::new();
+        for path in extra_read_roots {
+            let rendered = sbpl_path(path)?;
+            extra.push_str(&format!(
+                "(allow file-read* (subpath \"{rendered}\"))\n             "
+            ));
+        }
+        if !std::fs::metadata("/usr/bin/sandbox-exec").is_ok_and(|metadata| metadata.is_file()) {
+            return Err(PrivateAskFailure::ProcessContainmentUnverified);
+        }
+        Ok(format!(
+            "(version 1)\n\
+             (allow default)\n\
+             (deny file-read*)\n\
+             (allow file-read-metadata)\n\
+             (allow file-read* (literal \"/\"))\n\
+             (allow file-read* (subpath \"/usr\") (subpath \"/bin\") (subpath \"/sbin\") \
+             (subpath \"/System\") (subpath \"/Library\") (subpath \"/dev\") \
+             (subpath \"/private/var/db\"))\n\
+             (allow file-read* (subpath \"{runtime}\"))\n\
+             {extra}(allow file-read* (subpath \"{root}\"))\n\
+             (deny file-write*)\n\
+             (allow file-write* (subpath \"{root}\"))\n\
+             (allow file-write-data (literal \"/dev/null\") (literal \"/dev/dtracehelper\"))\n\
+             (deny network-outbound)\n\
+             (allow network-outbound (remote ip \"localhost:{proxy_port}\"))\n\
+             (deny mach-lookup)\n\
+             (deny process-fork)"
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Applied here too so the predicate is exercised on every platform's
+        // unit lane, even though this platform has no boundary to build.
+        read_roots_clear_of_run_roots(run_root, runtime_directory, extra_read_roots)?;
+        let _ = proxy_port;
+        Err(PrivateAskFailure::ProcessContainmentUnverified)
+    }
+}
+
+/// Render one absolute path as an SBPL string literal, or refuse.
+///
+/// A quoted SBPL string has no escape for `"` or `\`; a path containing either
+/// would end the literal early and silently widen the policy. A relative path
+/// is refused because SBPL resolves nothing for us.
+#[cfg(target_os = "macos")]
+fn sbpl_path(path: &Path) -> Result<&str, PrivateAskFailure> {
+    if !path.is_absolute() {
+        return Err(PrivateAskFailure::ProcessContainmentUnverified);
+    }
+    let value = path
+        .to_str()
+        .ok_or(PrivateAskFailure::ProcessContainmentUnverified)?;
+    if value.contains('"') || value.contains('\\') || value.contains('\n') {
+        return Err(PrivateAskFailure::ProcessContainmentUnverified);
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+#[path = "containment_read_roots_tests.rs"]
+mod read_roots_tests;

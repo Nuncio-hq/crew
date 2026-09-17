@@ -240,6 +240,83 @@ impl VerifiedStagingOwnership {
         Ok(base)
     }
 
+    /// Digest of the ownership document this receipt was built from.
+    ///
+    /// It binds a persisted artefact to one machine's ownership state, the same
+    /// way `RuntimeReadyDocument.ownership_sha256` does: a document copied from
+    /// another install, or kept across a re-provision, no longer matches and is
+    /// refused rather than honoured.
+    pub(crate) fn ownership_digest(&self) -> &str {
+        &self.ownership_digest
+    }
+
+    /// Owner uid recorded by the native identity.
+    pub(crate) fn owner_uid(&self) -> u32 {
+        #[cfg(test)]
+        if self.test_recap_base.is_some() {
+            return self.native.uid;
+        }
+        self.native.uid
+    }
+
+    /// Resolve the owned directory that retains private Ask capability
+    /// receipts, creating it if this process owns the place it would go.
+    ///
+    /// It is deliberately NOT under [`Self::recap_base`]: that tree holds
+    /// disposable run generations and startup recovery sweeps it, so a receipt
+    /// kept there would be removed by the very mechanism that reaps a crashed
+    /// run. A receipt is evidence about this machine with its own expiry, not
+    /// a generation.
+    ///
+    /// The directory is validated the same way every other owned root is —
+    /// owned by this uid and equal to its own canonical path — so a symlink or
+    /// another user's directory is refused rather than written into.
+    pub(crate) fn private_ask_probe_base(&self) -> Result<PathBuf, RecapStateFailure> {
+        #[cfg(test)]
+        if let Some(base) = self.test_recap_base.as_ref() {
+            let base = base.join("private-ask-probes");
+            std::fs::create_dir_all(&base).map_err(|_| RecapStateFailure::Io)?;
+            return Ok(base);
+        }
+        self.validate()?;
+        let base = self.app_data.join("private-ask-probes");
+        match std::fs::symlink_metadata(&base) {
+            Ok(_) => validate_private_root(&base, self.native.uid)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_owned_directory(&base)?;
+                validate_private_root(&base, self.native.uid)?;
+            }
+            Err(_) => return Err(RecapStateFailure::Ownership),
+        }
+        Ok(base)
+    }
+
+    /// The owned directory holding this viewer's own private Ask history.
+    ///
+    /// It is deliberately separate from the probe receipts: a receipt is
+    /// evidence about this machine, while the history is what the viewer asked
+    /// and what came back. Neither is ever published — a private Ask reaches no
+    /// relay — so this tree is the only place either exists.
+    pub(crate) fn private_ask_history_base(&self) -> Result<PathBuf, RecapStateFailure> {
+        #[cfg(test)]
+        if let Some(base) = self.test_recap_base.as_ref() {
+            let base = base.join("private-ask-history");
+            std::fs::create_dir_all(&base).map_err(|_| RecapStateFailure::Io)?;
+            return Ok(base);
+        }
+        self.validate()?;
+        let base = self.app_data.join("private-ask-history");
+        match std::fs::symlink_metadata(&base) {
+            Ok(_) => validate_private_root(&base, self.native.uid)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_owned_directory(&base)?;
+                validate_private_root(&base, self.native.uid)?;
+            }
+            Err(_) => return Err(RecapStateFailure::Ownership),
+        }
+        Ok(base)
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test_recap_base(base: PathBuf) -> Self {
         let native = NativeIdentity {
@@ -567,6 +644,17 @@ impl VerifiedStagingOwnership {
         Ok(())
     }
 
+    /// Resolve the profile export root recorded by the native staging
+    /// ownership receipt.  The caller cannot substitute another same-UID
+    /// directory: every invocation revalidates the receipt and all of its
+    /// private root identities.
+    pub(crate) fn hermes_profile_source(&self) -> Result<PathBuf, RecapStateFailure> {
+        self.validate()?;
+        let source = self.document.mac.roots.profiles.clone();
+        validate_private_root(&source, self.native.uid)?;
+        Ok(source)
+    }
+
     fn roots(&self) -> [&PathBuf; 5] {
         let roots = &self.document.mac.roots;
         [
@@ -784,6 +872,104 @@ fn read_private_document(path: &Path, limit: usize) -> Result<Vec<u8>, RecapStat
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(all(test, unix))]
+impl VerifiedStagingOwnership {
+    /// Build a real receipt-backed fixture for adapter tests without exposing
+    /// a production constructor for native identity.
+    pub(crate) fn for_test(root: &Path) -> Result<Self, RecapStateFailure> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let home = root.canonicalize().map_err(|_| RecapStateFailure::Io)?;
+        let uid = std::fs::metadata(&home)
+            .map_err(|_| RecapStateFailure::Io)?
+            .uid();
+        let config_base = home.join("config");
+        let app_data = config_base.join("com.nuncio.crew.staging-test");
+        let config_home = config_base.join("buzz-demo-staging-test");
+        let nest = home.join(".buzz-demo-staging-test");
+        let profiles = home.join("crew-staging-test/profiles");
+        let workspaces = home.join("crew-staging-test/workspaces");
+        let agents = app_data.join("agents");
+        for path in [
+            &app_data,
+            &config_home,
+            &nest,
+            &profiles,
+            &workspaces,
+            &agents,
+        ] {
+            std::fs::create_dir_all(path).map_err(|_| RecapStateFailure::Io)?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| RecapStateFailure::Io)?;
+        }
+        let excluded: Vec<_> = [".buzz", ".buzz-dev", ".codex", ".claude", ".hermes"]
+            .iter()
+            .map(|name| home.join(name))
+            .chain([config_base.join("com.nuncio.crew")])
+            .collect();
+        let document = serde_json::json!({
+            "schema": "crew-staging-ownership",
+            "version": 1,
+            "environment_id": "crew-staging-test",
+            "status": "OWNERSHIP_ONLY_NOT_RUNTIME_READY",
+            "mac": {
+                "owner_uid": uid,
+                "home": home,
+                "build_demo_slug": "staging-test",
+                "bundle_id": "com.nuncio.crew.staging-test",
+                "keyring_service": "buzz-desktop-demo.staging-test",
+                "deep_link_scheme": "buzz-demo-staging-test",
+                "runtime_generation_allowed": false,
+                "auth_references": [],
+                "excluded_roots": excluded,
+                "roots": {
+                    "app_data": app_data,
+                    "config_home": config_home,
+                    "nest": nest,
+                    "profiles": profiles,
+                    "workspaces": workspaces
+                }
+            }
+        });
+        let manifest = app_data.join(OWNERSHIP_FILENAME);
+        std::fs::write(
+            &manifest,
+            serde_json::to_vec(&document).map_err(|_| RecapStateFailure::Io)?,
+        )
+        .map_err(|_| RecapStateFailure::Io)?;
+        std::fs::set_permissions(manifest, std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| RecapStateFailure::Io)?;
+        Self::from_native(NativeIdentity {
+            home,
+            app_data,
+            config_home,
+            config_base,
+            slug: "staging-test".into(),
+            bundle_id: "com.nuncio.crew.staging-test".into(),
+            keyring_service: "buzz-desktop-demo.staging-test".into(),
+            scheme: "buzz-demo-staging-test".into(),
+            uid,
+        })
+    }
+}
+
+/// Create one 0o700 directory this process owns.
+fn create_owned_directory(path: &Path) -> Result<(), RecapStateFailure> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(path)
+            .map_err(|_| RecapStateFailure::Io)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(RecapStateFailure::UnsupportedPlatform)
+    }
 }
 
 fn validate_private_root(path: &Path, uid: u32) -> Result<(), RecapStateFailure> {

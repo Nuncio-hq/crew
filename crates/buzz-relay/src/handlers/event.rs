@@ -3615,6 +3615,220 @@ mod tests {
         // Keep these production-bound regressions in the PostgreSQL lane's
         // discoverable namespace while leaving their implementation helpers
         // alongside the fan-out seams they exercise.
+
+        /// Two-identity privacy, relay half (#365).
+        ///
+        /// A private Ask never reaches the relay, so the relay-side claim is
+        /// that nothing about it is deliverable or stored. "Nothing arrived"
+        /// passes trivially against a broken subscription and an empty table,
+        /// so both halves are controlled:
+        ///
+        ///  * a control event that identity B's wide subscription MUST receive
+        ///    proves the subscription is live and genuinely wide, and
+        ///  * a detector canary that the SQL query MUST find proves the query
+        ///    would have found the private one had it been published.
+        ///
+        /// Only then does the absence of the private canary mean anything.
+        ///
+        /// What this test actually proves is therefore the DETECTOR, not the
+        /// feature: the wide subscription is live and the SQL query finds a
+        /// published question, and neither finds one that was never published.
+        /// The name says that, because the desktop adapter cannot be driven
+        /// from this crate — it lives in `desktop/src-tauri` and is not a
+        /// dependency here, so nothing here can make a private Ask happen. The
+        /// binding proof that the desktop publishes nothing at all is
+        /// `managed_agents::private_ask::privacy_tests`, which counts relay
+        /// egress at the desktop's own guard; this is the control that makes
+        /// that proof's relay-side half readable.
+        async fn the_relay_canary_detector_sees_only_a_published_question_impl() {
+            /// The question a viewer asked privately. It must never appear.
+            const PRIVATE_CANARY: &str = "canary-private-ask-question";
+            /// Published on purpose, to prove the detector can see a canary.
+            const DETECTOR_CANARY: &str = "canary-detector-control";
+
+            let (state, audit_shutdown, pool) = closed_membership_state().await;
+            let community_uuid = Uuid::new_v4();
+            let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
+            let host = format!("private-ask-canary-{community_uuid}.example");
+            let viewer = Keys::generate();
+            let observer = Keys::generate();
+            let agent = Keys::generate();
+            let body_pool = pool.clone();
+
+            crate::test_support::with_community_cleanup(&pool, community_uuid, async move {
+                crate::test_support::bounded(
+                    "insert private-ask canary community",
+                    sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                        .bind(community_uuid)
+                        .bind(&host)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("insert private-ask canary community");
+                for member in [&viewer, &observer, &agent] {
+                    crate::test_support::bounded(
+                        "insert private-ask canary membership",
+                        sqlx::query(
+                            "INSERT INTO relay_members (community_id, pubkey, role) \
+                             VALUES ($1, $2, 'member')",
+                        )
+                        .bind(community_uuid)
+                        .bind(member.public_key().to_hex())
+                        .execute(&body_pool),
+                    )
+                    .await
+                    .expect("insert private-ask canary membership");
+                }
+
+                let tenant = TenantContext::resolved(community, &host);
+                // Identity B holds a deliberately wide live subscription: every
+                // kind, authored by either the agent or the viewer. A narrower
+                // one could miss the very event this test is looking for.
+                let (observer_conn, _data_rx, _ctrl_rx) =
+                    authenticated_conn(&state, &tenant, &observer).await;
+                let sub_id = "private-ask-canary-wide".to_owned();
+                state.sub_registry.register_scoped(
+                    community,
+                    observer_conn.conn_id,
+                    sub_id.clone(),
+                    vec![Filter::new()],
+                    None,
+                );
+
+                // Control: something the viewer really did publish. If this is
+                // not delivered, the subscription proves nothing about absence.
+                let control = StoredEvent::new(
+                    EventBuilder::new(Kind::Custom(9), "ordinary published message")
+                        .sign_with_keys(&viewer)
+                        .expect("sign control event"),
+                    None,
+                );
+                let delivered = state.sub_registry.fan_out_scoped(community, &control);
+                assert_eq!(
+                    delivered,
+                    vec![(observer_conn.conn_id, sub_id.clone())],
+                    "the observer's wide subscription must receive an ordinary published event"
+                );
+
+                // The private Ask happens here. It runs entirely on the
+                // viewer's machine: no event is built, signed, stored or
+                // fanned out, so there is deliberately nothing to do in this
+                // test between the control above and the assertions below.
+
+                // Nothing the observer's live subscription can be offered
+                // carries the private question, because no such event exists.
+                let stored_rows: i64 = crate::test_support::bounded(
+                    "count private canary rows",
+                    sqlx::query_scalar(
+                        "SELECT count(*) FROM events \
+                         WHERE community_id = $1 AND content LIKE $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(format!("%{PRIVATE_CANARY}%"))
+                    .fetch_one(&body_pool),
+                )
+                .await
+                .expect("count private canary rows");
+                assert_eq!(
+                    stored_rows, 0,
+                    "a private Ask must leave no event carrying its question"
+                );
+
+                // Prove the detector is not simply blind: publish a canary and
+                // require the same query to find it.
+                let detector_id = crate::test_support::bounded(
+                    "insert detector canary event",
+                    sqlx::query_scalar::<_, Vec<u8>>(
+                        "INSERT INTO events \
+                         (community_id, id, pubkey, created_at, kind, tags, content, sig) \
+                         VALUES ($1, $2, $3, to_timestamp($4), $5, $6, $7, $8) RETURNING id",
+                    )
+                    .bind(community_uuid)
+                    .bind(vec![7u8; 32])
+                    .bind(agent.public_key().to_bytes().to_vec())
+                    // `created_at` is TIMESTAMPTZ and the table is partitioned
+                    // on it; an epoch-0 stamp lands in the open `past`
+                    // partition, so this insert needs no partition to be added.
+                    .bind(0_f64)
+                    // Deliberately NOT kind 9: `contact_guard_original_v1`
+                    // refuses an ordinary hard delete of a kind-9 original, and
+                    // this row has to be removable by this test before the
+                    // shared fixture drops the community it references. The
+                    // detector only needs a stored row whose content the query
+                    // can match, so the kind is free.
+                    .bind(1_i32)
+                    .bind(serde_json::json!([]))
+                    .bind(format!("answer mentioning {DETECTOR_CANARY}"))
+                    .bind(vec![0u8; 64])
+                    .fetch_one(&body_pool),
+                )
+                .await
+                .expect("insert detector canary event");
+                assert_eq!(detector_id.len(), 32);
+
+                let detector_rows: i64 = crate::test_support::bounded(
+                    "count detector canary rows",
+                    sqlx::query_scalar(
+                        "SELECT count(*) FROM events \
+                         WHERE community_id = $1 AND content LIKE $2",
+                    )
+                    .bind(community_uuid)
+                    .bind(format!("%{DETECTOR_CANARY}%"))
+                    .fetch_one(&body_pool),
+                )
+                .await
+                .expect("count detector canary rows");
+                assert_eq!(
+                    detector_rows, 1,
+                    "the canary query must find a canary that WAS published; \
+                     otherwise the zero above proves nothing"
+                );
+
+                // Backfill: a `since` reaching back before the control event
+                // must still surface no private canary. A live subscription
+                // and a replay are separate paths, and privacy has to hold on
+                // both.
+                let backfilled: i64 = crate::test_support::bounded(
+                    "count private canary rows since the beginning",
+                    sqlx::query_scalar(
+                        "SELECT count(*) FROM events \
+                         WHERE community_id = $1 AND created_at >= to_timestamp($2) \
+                         AND content LIKE $3",
+                    )
+                    .bind(community_uuid)
+                    .bind(0_f64)
+                    .bind(format!("%{PRIVATE_CANARY}%"))
+                    .fetch_one(&body_pool),
+                )
+                .await
+                .expect("count private canary rows since the beginning");
+                assert_eq!(
+                    backfilled, 0,
+                    "a backfill must not surface a private Ask either"
+                );
+
+                // This test owns the only stored row in its community, so it
+                // removes that row itself: the shared fixture deletes the
+                // community, and the events foreign key would otherwise make
+                // this test's teardown fail inside every other test that
+                // shares the fixture.
+                crate::test_support::bounded(
+                    "delete detector canary event",
+                    sqlx::query("DELETE FROM events WHERE community_id = $1")
+                        .bind(community_uuid)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("delete detector canary event");
+
+                drop(state);
+                audit_shutdown
+                    .drain(std::time::Duration::from_secs(1))
+                    .await;
+            })
+            .await;
+        }
+
         mod postgres_tests {
             #[tokio::test]
             #[ignore = "requires isolated PostgreSQL"]
@@ -3645,6 +3859,12 @@ mod tests {
             #[ignore = "requires isolated PostgreSQL"]
             async fn fanout_membership_healthy_large_batch() {
                 super::fanout_membership_healthy_large_batch_impl().await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn the_relay_canary_detector_sees_only_a_published_question() {
+                super::the_relay_canary_detector_sees_only_a_published_question_impl().await;
             }
         }
     }

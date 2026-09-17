@@ -47,6 +47,12 @@ jobs:
           touch "desktop/src-tauri/binaries/buzz-dev-mcp-$TARGET"
           touch "desktop/src-tauri/binaries/git-credential-nostr-$TARGET"
           touch "desktop/src-tauri/binaries/buzz-$TARGET"
+      # The private Ask's containment and session-isolation proofs spawn real
+      # processes under sandbox-exec, so macOS is the only lane that can run
+      # them. The modules are cfg-gated to macOS; ubuntu lanes still run the
+      # fail-closed assertions through the ordinary desktop Rust job.
+      - name: Private Ask contract (real-process proofs)
+        run: just private-ask-contract
       # Mesh rev is derived from Cargo.lock so a dependency bump needs no
       # lockstep edit here; the cache key tracks it automatically.
       - name: Resolve mesh-llm rev
