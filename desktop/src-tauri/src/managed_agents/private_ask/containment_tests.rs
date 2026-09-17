@@ -90,7 +90,11 @@ impl HostileFixture {
                 descendant_pid_file.to_str().expect("pid path"),
             )
             .replace("__READABLE__", readable.to_str().expect("readable path"));
-        let executable = directory.join(name);
+        // Installed in its own directory, never in the directory that holds the
+        // run roots: the launch policy makes the runtime's directory readable,
+        // and production refuses a runtime installed above the run roots.
+        let installation = super::tests::runtime_installation(directory);
+        let executable = installation.join(name);
         std::fs::write(&executable, script).expect("fixture");
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
             .expect("fixture permissions");

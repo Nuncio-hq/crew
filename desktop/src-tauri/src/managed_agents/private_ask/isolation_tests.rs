@@ -14,8 +14,8 @@ use super::capability::{
 };
 use super::session_evidence::SessionSnapshot;
 use super::tests::{
-    bounded_egress, canonical_tempdir, captured_now, executable, owned_receipt, request, state,
-    FIXTURE_PERSONA, PROBE_PROXY_PORT,
+    bounded_egress, canonical_tempdir, captured_now, executable, owned_receipt, request,
+    runtime_installation, state, FIXTURE_PERSONA, PROBE_PROXY_PORT,
 };
 use super::*;
 use sha2::{Digest, Sha256};
@@ -102,6 +102,7 @@ impl Drop for BusyEmployeeSession {
 /// A private Ask runtime that reports what it can actually see: its own parent,
 /// its `HOME`, and whether the employee's ledger was reachable.
 fn reporting_runtime(directory: &Path, employee_ledger: &Path) -> PathBuf {
+    let directory = &runtime_installation(directory);
     let script = format!(
         "#!/usr/bin/perl\n\
          local $/;\n\
@@ -294,7 +295,7 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
 #[test]
 fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
     let directory = canonical_tempdir();
-    let path = directory.path().join("runtime");
+    let path = runtime_installation(directory.path()).join("runtime");
     let mut selected = state(&path, "claude", "claude-fable-5-1", None);
     selected.lifecycle = AgentLifecycle::Busy;
     let mut capability = PrivateAskCapability::verified_for_fixture(&selected);

@@ -71,7 +71,17 @@ fn interpreter_directory_with_path(
     // that prefix is the read root, because the runtime loads its libraries and
     // standard library from its siblings.
     let read_root = if bin.file_name().and_then(|name| name.to_str()) == Some("bin") {
-        bin.parent().unwrap_or(bin.as_path()).to_path_buf()
+        // `/bin/sh` would make the prefix `/` — a read allowance for the whole
+        // disk, which is the opposite of what this allow-list is for. A system
+        // `bin` directly under the root needs no prefix anyway: `/bin`, `/usr`
+        // and `/sbin` are already readable, and the containment policy refuses
+        // a read root that covers the run roots.
+        let parent = bin.parent().unwrap_or(bin.as_path());
+        if parent.parent().is_none() {
+            bin.clone()
+        } else {
+            parent.to_path_buf()
+        }
     } else {
         bin.clone()
     };

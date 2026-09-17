@@ -92,10 +92,18 @@ fn healthy_probe(state: &SelectedAgentState, run_root: PathBuf) -> PrivateAskPro
 
 fn fixture() -> (tempfile::TempDir, SelectedAgentState, PathBuf) {
     let directory = canonical_tempdir();
-    let path = directory.path().join("runtime");
+    // The runtime is installed in its own directory, beside the run roots and
+    // never above them: a real `claude` lives in `/usr/local/bin`, not in the
+    // directory that holds every attempt's private state. A fixture laid out
+    // the other way would be refused before a policy is built.
+    let installation = directory.path().join("install");
+    std::fs::create_dir(&installation).unwrap();
+    let path = installation.join("runtime");
     let mut selected = state(&path, "claude", "claude-fable-5-1", None);
     selected.executable = executable(&path);
-    let run_root = directory.path().join("probe-root");
+    let runs = directory.path().join("runs");
+    std::fs::create_dir(&runs).unwrap();
+    let run_root = runs.join("probe-root");
     std::fs::create_dir(&run_root).unwrap();
     (directory, selected, run_root)
 }
@@ -351,11 +359,15 @@ fn a_probe_for_another_selection_is_rejected_rather_than_projected() {
 #[test]
 fn a_probe_that_read_outside_its_run_root_cannot_certify_read_isolation() {
     let fixture = canonical_tempdir();
-    let path = fixture.path().join("runtime");
+    let installation = fixture.path().join("install");
+    std::fs::create_dir(&installation).unwrap();
+    let path = installation.join("runtime");
     let selected = state(&path, "claude", "claude-fable-5-1", None);
+    let runs = fixture.path().join("runs");
+    std::fs::create_dir(&runs).unwrap();
 
     // A read that was never attempted proves nothing.
-    let run_root = fixture.path().join("probe-root-read-unattempted");
+    let run_root = runs.join("probe-root-read-unattempted");
     std::fs::create_dir(&run_root).unwrap();
     let mut probe = healthy_probe(&selected, run_root);
     probe.tool_probe.read_outside_requested = false;
@@ -367,7 +379,7 @@ fn a_probe_that_read_outside_its_run_root_cannot_certify_read_isolation() {
     );
 
     // A read that returned the employee's bytes is an escape.
-    let run_root = fixture.path().join("probe-root-read-escaped");
+    let run_root = runs.join("probe-root-read-escaped");
     std::fs::create_dir(&run_root).unwrap();
     let mut probe = healthy_probe(&selected, run_root);
     probe.tool_probe.read_outside_denied = false;

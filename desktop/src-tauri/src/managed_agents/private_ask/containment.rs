@@ -48,6 +48,50 @@
 use super::PrivateAskFailure;
 use std::path::{Path, PathBuf};
 
+/// Refuse a read allowance that would cover the directory holding every run
+/// root.
+///
+/// The runtime's own installation directory is readable, because a runtime has
+/// to load its own files. A runtime installed *above* the run roots turns that
+/// allowance into a read allowance for every other attempt's prompt, staged
+/// profile and retained state — the exact disclosure the narrowed read policy
+/// exists to stop. It is refused rather than narrowed: a policy that silently
+/// dropped the runtime's own directory would fail in the dynamic loader instead.
+///
+/// Only the ancestor direction is refused. A runtime directory *inside* the run
+/// roots is a different (and harmless) shape, and the probe's own fixtures sit
+/// that way.
+fn read_roots_clear_of_run_roots(
+    run_root: &Path,
+    runtime_directory: &Path,
+    extra_read_roots: &[PathBuf],
+) -> Result<(), PrivateAskFailure> {
+    // Every run root is a child of this directory, so covering it covers all of
+    // them. A run root with no parent is not one this recipe produced.
+    let run_roots = run_root
+        .parent()
+        .ok_or(PrivateAskFailure::ProcessContainmentUnverified)?;
+    // Canonicalized on both sides: a symlinked or `..`-bearing read root that
+    // resolves above the run roots is the same disclosure by another name, and
+    // a path that cannot be resolved is refused rather than assumed unrelated.
+    let run_roots = run_roots
+        .canonicalize()
+        .map_err(|_| PrivateAskFailure::ProcessContainmentUnverified)?;
+    for candidate in
+        std::iter::once(runtime_directory).chain(extra_read_roots.iter().map(AsRef::as_ref))
+    {
+        let candidate = candidate
+            .canonicalize()
+            .map_err(|_| PrivateAskFailure::ProcessContainmentUnverified)?;
+        // Component-wise, never a string prefix: `<base>/agents-runtime` is not
+        // an ancestor of `<base>/agents`, and `starts_with` knows that.
+        if run_roots.starts_with(&candidate) {
+            return Err(PrivateAskFailure::ProcessContainmentUnverified);
+        }
+    }
+    Ok(())
+}
+
 /// Build the Seatbelt policy text confining one attempt to `run_root`.
 ///
 /// Returns [`PrivateAskFailure::ProcessContainmentUnverified`] on any platform
@@ -68,6 +112,7 @@ pub(super) fn private_ask_containment_profile(
         if proxy_port == 0 {
             return Err(PrivateAskFailure::ProcessContainmentUnverified);
         }
+        read_roots_clear_of_run_roots(run_root, runtime_directory, extra_read_roots)?;
         let root = sbpl_path(run_root)?;
         let runtime = sbpl_path(runtime_directory)?;
         // An npm-installed runtime is a `#!` script, so its interpreter's own
@@ -105,7 +150,10 @@ pub(super) fn private_ask_containment_profile(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (run_root, runtime_directory, extra_read_roots, proxy_port);
+        // Applied here too so the predicate is exercised on every platform's
+        // unit lane, even though this platform has no boundary to build.
+        read_roots_clear_of_run_roots(run_root, runtime_directory, extra_read_roots)?;
+        let _ = proxy_port;
         Err(PrivateAskFailure::ProcessContainmentUnverified)
     }
 }
@@ -128,3 +176,7 @@ fn sbpl_path(path: &Path) -> Result<&str, PrivateAskFailure> {
     }
     Ok(value)
 }
+
+#[cfg(test)]
+#[path = "containment_read_roots_tests.rs"]
+mod read_roots_tests;
