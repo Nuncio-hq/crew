@@ -39,11 +39,14 @@ fn an_npm_style_shim_resolves_through_env_to_the_real_interpreter() {
     // would race every other test that reads it.
     let resolved =
         interpreter_directory_with_path(&shim, Some(interpreter_dir.clone().into_os_string()));
+    let resolved = resolved.expect("the interpreter must be resolved");
     assert_eq!(
-        resolved,
-        Some(interpreter_dir.canonicalize().expect("canonical")),
-        "the interpreter's own directory must be resolved"
+        resolved.bin,
+        interpreter_dir.canonicalize().expect("canonical")
     );
+    // The directory is not named `bin`, so the read root is the directory
+    // itself rather than a prefix.
+    assert_eq!(resolved.read_root, resolved.bin);
 }
 
 #[test]

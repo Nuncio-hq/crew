@@ -33,6 +33,13 @@
 //!   child cannot resolve a name at all — verified: `gethostbyname` fails under
 //!   this policy. The proxy does every lookup, which is exactly why the set of
 //!   destinations it recorded is the complete set the child asked for.
+//! * `mach-lookup` is denied outright, with no allow-list. Verified on macOS
+//!   25.5: `/usr/bin/perl`, a Homebrew `node` and the real Hermes CPython
+//!   interpreter all still start under it, so the empirically minimal allow-list
+//!   is the empty one. A runtime that genuinely needs a Mach service will fail
+//!   loudly at launch rather than quietly reaching one.
+//!   NAMED LIMIT: this was measured on startup, not across a whole answered
+//!   run; the staging walkthrough re-checks it against the real runtimes.
 //! * `process-exec*` is deliberately *not* denied: `sandbox-exec` applies the
 //!   policy and then `execvp`s the runtime itself, so denying exec makes the
 //!   launch fail outright. `deny process-fork` is what stops new processes; an
@@ -92,6 +99,7 @@ pub(super) fn private_ask_containment_profile(
              (allow file-write-data (literal \"/dev/null\") (literal \"/dev/dtracehelper\"))\n\
              (deny network-outbound)\n\
              (allow network-outbound (remote ip \"localhost:{proxy_port}\"))\n\
+             (deny mach-lookup)\n\
              (deny process-fork)"
         ))
     }

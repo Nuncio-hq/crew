@@ -24,8 +24,22 @@ const SHEBANG_LIMIT: usize = 512;
 /// `None` when the file is not a `#!` script, when the interpreter cannot be
 /// resolved, or when it already lives in the executable's own directory — in
 /// each case there is nothing extra to allow.
-pub(super) fn interpreter_directory(executable: &Path) -> Option<PathBuf> {
+pub(super) fn interpreter_directory(executable: &Path) -> Option<InterpreterPaths> {
     interpreter_directory_with_path(executable, std::env::var_os("PATH"))
+}
+
+/// Where an interpreted runtime's interpreter lives.
+///
+/// `bin` is what joins `PATH`; `read_root` is what joins the policy's read
+/// allow-list. They differ because an interpreter is rarely self-contained: a
+/// Homebrew `node` loads `../lib/libnode.dylib`, and a virtualenv's `python3`
+/// resolves to an interpreter whose standard library sits beside its own `bin`.
+/// Allowing only `bin` produces a dynamic-loader failure before `main`, which
+/// reads like a broken installation rather than a policy that is too narrow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct InterpreterPaths {
+    pub(super) bin: PathBuf,
+    pub(super) read_root: PathBuf,
 }
 
 /// The same resolution against an explicit `PATH`.
@@ -36,20 +50,32 @@ pub(super) fn interpreter_directory(executable: &Path) -> Option<PathBuf> {
 fn interpreter_directory_with_path(
     executable: &Path,
     search_path: Option<std::ffi::OsString>,
-) -> Option<PathBuf> {
+) -> Option<InterpreterPaths> {
     let mut file = std::fs::File::open(executable).ok()?;
     let mut head = vec![0u8; SHEBANG_LIMIT];
     let read = file.read(&mut head).ok()?;
     head.truncate(read);
     let interpreter = resolved_interpreter(&head, search_path)?;
-    let directory = interpreter.parent()?.canonicalize().ok()?;
+    // Canonicalize the interpreter FILE, not just its directory: a virtualenv
+    // `python3` is a symlink to the real interpreter, and it is the real one
+    // whose installation has to be readable.
+    let interpreter = interpreter.canonicalize().ok()?;
+    let bin = interpreter.parent()?.to_path_buf();
     let own = executable
         .parent()
         .and_then(|parent| parent.canonicalize().ok());
-    if own.as_deref() == Some(directory.as_path()) {
+    if own.as_deref() == Some(bin.as_path()) {
         return None;
     }
-    Some(directory)
+    // An interpreter in a `bin` directory belongs to an installation prefix;
+    // that prefix is the read root, because the runtime loads its libraries and
+    // standard library from its siblings.
+    let read_root = if bin.file_name().and_then(|name| name.to_str()) == Some("bin") {
+        bin.parent().unwrap_or(bin.as_path()).to_path_buf()
+    } else {
+        bin.clone()
+    };
+    Some(InterpreterPaths { bin, read_root })
 }
 
 /// The program a `#!` line actually runs.

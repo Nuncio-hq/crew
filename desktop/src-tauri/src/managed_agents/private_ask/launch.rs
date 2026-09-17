@@ -264,9 +264,9 @@ pub(super) fn isolated_env(root: &Path, executable: &Path) -> BTreeMap<OsString,
         .unwrap_or_else(|| Path::new("/usr/bin"))
         .display()
         .to_string();
-    for extra in extra_read_roots(executable) {
+    if let Some(interpreter) = super::runtime_paths::interpreter_directory(executable) {
         path.push(':');
-        path.push_str(&extra.display().to_string());
+        path.push_str(&interpreter.bin.display().to_string());
     }
     path.push_str(":/usr/bin:/bin");
     env.insert(OsString::from("PATH"), path.into());
@@ -278,6 +278,7 @@ pub(super) fn isolated_env(root: &Path, executable: &Path) -> BTreeMap<OsString,
 pub(super) fn extra_read_roots(executable: &Path) -> Vec<PathBuf> {
     super::runtime_paths::interpreter_directory(executable)
         .into_iter()
+        .map(|paths| paths.read_root)
         .collect()
 }
 
