@@ -2428,37 +2428,59 @@ answer that cites nothing is accepted with no citations; not every answer cites,
 and refusing silence would make an honest "the source does not say" look
 hostile.
 
-What is still missing is the *resolver* in front of that path: nothing yet
-resolves a developer's question to a selected managed agent record, the grant
-anchored repository scope and a verified snapshot, so `dev_run` still refuses
-with `AgentUnbound` and the composer shows that refusal. An earlier revision of
-this entry said the producers it needs all exist. That was wrong, and the
-correction decides whether a dev-gated build can answer at all:
+**The resolver in front of that path is now real too.** A private Ask names
+three things and nothing else: which agent, which repository, and the question.
+Everything admission checks is observed on this machine:
 
-- **The runtime-ready grant has no in-app writer.**
-  `runtime_ready_proof_for_captured_scope` reads a grant document that only a
-  `RecapRuntimeCertification` can write, and the single app entry point for one
-  — `certify_runtime_probe_for_app` — returns `RuntimeNotReady` unconditionally,
-  by design, because no native observer yet binds provider output to the
-  executed command. So a desktop build cannot obtain the selected agent's
-  certified executable, model or profile by any path, and no resolver can supply
-  them from inside the Ask.
-- **There is no native observer-sequence source.** The observer store and the
-  session-generation bookkeeping are renderer state, and `buzz-acp`'s session
-  ledger is a private module of a crate the desktop does not depend on. The
-  desktop must not write a sequence file and read it back: that would make the
-  evidence a statement about itself, the same defect that was removed from
-  `child_parent_pid`.
-- **Grounded citations need a chosen source root.** `VerifiedSourceFile` is
-  produced only through the `wiki_source` grant store, so a grounded Ask needs
-  the viewer to have chosen the repository's source folder. A zero-grounding
-  Ask does not.
+- the agent's own record, and its effective configuration — persona and model —
+  through `resolve_effective_config`, so an orphaned instance is `AgentUnbound`
+  rather than an Ask answered with a persona nobody configured;
+- the runtime CLI's executable identity, hashed from the file itself and
+  re-hashed immediately before the launch;
+- the effective model, which for Hermes is read from the profile that owns it;
+- `acl_fingerprint`, hashed from the agent's own effective access projection
+  together with the scope, so a widened access policy changes it and admission
+  reports `AccessRevoked` rather than answering under yesterday's permissions;
+- `session_generation`, hashed from the running harness generation's start
+  nonce. The nonce is a secret shared with that generation, and the generation
+  string travels into the response and the owner-local record, so what travels
+  is its digest;
+- the snapshot, read natively: the resolver performs one scoped kind-30623 read
+  — the same read the Wiki pane already makes — and verifies the complete v1
+  graph itself, instead of accepting events from a renderer. It is a read; a
+  private Ask still publishes nothing;
+- the grounding, read through the `wiki_source` grant the viewer already chose.
+  An install with no chosen source folder asks a zero-grounding question rather
+  than being refused, and references are taken in the snapshot's own page order
+  and truncated at the input limit.
 
-The resolver is therefore a decision, not only an implementation: either those
-producers are built first, or the dev-gated path stays refused at
-`MissingRuntime`. Until then `VerifiedStagingOwnership::load`,
-`resolve_effective_config` and `crew_wiki::snapshot_v1::verify_snapshot` are
-usable; the rest need provisioning that does not exist yet.
+An earlier revision of this entry said the resolver was blocked because the
+recap runtime-ready grant has no in-app writer. That remains true of the grant
+(`certify_runtime_probe_for_app` refuses unconditionally, by design) — and it is
+not a blocker, because a private Ask does not depend on it. That grant belongs
+to the recap lineage; a private Ask's runtime identity comes from its own
+sources: the selected agent's effective configuration, the resolved executable,
+and the private Ask's own probe receipt, which already binds the executable
+hash, the policy text and the probe-program digest.
+
+**The session-isolation fence is reduced, deliberately.** It previously required
+an observer sequence as well as a ledger digest and the owned PID. There is no
+native observer-sequence source: observer frames are ephemeral kind 24200 and
+are not archived unconditionally, and the desktop writing a sequence file and
+reading it back would make the evidence a statement about itself — the same
+defect that was removed from `child_parent_pid`. The fence is now the
+harness's own **ACP session-ledger directory** for this exact (relay, agent)
+pair — at least one entry is required, the digest binds each entry's name,
+length and bytes in sorted order, and a missing, empty, oversized or unreadable
+directory is `SessionObservationUnavailable` before any child starts — together
+with the PID of the harness child this process owns a handle to. The desktop
+cannot depend on `buzz-acp`, so the directory derivation is mirrored and the
+mirror is pinned by a test rather than assumed.
+
+The consequence is stated rather than hidden: an agent with no live harness
+generation cannot be asked. It has no ledger to be shown to have been left
+alone, and admission requires an independent invocation unconditionally. That
+is `SessionObservationUnavailable`; `AgentUnbound` means there is no such agent.
 
 **A capability is minted from one real contained run.** The probe launches under
 byte-identical policy text to a production answer, with the proxy serving, and
@@ -2581,6 +2603,14 @@ attempt through the production launch path must move that count by zero.
   citation paths and line ranges, never the source text. A history that cannot be
   written does not change the answer or the refusal the viewer is given; the
   screen says the attempt was not kept.
+- A private Ask's scope carries a `project_id`, and there is no native project
+  registry to resolve one from, so the repository coordinate is used as that
+  identity. It is derived natively rather than accepted from a caller, but it
+  does not prove membership of a project the way the repository half is proved
+  against the snapshot's signed manifest.
+- The developer surface offers only agents with a live harness generation,
+  because the resolver refuses any other. An agent that is merely configured is
+  therefore absent from the picker rather than present and always refused.
 - Session-isolation evidence certifies only a session that was idle across the
   window: it requires the employee's ledger digest to be unchanged, whereas a
   genuinely busy `buzz-acp` advances its own ledger. The criterion is therefore

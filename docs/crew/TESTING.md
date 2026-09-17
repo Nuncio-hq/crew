@@ -1231,20 +1231,23 @@ production-bound tests do not replace installed Activity acceptance.
 
 ## Private Wiki Ask contract (#365)
 
-The private Ask **answers** from a resolved selection: `binding_tests.rs` drives
-a real contained run end to end — capture the probe, retain it, project it,
-admit it, run the one-shot, resolve the answer's own citations. What is still
-missing is the resolver in front of that path, so the developer surface itself
-still shows `AgentUnbound` (D-083).
+The private Ask **answers** from a resolved selection, and the resolver in front
+of it is real: `selection_tests.rs` drives `resolve_observed_selection` — the
+function the command's own path calls — and `binding_tests.rs` drives the
+contained run end to end: capture the probe, retain it, project it, admit it,
+run the one-shot, resolve the answer's own citations.
 
-**A dev-gated build cannot yet answer, and the reason is a missing producer
-rather than a missing wire.** Even with a resolver, the selected agent's
-certified executable/model/profile come from the recap runtime-ready grant, and
-nothing in the app writes that grant — `certify_runtime_probe_for_app` returns
-`RuntimeNotReady` unconditionally. An installed acceptance run therefore stops
-at `MissingRuntime` unless the grant is provisioned first. Do not report a
-dev-gated end-to-end answer as available until that producer exists; D-083
-records the same correction.
+**What a caller may name is exactly three things**: the attempt id, the agent,
+and the repository coordinate. The persona, the model, the executable, the
+access projection, the harness generation, the snapshot and the grounding are
+all observed natively, and `selection_tests.rs` asserts that two different
+observations of the same request resolve to different `acl_fingerprint` and
+`session_generation` values while the request itself is unchanged.
+
+**An agent with no live harness generation cannot be asked.** It has no ACP
+session-ledger entry to be shown to have been left alone, and the refusal is
+`the selected agent's running session could not be observed` — not
+`AgentUnbound`, which means there is no such agent (D-083).
 
 Every fence below the binding is live, so its tests assert the **reason** a
 request is refused and never merely that it was — the egress proof runs a real
@@ -1275,7 +1278,8 @@ fails closed.
 |-------|----------|--------------|
 | `privacy_tests.rs` | The relay egress census in `egress_guard.rs` | Routing any part of an Ask through a publish boundary; deleting the counter |
 | `containment_tests.rs` | `PrivateAskLaunchPlan::command`'s `sandbox-exec` wrapper and the policy's allow-lists | Removing the wrapper; widening `file-read*`; the control run proves the fixture is genuinely hostile |
-| `session_evidence_tests.rs` | `SessionSnapshot::capture` reading the session's own bytes | Accepting an unreadable artefact as an empty digest |
+| `session_evidence_tests.rs` | `SessionSnapshot::capture` reading the harness's own ledger directory, and the mirrored derivation of where that directory is | Accepting a missing, empty or unreadable ledger directory as a digest; drifting from `buzz-acp`'s own `session_ledger_dir_for_scope` |
+| `selection_tests.rs` | `resolve_observed_selection` — the resolver's deciding half | Taking `acl_fingerprint` or `session_generation` from a request; resolving a scope that names another agent, relay or repository; resolving an agent with an empty ledger directory; treating a non-`Ready` harness generation as idle |
 | `capability_tests.rs` | `PrivateAskCapability::from_probe` | Certifying a dimension whose named evidence does not hold |
 | `egress_proxy_tests.rs` | The CONNECT parser and `EgressObservation::bounds_egress` | Accepting a non-CONNECT request, an IP-literal or foreign target; certifying a record with no refusal or no accepted provider connection |
 | `credential_tests.rs` + `privacy_tests.rs` | `stage_private_ask_credential`'s proxy gate and the environment-only handoff | Staging a token without a live proxy; putting it on argv, in the prompt, or in the run root |
@@ -1357,16 +1361,25 @@ the existing staging harness; step 5 is where the Ask itself stops today.
    on the observer's side; that is the privacy half, and the relay-side canary
    in `buzz-relay` is its automated counterpart.
 5. **Start the selected agent and give it one turn** before asking, so its ACP
-   session ledger entry exists. An agent that has never run has no observable
-   session, and `independent_invocation` is refused —
-   `the selected agent's running session could not be observed`.
+   session ledger directory holds at least one entry. An agent that has never
+   run has no observable session and is refused with
+   `the selected agent's running session could not be observed`; an agent that
+   is not running at all does not appear in the composer's agent picker.
+6. **Choose the repository's source folder** in the Wiki source pane, if the
+   answer should be grounded. Without a grant the Ask still runs; it simply
+   carries no grounding, and an answer that cites anything is then refused by
+   the citation fence.
 
-Then ask. **What the screen shows today is a refusal**, and which one is the
-evidence: `selected agent is unavailable` while no resolver is wired, and
-`selected runtime is unavailable` once one is, because the runtime-ready grant
-has no writer. Cancel during a run reports `the private Ask was cancelled`, and
-that sentence — not a process error — is what the owner-local list keeps. If an
-attempt cannot be written to that list, the composer says so under the answer.
+Then ask. **The expected outcome on a bound agent is an answer**, with the
+agent picker showing the running agent, the composer showing the answer, and
+any citation resolving into the source pane. A refusal names its own reason, and
+the reason is the evidence: `the selected agent's running session could not be
+observed` for an agent with no ledger entry, `selected agent is busy` for a
+generation mid-turn with no independence observation, `runtime network egress is
+not bounded to the model provider` for a provider the proxy cannot bind. Cancel
+during a run reports `the private Ask was cancelled`, and that sentence — not a
+process error — is what the owner-local list keeps. If an attempt cannot be
+written to that list, the composer says so under the answer.
 
 ### Staging evidence list
 
@@ -1390,8 +1403,13 @@ must capture:
   visible, and confirm the staged profile copy carries no provider key.
 - Identity B's REQ/EOSE transcripts across the whole Ask, plus the backfill, and
   the SQL canary count.
-- The employee session's ledger digest, observer sequence and harness PID,
-  before and after.
+- The private Ask probe receipt as stored on disk (the JSON file under the owned
+  probe base), so the executable fingerprint, the policy text, the probe-program
+  digest and `captured_at` are all readable evidence.
+- The employee session's ledger-directory digest and entry count, and the
+  harness PID, before and after the Ask.
+- The answered attempt's owner-local history entry: question, answer, citation
+  paths and line ranges.
 - Base and head SHAs.
 
 Point the selection at the runtime's **real** executable, not at a shell

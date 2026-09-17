@@ -932,11 +932,13 @@ submodules split the responsibilities:
 | `prompt.rs` | Persona as delimited authority, question and grounding as data, config fingerprint |
 | `containment.rs` | The Seatbelt policy text for one run root and one runtime directory |
 | `capability.rs` | The only production producer of a positive capability, from a retained probe |
+| `selection.rs` | The resolver's deciding half: one native observation of an agent becomes a selection, or a typed refusal |
+| `selection_native.rs` | The resolver's gathering half: the agent record, the live harness generation, one scoped snapshot read, the source grant |
 | `binding.rs` | The sequencing from a resolved selection to an answer: retained-or-fresh probe, projection, admission, attempt |
 | `citations.rs` | The answer-citation fence: every cited path must be one the verified grounding accounts for |
 | `history.rs` | The bounded owner-local record of what was asked and what came back |
 | `cancel_registry.rs` | Which attempts are in flight, and the flag `private_ask_cancel` raises on one |
-| `session_evidence.rs` | Observation of a running employee session; the only way to obtain isolation evidence |
+| `session_evidence.rs` | Observation of a running employee session's ACP session-ledger directory; the only way to obtain isolation evidence |
 | `profile.rs`, `recovery.rs`, `validation.rs` | Hermes profile staging, crash recovery, input fences |
 
 The lineage difference that matters is the transport: a recap and a Wiki
@@ -970,6 +972,23 @@ retains that trace in an owned, uid-validated directory bound to this install's
 ownership digest, so one probe serves later Asks until it expires; loading a
 receipt yields a probe, never a capability, and every admission fence still
 applies. `independent_invocation` is deliberately never restored from a receipt.
+
+`private_ask/selection.rs` is what turns an observation into a selection. A
+private Ask names an agent, a repository and a question; everything admission
+checks — the persona and model from the agent's own effective configuration, the
+executable identity, the ACL projection, the harness generation and the verified
+snapshot — is produced natively in `private_ask/selection_native.rs`, which is
+also the only part that needs an `AppHandle`. Its one piece of relay traffic is a
+**read**: the same scoped kind-30623 query the Wiki pane makes, so the snapshot
+is verified here rather than carried by a renderer. Nothing is published.
+
+Session isolation is observed from the harness's own ACP session-ledger
+directory for the exact (relay, agent) pair, together with the PID of the child
+this process owns a handle to. At least one ledger entry is required; a missing,
+empty, oversized or unreadable directory refuses before any child starts. The
+desktop does not depend on `buzz-acp`, so that directory's location is a mirrored
+derivation pinned by a test. An agent with no live harness generation therefore
+cannot be asked at all — there is nothing to be shown to have been left alone.
 
 `private_ask/binding.rs` is what turns a resolved selection into an answer, and
 `private_ask/citations.rs` is what bounds that answer: the runtime prints its
