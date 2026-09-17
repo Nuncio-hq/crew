@@ -127,6 +127,10 @@ pub(super) struct ProbeContext<'a> {
     /// been reparented would still look independent.
     pub(super) session: Option<SessionObservation>,
     pub(super) now: u64,
+    /// The attempt's own cancel flag. A probe is a real child process and can
+    /// outlast the viewer's patience, so the withdrawal has to reach it too —
+    /// otherwise a cancel would only be observed once the probe finished.
+    pub(super) cancel: Arc<AtomicBool>,
 }
 
 /// Run one probe and capture its trace, or refuse.
@@ -255,7 +259,6 @@ fn capture_inside(
     command.env(probe_program::ENV_LOCK, &lock_path);
 
     before_spawn!(run.mark_process_pending().map_err(PrivateAskFailure::State));
-    let cancelled = AtomicBool::new(false);
     // The owned child PID is persisted before any output is consumed. Without
     // it a crash between spawn and completion leaves a pending root with no
     // process identity, which recovery can never reap — it would stay pending
@@ -270,7 +273,7 @@ fn capture_inside(
                 stderr: PROBE_STDERR_LIMIT,
             },
         },
-        &cancelled,
+        &context.cancel,
         |pid| {
             run.mark_process_started(pid).map_err(|failure| {
                 pid_error = Some(failure);
@@ -324,8 +327,12 @@ fn capture_inside(
     // may be created for a run whose egress is not already bounded. Recording it
     // after the proxy was consumed would have meant re-expressing the gate here
     // instead of passing through it.
-    let auth =
-        super::credential::observe_auth_evidence(&state.runtime_id, run_root, &proxy, &cancelled);
+    let auth = super::credential::observe_auth_evidence(
+        &state.runtime_id,
+        run_root,
+        &proxy,
+        &context.cancel,
+    );
     // Only now stop the proxy and take its record: after this point nothing may
     // reach the network on this attempt's behalf.
     // `with_observed_direct_connections` is how a probe supplies the count its

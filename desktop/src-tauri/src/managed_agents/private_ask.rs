@@ -8,6 +8,7 @@ use std::time::Duration;
 
 mod attempt;
 mod binding;
+mod cancel_registry;
 mod capability;
 mod citations;
 mod containment;
@@ -28,7 +29,8 @@ mod runtime_paths;
 mod session_evidence;
 mod validation;
 #[allow(unused_imports)]
-pub(crate) use attempt::{dev_run, PrivateAskAttempt, PrivateAskResponse};
+pub(crate) use attempt::{dev_run, AttemptIdentity, PrivateAskAttempt, PrivateAskResponse};
+pub(crate) use cancel_registry::{PrivateAskAttempts, RegisterFailure};
 use launch::PrivateAskLaunchPlan;
 #[cfg(test)]
 use prompt::build_prompt_with_nonce;
@@ -485,6 +487,13 @@ impl std::fmt::Display for PrivateAskFailure {
             }
             Self::InvalidState => f.write_str("private Ask state is invalid"),
             Self::ProfileUnavailable => f.write_str("selected runtime profile is unavailable"),
+            // A withdrawal is not a malfunction, and the viewer is the one who
+            // withdrew it: the generic process wording would make their own
+            // Cancel button read like a failure, in the answer box and in the
+            // owner-local record alike.
+            Self::Process(BoundedFailure::Cancelled) => {
+                f.write_str("the private Ask was cancelled")
+            }
             Self::Process(_) => f.write_str("private Ask process did not complete safely"),
             Self::State(_) => f.write_str("private Ask state could not be retained safely"),
             Self::NonzeroExit => f.write_str("selected runtime returned an error"),

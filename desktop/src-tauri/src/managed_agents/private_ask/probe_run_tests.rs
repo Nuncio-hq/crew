@@ -54,6 +54,7 @@ fn the_probe_runs_under_the_policy_text_a_real_answer_would_run_under() {
         state: &selected,
         ownership: &ownership,
         session: None,
+        cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         now: now(),
     })
     .expect("probe");
@@ -82,6 +83,7 @@ fn a_real_probe_observes_a_contained_envelope() {
         state: &selected,
         ownership: &ownership,
         session: None,
+        cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         now: now(),
     })
     .expect("probe");
@@ -121,6 +123,7 @@ fn a_trace_from_a_foreign_probe_program_cannot_certify() {
         state: &selected,
         ownership: &ownership,
         session: None,
+        cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         now: now(),
     })
     .expect("probe");
@@ -146,6 +149,7 @@ fn a_probe_that_observed_an_escape_refuses_certification() {
         state: &selected,
         ownership: &ownership,
         session: None,
+        cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         now: now(),
     })
     .expect("probe");
@@ -170,6 +174,7 @@ fn a_probe_without_session_observations_cannot_verify_independent_invocation() {
         state: &selected,
         ownership: &ownership,
         session: None,
+        cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         now: now(),
     })
     .expect("probe");
@@ -205,6 +210,7 @@ fn authentication_moves_independently_of_containment_in_both_directions() {
             state: &selected,
             ownership: &ownership,
             session: None,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             now: now(),
         })
         .expect("probe")

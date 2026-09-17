@@ -44,9 +44,17 @@ export type PrivateAskHistoryEntry = {
  */
 export type PrivateAskRunResult = {
   attemptId: string;
+  /** Empty when the attempt was refused. */
   markdown: string;
+  /**
+   * The backend's typed refusal. It arrives in a successful response rather
+   * than as a thrown error so `historyRecorded` can travel with it: a refusal
+   * whose owner-local record was also lost is a different thing from one that
+   * was kept, and an error carries only one string.
+   */
+  refusal: string | null;
   citations: PrivateAskCitation[];
-  /** False when the answer was produced but could not be kept on this machine. */
+  /** False when the outcome could not be kept on this machine. */
   historyRecorded: boolean;
 };
 
@@ -62,7 +70,8 @@ export type PrivateAskState = {
    * record: a private Ask publishes nothing, so nothing else holds it.
    */
   history: PrivateAskHistoryEntry[];
-  /** False when the last answer could not be written to that record. */
+  /** False when the last outcome — answer or refusal — could not be written
+   * to that record. */
   historyRecorded: boolean;
 };
 
@@ -95,7 +104,13 @@ export type PrivateAskAction =
       /** Whether the backend kept this attempt. Defaults to kept. */
       historyRecorded?: boolean;
     }
-  | { type: "refused"; attemptId: string; error: string }
+  | {
+      type: "refused";
+      attemptId: string;
+      error: string;
+      /** Whether the backend kept this refusal. Defaults to kept. */
+      historyRecorded?: boolean;
+    }
   | { type: "cancelled" }
   | { type: "restored"; history: PrivateAskHistoryEntry[] };
 
@@ -165,7 +180,7 @@ export function privateAskReducer(
         answer: "",
         citations: [],
         error: action.error,
-        historyRecorded: true,
+        historyRecorded: action.historyRecorded ?? true,
         history: remember(state.history, {
           attemptId: action.attemptId,
           question: state.question,

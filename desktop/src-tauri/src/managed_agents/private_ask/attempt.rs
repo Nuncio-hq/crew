@@ -42,14 +42,66 @@ use std::sync::Arc;
 ///
 /// The egress bound is no longer the blocker: `PrivateAskCapability::from_probe`
 /// projects it from the attempt proxy's own record.
-pub(crate) fn dev_run(question: &str) -> Result<PrivateAskResponse, PrivateAskFailure> {
+pub(crate) fn dev_run(
+    question: &str,
+    attempt: &AttemptIdentity,
+) -> Result<PrivateAskResponse, PrivateAskFailure> {
     if question.trim().is_empty() || question.contains('\0') {
         return Err(PrivateAskFailure::InvalidQuestion);
     }
     if question.len() > PRIVATE_ASK_INPUT_LIMIT {
         return Err(PrivateAskFailure::InputLimit);
     }
+    // A question the viewer already withdrew is not asked. The flag is the same
+    // one the attempt and its probe poll, so the outcome is the withdrawal
+    // rather than whatever the next fence happens to notice.
+    if attempt.is_cancelled() {
+        return Err(PrivateAskFailure::Process(BoundedFailure::Cancelled));
+    }
     Err(PrivateAskFailure::AgentUnbound)
+}
+
+/// The identity one attempt runs under: the id the owner-local record and the
+/// cancel registry are both keyed on, and the flag that stops it.
+///
+/// It is created by the registry, never by the attempt, because a cancel has to
+/// reach a run that has not started yet — an id minted inside `run()` could
+/// only be cancelled after the answer already existed.
+#[derive(Clone)]
+pub(crate) struct AttemptIdentity {
+    attempt_id: String,
+    cancel: Arc<AtomicBool>,
+}
+
+impl AttemptIdentity {
+    pub(crate) fn new(attempt_id: impl Into<String>, cancel: Arc<AtomicBool>) -> Self {
+        Self {
+            attempt_id: attempt_id.into(),
+            cancel,
+        }
+    }
+
+    /// A self-owned identity for a caller with no registry — the probe-capture
+    /// and binding tests, and any future internal run that nothing can cancel
+    /// from outside.
+    pub(crate) fn fresh() -> Self {
+        Self::new(
+            uuid::Uuid::new_v4().to_string(),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    pub(crate) fn attempt_id(&self) -> &str {
+        &self.attempt_id
+    }
+
+    pub(crate) fn cancel_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancel)
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Acquire)
+    }
 }
 
 /// Result from a completed owned attempt; citations are authenticated request grounding.
@@ -84,14 +136,28 @@ impl PrivateAskAttempt {
         ownership: VerifiedStagingOwnership,
         now: u64,
     ) -> Result<Self, PrivateAskFailure> {
+        Self::create_as(admission, ownership, now, &AttemptIdentity::fresh())
+    }
+
+    /// Create the run under an identity that already exists.
+    ///
+    /// This is the path a cancellable Ask takes: the registry minted the id and
+    /// the flag before the run started, so `private_ask_cancel` can reach this
+    /// attempt while it is still deciding whether it may launch at all.
+    pub(crate) fn create_as(
+        admission: PrivateAskAdmission,
+        ownership: VerifiedStagingOwnership,
+        now: u64,
+        attempt: &AttemptIdentity,
+    ) -> Result<Self, PrivateAskFailure> {
         let base = ownership.recap_base().map_err(PrivateAskFailure::State)?;
         let run = OwnedRecapRun::create(&base, now).map_err(PrivateAskFailure::State)?;
         Ok(Self {
             admission,
             ownership,
             run: Some(run),
-            cancel: Arc::new(AtomicBool::new(false)),
-            attempt_id: uuid::Uuid::new_v4().to_string(),
+            cancel: attempt.cancel_flag(),
+            attempt_id: attempt.attempt_id().to_owned(),
             profile_staged: false,
         })
     }

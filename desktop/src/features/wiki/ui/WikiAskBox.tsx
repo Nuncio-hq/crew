@@ -204,7 +204,8 @@ function PrivateAskDevComposer({
     privateAskReducer,
     initialPrivateAskState,
   );
-  const attempt = React.useRef(0);
+  /** The id of the run in flight, so Cancel can name it. */
+  const attempt = React.useRef<string | null>(null);
 
   /**
    * Read the owner-local record. It lives on this machine only — a private Ask
@@ -230,25 +231,43 @@ function PrivateAskDevComposer({
     if (!canAskPrivately(state, status)) {
       return;
     }
-    attempt.current += 1;
-    const attemptId = `attempt-${attempt.current}`;
+    // The id is minted here, before the run starts, because the command only
+    // returns once the attempt is over: an id taken from the answer could
+    // never be cancelled. The backend registers it and echoes it back.
+    const attemptId = crypto.randomUUID();
+    attempt.current = attemptId;
     dispatch({ type: "start" });
     invokeTauri<PrivateAskRunResult>("private_ask_run", {
+      attemptId,
       question: state.question,
     })
       .then((result) => {
-        dispatch({
-          type: "answered",
-          // The backend's own attempt id, not a renderer counter: it is the id
-          // the owner-local record is keyed on.
-          attemptId: result.attemptId,
-          markdown: result.markdown,
-          citations: result.citations,
-          historyRecorded: result.historyRecorded,
-        });
+        attempt.current = null;
+        if (result.refusal) {
+          dispatch({
+            type: "refused",
+            attemptId: result.attemptId,
+            error: result.refusal,
+            historyRecorded: result.historyRecorded,
+          });
+        } else {
+          dispatch({
+            type: "answered",
+            // The backend's own attempt id, not a renderer counter: it is the
+            // id the owner-local record is keyed on.
+            attemptId: result.attemptId,
+            markdown: result.markdown,
+            citations: result.citations,
+            historyRecorded: result.historyRecorded,
+          });
+        }
         void refreshHistory();
       })
       .catch((error: unknown) => {
+        // The command itself could not run — a closed gate, a foreign id, a
+        // blank question. The attempt never started, so nothing was recorded
+        // and nothing needs cancelling.
+        attempt.current = null;
         dispatch({
           type: "refused",
           attemptId,
@@ -260,10 +279,11 @@ function PrivateAskDevComposer({
   }, [state, status, refreshHistory]);
 
   const cancel = React.useCallback(() => {
+    const attemptId = attempt.current;
     dispatch({ type: "cancelled" });
     // A cancel the backend never heard of is a no-op there, so a failure here
     // is not worth surfacing to a developer who already sees an idle composer.
-    void invokeTauri("private_ask_cancel", { attemptId: null }).catch(() => {});
+    void invokeTauri("private_ask_cancel", { attemptId }).catch(() => {});
   }, []);
 
   return (
@@ -342,14 +362,14 @@ function PrivateAskDevComposer({
           </p>
         ) : null}
 
-        {state.answer && !state.historyRecorded ? (
+        {!state.historyRecorded && (state.answer || state.error) ? (
           <p
             aria-live="polite"
             className="mt-2 text-2xs text-muted-foreground"
             data-testid="wiki-ask-dev-history-unrecorded"
             role="status"
           >
-            This answer could not be kept on this machine.
+            This attempt could not be kept on this machine.
           </p>
         ) : null}
 

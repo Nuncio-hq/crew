@@ -25,6 +25,7 @@
 //! (`AgentBusy`) unless this attempt captured its own probe beside that live
 //! session. That is the fail-closed direction.
 
+use super::attempt::AttemptIdentity;
 use super::session_evidence::SessionObservation;
 use super::{
     admit_private_ask, probe_program, probe_receipt, PrivateAskAttempt, PrivateAskCapability,
@@ -48,6 +49,10 @@ pub(super) struct PrivateAskBinding {
     pub(super) hermes_profile: Option<PathBuf>,
     /// This machine's clock, supplied so receipt freshness is testable.
     pub(super) now: u64,
+    /// The id and cancel flag this attempt runs under. Both the probe capture
+    /// and the answering run poll the same flag, so a withdrawal is observed
+    /// whichever child is in flight.
+    pub(super) attempt: AttemptIdentity,
 }
 
 /// Resolve the capability for one selection and answer with it.
@@ -97,7 +102,8 @@ pub(super) fn answer(binding: PrivateAskBinding) -> Result<PrivateAskResponse, P
         }
     };
     let admission = admit_private_ask(binding.request, binding.state, capability)?;
-    let mut attempt = PrivateAskAttempt::create(admission, binding.ownership, binding.now)?;
+    let mut attempt =
+        PrivateAskAttempt::create_as(admission, binding.ownership, binding.now, &binding.attempt)?;
     if let Some(profile) = binding.hermes_profile.as_deref() {
         attempt.stage_hermes_profile(profile)?;
     }
@@ -119,6 +125,7 @@ fn capture(
         ownership: &binding.ownership,
         session: binding.session.clone(),
         now: binding.now,
+        cancel: binding.attempt.cancel_flag(),
     })
 }
 

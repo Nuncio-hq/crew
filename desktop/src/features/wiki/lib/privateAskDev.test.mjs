@@ -188,3 +188,30 @@ test("answered_reportsWhenTheMachineCouldNotKeepTheAttempt", () => {
   });
   assert.equal(state.historyRecorded, true);
 });
+
+test("refused_reportsWhenTheMachineCouldNotKeepTheRefusal", () => {
+  // The refused path used to drop this signal: the backend wrote the record
+  // with `let _ = record(...)`, so a viewer whose history silently lost the
+  // refusal had no way to know. It now travels with the refusal.
+  let state = privateAskReducer(withQuestion("q"), { type: "start" });
+  state = privateAskReducer(state, {
+    type: "refused",
+    attemptId: "a1",
+    error: "selected agent is unavailable",
+    historyRecorded: false,
+  });
+  assert.equal(state.error, "selected agent is unavailable");
+  assert.equal(state.historyRecorded, false);
+  // The refusal is still in this window's own list, which is what makes the
+  // note "not kept on this machine" rather than "lost".
+  assert.equal(state.history.length, 1);
+
+  // A refusal that WAS kept clears the note.
+  state = privateAskReducer(state, { type: "start" });
+  state = privateAskReducer(state, {
+    type: "refused",
+    attemptId: "a2",
+    error: "the private Ask was cancelled",
+  });
+  assert.equal(state.historyRecorded, true);
+});

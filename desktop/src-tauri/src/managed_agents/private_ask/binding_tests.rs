@@ -93,6 +93,7 @@ fn ask(
         session,
         hermes_profile: None,
         now,
+        attempt: super::super::AttemptIdentity::fresh(),
     })
 }
 

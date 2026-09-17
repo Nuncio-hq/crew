@@ -46,6 +46,7 @@ fn capture(fixture: &Fixture, captured_at: u64) -> PrivateAskProbe {
         state: &fixture.selected,
         ownership: &fixture.ownership,
         session: None,
+        cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         now: captured_at,
     })
     .expect("probe")

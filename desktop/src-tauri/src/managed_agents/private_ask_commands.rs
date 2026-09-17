@@ -15,8 +15,17 @@
 
 use super::private_ask::dev_gate::private_ask_dev_enabled;
 use super::private_ask::history::{self, PrivateAskHistoryEntry};
+use super::private_ask::{PrivateAskAttempts, RegisterFailure};
 use super::recap_ownership::VerifiedStagingOwnership;
 use serde::Serialize;
+
+/// Accept an attempt id only in the shape this surface mints.
+///
+/// The id keys the cancel registry and the owner-local record, and it arrives
+/// from a webview, so it is checked where it enters rather than deep inside.
+fn valid_attempt_id(attempt_id: &str) -> bool {
+    uuid::Uuid::parse_str(attempt_id).is_ok_and(|parsed| parsed.get_version_num() == 4)
+}
 
 /// Seconds since the epoch, or zero when this machine's clock cannot be read.
 ///
@@ -52,12 +61,20 @@ pub struct PrivateAskDevStatus {
 #[serde(rename_all = "camelCase")]
 pub struct PrivateAskRunResult {
     pub attempt_id: String,
+    /// Empty when the attempt was refused; `refusal` carries the reason.
     pub markdown: String,
+    /// The typed refusal, in the viewer-safe vocabulary. It travels in a
+    /// successful response rather than as an `Err` so the history signal below
+    /// can travel with it: an `Err(String)` has room for one string, and a
+    /// refusal whose record was also lost would otherwise be indistinguishable
+    /// from one that was kept. `Err` is still returned when the command itself
+    /// could not run.
+    pub refusal: Option<String>,
     pub citations: Vec<PrivateAskCitation>,
-    /// False when the answer was produced but could not be written to the
-    /// owner-local history. It is reported rather than swallowed: the answer is
-    /// still an answer, and a history quietly missing it would be a worse lie
-    /// than a visible note.
+    /// False when the attempt finished — answered or refused — but could not
+    /// be written to the owner-local history. It is reported rather than
+    /// swallowed: the outcome still happened, and a history quietly missing it
+    /// would be a worse lie than a visible note.
     pub history_recorded: bool,
 }
 
@@ -87,13 +104,6 @@ pub async fn private_ask_dev_status<R: tauri::Runtime>(
         VerifiedStagingOwnership::load(&app)
             .err()
             .map(|_| "this install has no owned staging tree for a private Ask".to_string())
-            .or_else(|| {
-                // The one remaining reason a developer needs stated up front.
-                // It is the binding, not a fence a probe could satisfy.
-                super::private_ask::dev_run("status probe")
-                    .err()
-                    .map(|failure| failure.to_string())
-            })
     };
     Ok(PrivateAskDevStatus {
         enabled,
@@ -126,74 +136,95 @@ pub async fn private_ask_history<R: tauri::Runtime>(
 #[tauri::command]
 pub async fn private_ask_run<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    attempts: tauri::State<'_, PrivateAskAttempts>,
+    attempt_id: String,
     question: String,
 ) -> Result<PrivateAskRunResult, String> {
     if !private_ask_dev_enabled() {
         return Err(PRIVATE_ASK_UNAVAILABLE.to_string());
     }
+    if !valid_attempt_id(&attempt_id) {
+        return Err("a private Ask needs its own attempt id".to_string());
+    }
     if question.trim().is_empty() {
         return Err("a private Ask needs a question".to_string());
     }
+    // Registered before the run starts, so a cancel that arrives while the
+    // attempt is still choosing whether it may launch reaches it. The guard
+    // releases the id on every return path below, including an early one.
+    let registration = attempts.register(&attempt_id).map_err(|failure| {
+        match failure {
+            RegisterFailure::AlreadyRunning => "that private Ask is already running",
+            RegisterFailure::TooManyRunning => "too many private Asks are already running",
+        }
+        .to_string()
+    })?;
+    let identity =
+        super::private_ask::AttemptIdentity::new(&attempt_id, registration.cancel_flag());
     let asked_at = now_seconds();
     // The attempt is synchronous and bounded by `PRIVATE_ASK_TIMEOUT`, so it is
     // moved off the async runtime rather than blocking every other command for
     // the length of a model call. It still runs on ONE thread, which is what the
     // thread-scoped no-publish attribution relies on.
     let question_for_run = question.clone();
-    let outcome =
-        tokio::task::spawn_blocking(move || super::private_ask::dev_run(&question_for_run))
-            .await
-            .map_err(|_| "private Ask did not complete safely".to_string())?;
+    let outcome = tokio::task::spawn_blocking(move || {
+        super::private_ask::dev_run(&question_for_run, &identity)
+    })
+    .await
+    .map_err(|_| "private Ask did not complete safely".to_string())?;
 
     // History is written on both outcomes, before anything is returned: a
     // refusal is the attempt a developer most needs to look back at.
     let ownership = VerifiedStagingOwnership::load(&app).ok();
-    match outcome {
+    let (markdown, refusal, citations, entry) = match outcome {
         Ok(response) => {
             let entry = PrivateAskHistoryEntry::answered(&question, &response, asked_at);
-            let history_recorded = ownership
-                .is_some_and(|ownership| history::record(&ownership, entry, asked_at).is_ok());
-            Ok(PrivateAskRunResult {
-                attempt_id: response.attempt_id,
-                markdown: response.markdown,
-                citations: response
-                    .citations
-                    .iter()
-                    .map(|citation| PrivateAskCitation {
-                        path: citation.path().to_owned(),
-                        start_line: citation.start_line(),
-                        end_line: citation.end_line(),
-                    })
-                    .collect(),
-                history_recorded,
-            })
+            let citations = response
+                .citations
+                .iter()
+                .map(|citation| PrivateAskCitation {
+                    path: citation.path().to_owned(),
+                    start_line: citation.start_line(),
+                    end_line: citation.end_line(),
+                })
+                .collect();
+            (response.markdown, None, citations, entry)
         }
         Err(failure) => {
-            if let Some(ownership) = ownership {
-                let entry = PrivateAskHistoryEntry::refused(
-                    &question,
-                    &uuid::Uuid::new_v4().to_string(),
-                    &failure,
-                    asked_at,
-                );
-                // A history that could not be written must not change the
-                // reason the viewer is given for the refusal itself.
-                let _ = history::record(&ownership, entry, asked_at);
-            }
-            Err(failure.to_string())
+            let entry = PrivateAskHistoryEntry::refused(&question, &attempt_id, &failure, asked_at);
+            (String::new(), Some(failure.to_string()), Vec::new(), entry)
         }
-    }
+    };
+    let history_recorded =
+        ownership.is_some_and(|ownership| history::record(&ownership, entry, asked_at).is_ok());
+    Ok(PrivateAskRunResult {
+        attempt_id,
+        markdown,
+        refusal,
+        citations,
+        history_recorded,
+    })
 }
 
 /// Cancel an in-flight private Ask.
 ///
 /// Cancelling an attempt that is unknown or already finished is a no-op, not an
 /// error: a renderer that cancels twice, or cancels after the answer arrived,
-/// has not done anything wrong.
+/// has not done anything wrong. A live attempt is signalled through the flag
+/// its own run and probe already poll, so teardown stays with the bounded
+/// runner that owns the child.
 #[tauri::command]
-pub async fn private_ask_cancel(_attempt_id: Option<String>) -> Result<(), String> {
+pub async fn private_ask_cancel(
+    attempts: tauri::State<'_, PrivateAskAttempts>,
+    attempt_id: Option<String>,
+) -> Result<(), String> {
     if !private_ask_dev_enabled() {
         return Err(PRIVATE_ASK_UNAVAILABLE.to_string());
+    }
+    if let Some(attempt_id) = attempt_id.as_deref() {
+        if valid_attempt_id(attempt_id) {
+            attempts.cancel(attempt_id);
+        }
     }
     Ok(())
 }
