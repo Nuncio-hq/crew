@@ -351,7 +351,7 @@ impl ReceiptDocument {
                     })
                     .collect(),
                 dial_failures: probe.egress.dial_failures(),
-                truncated: false,
+                truncated: probe.egress.truncated(),
                 direct_connections: probe.egress.direct_connections(),
             },
             captured_at: probe.captured_at,

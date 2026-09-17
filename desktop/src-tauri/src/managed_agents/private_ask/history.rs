@@ -31,7 +31,57 @@ pub(super) const HISTORY_MAX_AGE: u64 = 30 * 24 * 60 * 60;
 
 /// Bytes accepted from the history file. A file larger than this is not one
 /// this writer produced, and is treated as absent rather than parsed.
+///
+/// The writer holds itself to the same number: it prunes oldest-first until the
+/// serialized document fits, so it can never produce a file its own reader
+/// would then refuse. Without that, fifty attempts carrying a 128 KiB question
+/// each would silently exceed it and the whole history would vanish on the next
+/// read.
 const HISTORY_LIMIT_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Question bytes retained per entry.
+///
+/// A question may be up to the prompt input bound; a log of fifty of those is
+/// not a log. What a viewer looks back for is which question they asked, and
+/// the opening few kilobytes carry that.
+const HISTORY_QUESTION_BYTES: usize = 4 * 1024;
+
+/// Answer bytes retained per entry. Generous enough for an ordinary answer to
+/// be kept whole, bounded so a pathological one cannot dominate the file.
+const HISTORY_MARKDOWN_BYTES: usize = 32 * 1024;
+
+/// Citations retained per entry. The answer's own citation fence already bounds
+/// these, so this only catches a hand-edited file.
+const HISTORY_CITATION_LIMIT: usize = 64;
+
+/// Appended to a value this log shortened, so a reader is never shown a partial
+/// question or answer as though it were the whole one.
+const HISTORY_TRUNCATION_MARKER: &str = "… (truncated by the local history log)";
+
+/// Where an unusable history file is moved before it is replaced.
+///
+/// Discarding it silently would be the second half of the same bug: the file is
+/// the only copy of what this viewer asked, so a reader that cannot parse it
+/// leaves it on disk under a name that says so rather than letting the next
+/// write overwrite it. A single fixed name, so repeated failures replace the
+/// quarantine instead of accumulating copies.
+const HISTORY_QUARANTINE_FILE: &str = "attempts.json.unreadable";
+
+/// Shorten one value to a byte bound without splitting a character.
+///
+/// `floor_char_boundary` is unstable, so the boundary is walked. The marker is
+/// added outside the bound: it is this log speaking, not retained content, and
+/// the total stays bounded because the marker is a constant.
+fn shortened(value: &str, limit: usize) -> String {
+    if value.len() <= limit {
+        return value.to_owned();
+    }
+    let mut end = limit;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &value[..end], HISTORY_TRUNCATION_MARKER)
+}
 
 const HISTORY_SCHEMA: &str = "crew-private-ask-history";
 const HISTORY_VERSION: u8 = 1;
@@ -79,12 +129,13 @@ impl PrivateAskHistoryEntry {
     pub(crate) fn answered(question: &str, response: &PrivateAskResponse, asked_at: u64) -> Self {
         Self {
             attempt_id: response.attempt_id.clone(),
-            question: question.to_owned(),
-            markdown: Some(response.markdown.clone()),
+            question: shortened(question, HISTORY_QUESTION_BYTES),
+            markdown: Some(shortened(&response.markdown, HISTORY_MARKDOWN_BYTES)),
             refusal: None,
             citations: response
                 .citations
                 .iter()
+                .take(HISTORY_CITATION_LIMIT)
                 .map(HistoryCitation::from)
                 .collect(),
             asked_at,
@@ -99,7 +150,7 @@ impl PrivateAskHistoryEntry {
     ) -> Self {
         Self {
             attempt_id: attempt_id.to_owned(),
-            question: question.to_owned(),
+            question: shortened(question, HISTORY_QUESTION_BYTES),
             markdown: None,
             // The viewer-safe vocabulary, the same string the screen shows.
             refusal: Some(failure.to_string()),
@@ -154,15 +205,18 @@ pub(crate) fn load(ownership: &VerifiedStagingOwnership, now: u64) -> Vec<Privat
         return Vec::new();
     };
     if !metadata.is_file() || metadata.len() > HISTORY_LIMIT_BYTES {
+        quarantine(&path);
         return Vec::new();
     }
     let Ok(bytes) = std::fs::read(&path) else {
         return Vec::new();
     };
     let Ok(document) = serde_json::from_slice::<HistoryDocument>(&bytes) else {
+        quarantine(&path);
         return Vec::new();
     };
     if document.schema != HISTORY_SCHEMA || document.version != HISTORY_VERSION {
+        quarantine(&path);
         return Vec::new();
     }
     retained(document.entries, now)
@@ -190,14 +244,65 @@ pub(crate) fn record(
     entries.retain(|existing| existing.attempt_id != entry.attempt_id);
     entries.insert(0, entry);
     let entries = retained(entries, now);
-    let document = HistoryDocument {
-        schema: HISTORY_SCHEMA.to_owned(),
-        version: HISTORY_VERSION,
-        entries: entries.clone(),
-    };
-    let bytes = serde_json::to_vec(&document).map_err(|_| PrivateAskFailure::InvalidState)?;
+    let (entries, bytes) = serialized_within_bound(entries)?;
     write_private(&path, &bytes)?;
     Ok(entries)
+}
+
+/// Move a history file this reader cannot use aside, under a name that says so.
+///
+/// Best effort on purpose: a private Ask must not be blocked by a log, and the
+/// caller has already decided to present an empty history. What this adds is
+/// that the bytes are still there afterwards, rather than being overwritten by
+/// the next attempt as though they had never existed.
+///
+/// A file that is not a regular file — a symlink standing in for the history —
+/// is left exactly where it is: renaming it would follow the attacker's
+/// pointer, and the write path refuses to replace it anyway.
+fn quarantine(path: &Path) {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if !metadata.is_file() {
+        return;
+    }
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let _ = std::fs::rename(path, parent.join(HISTORY_QUARANTINE_FILE));
+}
+
+/// Serialize the document, dropping the oldest entries until it fits the bound
+/// this file's own reader enforces.
+///
+/// The count and age bounds do not imply a size bound: fifty entries of an
+/// arbitrarily long question exceed `HISTORY_LIMIT_BYTES`, and the reader then
+/// discards the whole file. Losing the oldest attempts is the bounded failure;
+/// losing all of them is not.
+///
+/// The newest entry is never dropped — it is the attempt that was just made —
+/// so a single entry that cannot be made to fit is an error rather than an
+/// empty file. The per-entry caps make that unreachable in practice; it is
+/// typed rather than assumed.
+fn serialized_within_bound(
+    mut entries: Vec<PrivateAskHistoryEntry>,
+) -> Result<(Vec<PrivateAskHistoryEntry>, Vec<u8>), PrivateAskFailure> {
+    loop {
+        let document = HistoryDocument {
+            schema: HISTORY_SCHEMA.to_owned(),
+            version: HISTORY_VERSION,
+            entries: entries.clone(),
+        };
+        let bytes = serde_json::to_vec(&document).map_err(|_| PrivateAskFailure::InvalidState)?;
+        if bytes.len() as u64 <= HISTORY_LIMIT_BYTES {
+            return Ok((entries, bytes));
+        }
+        if entries.len() <= 1 {
+            return Err(PrivateAskFailure::InvalidState);
+        }
+        // Oldest first: `retained` already sorted newest-first.
+        entries.pop();
+    }
 }
 
 /// Apply both bounds: newest-first order, count, then age.

@@ -5,7 +5,10 @@
 //! `load`'s "anything unusable is empty" ladder.
 
 use super::super::tests::{canonical_tempdir, owned_receipt};
-use super::{load, record, PrivateAskHistoryEntry, HISTORY_LIMIT, HISTORY_MAX_AGE};
+use super::{
+    load, record, PrivateAskHistoryEntry, HISTORY_LIMIT, HISTORY_LIMIT_BYTES, HISTORY_MAX_AGE,
+    HISTORY_QUARANTINE_FILE, HISTORY_QUESTION_BYTES, HISTORY_TRUNCATION_MARKER,
+};
 use crate::managed_agents::recap_ownership::VerifiedStagingOwnership;
 
 fn entry(id: &str, asked_at: u64) -> PrivateAskHistoryEntry {
@@ -231,4 +234,106 @@ fn two_attempts_finishing_together_both_survive() {
         ids.contains("concurrent-0") && ids.contains("concurrent-1"),
         "neither attempt is lost to the other's write: {ids:?}"
     );
+}
+
+/// The writer must not be able to produce a file its own reader refuses.
+///
+/// Production line: the `serialized_within_bound` call in `record`. Without it,
+/// `HISTORY_LIMIT` entries carrying long questions and answers serialize past
+/// `HISTORY_LIMIT_BYTES`, `load` discards the file whole, and the viewer's
+/// entire private record disappears on the next read.
+#[test]
+fn a_history_of_large_attempts_stays_readable_rather_than_vanishing() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+
+    // Entries far larger than the per-entry caps would allow, written through
+    // the struct directly so this test exercises the write-side prune rather
+    // than the constructors' caps.
+    for index in 0..HISTORY_LIMIT {
+        let mut large = entry(&format!("attempt-{index}"), 1_000 + index as u64);
+        large.question = "q".repeat(200 * 1024);
+        large.markdown = Some("a".repeat(200 * 1024));
+        record(&ownership, large, 2_000).expect("record");
+    }
+
+    let size = std::fs::metadata(history_file(&ownership))
+        .expect("history file")
+        .len();
+    assert!(
+        size <= HISTORY_LIMIT_BYTES,
+        "the writer must keep the file inside the bound its reader enforces: {size}"
+    );
+    let entries = load(&owned_receipt(&fixture), 2_000);
+    assert!(
+        !entries.is_empty(),
+        "an oversized write must cost the oldest attempts, not all of them"
+    );
+    assert_eq!(
+        entries[0].attempt_id,
+        format!("attempt-{}", HISTORY_LIMIT - 1),
+        "the newest attempt is the one that must survive"
+    );
+}
+
+/// A question longer than the per-entry cap is shortened at a character
+/// boundary and marked, never sliced through a multi-byte character.
+///
+/// Production line: the `shortened(question, HISTORY_QUESTION_BYTES)` call in
+/// `PrivateAskHistoryEntry::refused`. A naive `&value[..limit]` panics here.
+#[test]
+fn a_long_multibyte_question_is_shortened_at_a_character_boundary() {
+    // Three bytes per character, so the cap lands mid-character.
+    let question = "な".repeat(HISTORY_QUESTION_BYTES);
+    assert!(!question.is_char_boundary(HISTORY_QUESTION_BYTES));
+
+    let recorded = PrivateAskHistoryEntry::refused(
+        &question,
+        "attempt",
+        &super::super::PrivateAskFailure::AgentBusy,
+        1_000,
+    );
+
+    assert!(recorded.question.ends_with(HISTORY_TRUNCATION_MARKER));
+    assert!(recorded.question.len() <= HISTORY_QUESTION_BYTES + HISTORY_TRUNCATION_MARKER.len());
+    assert!(
+        recorded.question.starts_with("な"),
+        "the retained prefix must still be valid text"
+    );
+}
+
+/// An unreadable history is moved aside rather than silently replaced.
+///
+/// Production line: the `quarantine(&path)` calls in `load`. Without them the
+/// only copy of what this viewer asked is overwritten by the next attempt, and
+/// nothing on the machine says it ever existed.
+#[test]
+fn an_unusable_history_is_kept_under_a_name_that_says_so() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    record(&ownership, entry("first", 1_000), 1_000).expect("record");
+    let path = history_file(&ownership);
+    std::fs::write(&path, b"not json at all").expect("damage the history");
+
+    assert!(load(&owned_receipt(&fixture), 1_100).is_empty());
+
+    let quarantined = path
+        .parent()
+        .expect("history directory")
+        .join(HISTORY_QUARANTINE_FILE);
+    assert_eq!(
+        std::fs::read(&quarantined).expect("quarantined bytes"),
+        b"not json at all",
+        "the bytes that could not be read must still be on disk"
+    );
+    assert!(
+        !path.exists(),
+        "the unusable file must not stay in place to be read again every time"
+    );
+
+    // The next attempt writes a fresh history beside the quarantine.
+    record(&ownership, entry("second", 1_200), 1_200).expect("record after quarantine");
+    let entries = load(&owned_receipt(&fixture), 1_300);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].attempt_id, "second");
 }

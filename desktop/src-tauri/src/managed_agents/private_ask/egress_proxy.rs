@@ -222,6 +222,16 @@ impl EgressObservation {
         self.dial_failures
     }
 
+    /// Whether either recorded list hit its cap.
+    ///
+    /// A truncated record is not evidence — `bounds_egress` refuses one — so it
+    /// must survive the round trip through a receipt. Persisting a constant
+    /// `false` here would turn a record that proved nothing into one that
+    /// certifies.
+    pub(crate) fn truncated(&self) -> bool {
+        self.truncated
+    }
+
     /// The provider was actually reached, every accepted target was that
     /// provider, something else was actually attempted and refused, no direct
     /// connection was observed, and the record is complete.

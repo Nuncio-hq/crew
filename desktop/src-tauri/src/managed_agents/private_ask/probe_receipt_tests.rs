@@ -109,6 +109,61 @@ fn a_stored_receipt_is_read_back_as_the_same_evidence() {
     );
 }
 
+/// A record that hit its own recorded-target cap proved nothing, and must not
+/// come back from a receipt looking complete.
+///
+/// Production line: the `truncated` field of the `EgressDocument` built in
+/// `ReceiptDocument::from_probe`. Writing a constant there — which it did —
+/// turns an incomplete observation into a certifying one on the next restart,
+/// and the round-trip test above cannot see it because its own record is not
+/// truncated.
+#[test]
+fn a_truncated_egress_record_stays_truncated_through_a_receipt() {
+    let fixture = fixture();
+    let mut probe = capture(&fixture, now());
+    let digest = probe.probe_program_digest.clone();
+    let complete = probe.egress.clone();
+    assert!(
+        complete.bounds_egress(),
+        "the captured record must certify, or this test cannot show the loss"
+    );
+    probe.egress = super::super::egress_proxy::EgressObservation::from_parts(
+        complete.provider_host().to_owned(),
+        complete.proxy_port(),
+        complete.accepted().to_vec(),
+        complete
+            .refused()
+            .iter()
+            .map(|refused| (refused.target().to_owned(), refused.reason()))
+            .collect(),
+        complete.dial_failures(),
+        true,
+        complete.direct_connections(),
+    );
+    store(&fixture.ownership, &probe).expect("store");
+
+    let loaded = load(
+        &fixture.ownership,
+        &fixture.selected.executable,
+        "claude",
+        &digest,
+        now(),
+    )
+    .expect("receipt");
+
+    assert!(
+        loaded.egress.truncated(),
+        "truncation must survive the round trip"
+    );
+    assert!(
+        !loaded.egress.bounds_egress(),
+        "a truncated record must not certify a bounded egress"
+    );
+    let capability = PrivateAskCapability::from_probe(&fixture.selected, loaded, captured_now())
+        .expect("loaded");
+    assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
+}
+
 /// Independence is per-attempt evidence and is never restored from a receipt,
 /// so a loaded trace leaves it unverified however recent it is.
 #[test]
