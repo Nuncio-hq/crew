@@ -8,6 +8,7 @@ import {
   canAskPrivately,
   initialPrivateAskState,
   privateAskReducer,
+  type PrivateAskAgent,
   type PrivateAskCitation,
   type PrivateAskDevStatus,
   type PrivateAskHistoryEntry,
@@ -63,6 +64,8 @@ function usePrivateAskDevStatus(): PrivateAskDevStatus {
 
 export function WikiAskBox({
   onOpenSource,
+  owner,
+  repoD,
   scopeLabel,
 }: {
   channelId?: string | null;
@@ -79,6 +82,7 @@ export function WikiAskBox({
   if (status.enabled) {
     return (
       <PrivateAskDevComposer
+        coordinate={owner && repoD ? `${owner}:${repoD}` : null}
         onOpenSource={onOpenSource}
         scopeLabel={scopeLabel}
         status={status}
@@ -192,10 +196,15 @@ function CitationLink({
 }
 
 function PrivateAskDevComposer({
+  coordinate,
   onOpenSource,
   scopeLabel,
   status,
 }: {
+  /** `<owner-hex>:<repo-d>`, or null when this pane is not showing one
+   * repository. Without it there is nothing for an answer to be grounded in
+   * and the composer says so rather than asking about an unnamed repository. */
+  coordinate: string | null;
   onOpenSource?: (citation: PrivateAskCitation) => void;
   scopeLabel: string;
   status: PrivateAskDevStatus;
@@ -206,6 +215,32 @@ function PrivateAskDevComposer({
   );
   /** The id of the run in flight, so Cancel can name it. */
   const attempt = React.useRef<string | null>(null);
+  /**
+   * The agents this machine could address, and the one chosen. The backend
+   * lists only agents with a live harness generation — the resolver refuses
+   * any other — so an empty list is the honest "nothing to ask" state rather
+   * than a picker full of refusals.
+   */
+  const [agents, setAgents] = React.useState<PrivateAskAgent[]>([]);
+  const [agentId, setAgentId] = React.useState<string>("");
+
+  React.useEffect(() => {
+    invokeTauri<PrivateAskAgent[]>("private_ask_agents")
+      .then((available) => {
+        setAgents(available);
+        setAgentId((chosen) =>
+          available.some((agent) => agent.pubkey === chosen)
+            ? chosen
+            : (available[0]?.pubkey ?? ""),
+        );
+      })
+      .catch(() => {
+        // A list that cannot be read is an empty list: the composer stays
+        // usable and the Ask button stays disabled.
+        setAgents([]);
+        setAgentId("");
+      });
+  }, []);
 
   /**
    * Read the owner-local record. It lives on this machine only — a private Ask
@@ -228,7 +263,7 @@ function PrivateAskDevComposer({
   }, [refreshHistory]);
 
   const ask = React.useCallback(() => {
-    if (!canAskPrivately(state, status)) {
+    if (!canAskPrivately(state, status) || !agentId || !coordinate) {
       return;
     }
     // The id is minted here, before the run starts, because the command only
@@ -239,6 +274,8 @@ function PrivateAskDevComposer({
     dispatch({ type: "start" });
     invokeTauri<PrivateAskRunResult>("private_ask_run", {
       attemptId,
+      agentId,
+      coordinate,
       question: state.question,
     })
       .then((result) => {
@@ -276,7 +313,7 @@ function PrivateAskDevComposer({
         // A refusal is recorded on this machine too, so the list must catch up.
         void refreshHistory();
       });
-  }, [state, status, refreshHistory]);
+  }, [agentId, coordinate, state, status, refreshHistory]);
 
   const cancel = React.useCallback(() => {
     const attemptId = attempt.current;
@@ -307,6 +344,27 @@ function PrivateAskDevComposer({
           </p>
         ) : null}
         <div className="flex items-center gap-2">
+          <select
+            aria-label="Agent to ask"
+            className={cn(
+              OFFICE_FIELD_BOX_CLASS,
+              OFFICE_FIELD_CONTROL_CLASS,
+              "h-8 px-2 text-2xs",
+            )}
+            data-testid="wiki-ask-dev-agent"
+            disabled={agents.length === 0}
+            onChange={(event) => setAgentId(event.target.value)}
+            value={agentId}
+          >
+            {agents.length === 0 ? (
+              <option value="">No running agent</option>
+            ) : null}
+            {agents.map((agent) => (
+              <option key={agent.pubkey} value={agent.pubkey}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
           <input
             aria-label="Ask this agent privately"
             className={cn(
@@ -341,7 +399,9 @@ function PrivateAskDevComposer({
           ) : (
             <Button
               data-testid="wiki-ask-dev-submit"
-              disabled={!canAskPrivately(state, status)}
+              disabled={
+                !canAskPrivately(state, status) || !agentId || !coordinate
+              }
               onClick={ask}
               size="sm"
               type="button"

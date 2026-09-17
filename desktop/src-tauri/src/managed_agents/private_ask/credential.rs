@@ -188,14 +188,14 @@ pub(super) fn observe_auth_evidence(
     evidence_from(runtime_id, staged)
 }
 
-/// Whether the stand-in secret store holds nothing for this observation.
-///
-/// It is THREAD-local, not process-global. `observe_auth_evidence` runs
-/// synchronously on the thread that asked for the probe, so a thread-local is
-/// exactly as reachable as the previous global — and it cannot leak into
-/// another test running in parallel, which is what a process-global flag did:
-/// a test that wanted the "no credential" direction made every concurrent
-/// probe on the machine observe an empty store too.
+// Whether the stand-in secret store holds nothing for this observation.
+//
+// It is THREAD-local, not process-global. `observe_auth_evidence` runs
+// synchronously on the thread that asked for the probe, so a thread-local is
+// exactly as reachable as the previous global — and it cannot leak into
+// another test running in parallel, which is what a process-global flag did:
+// a test that wanted the "no credential" direction made every concurrent
+// probe on the machine observe an empty store too.
 #[cfg(test)]
 thread_local! {
     static TEST_SECRET_STORE_EMPTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

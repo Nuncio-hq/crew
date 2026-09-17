@@ -16,6 +16,15 @@ export type PrivateAskDevStatus = {
   blockedReason: string | null;
 };
 
+/**
+ * One agent a private Ask may be addressed to. The backend lists only agents
+ * with a live harness generation, because the resolver refuses any other.
+ */
+export type PrivateAskAgent = {
+  pubkey: string;
+  name: string;
+};
+
 export type PrivateAskCitation = {
   path: string;
   startLine: number;

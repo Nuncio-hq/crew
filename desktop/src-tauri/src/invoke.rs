@@ -149,6 +149,7 @@ macro_rules! desktop_invoke_handler {
             managed_agents::private_ask_commands::private_ask_run,
             managed_agents::private_ask_commands::private_ask_cancel,
             managed_agents::private_ask_commands::private_ask_history,
+            managed_agents::private_ask_commands::private_ask_agents,
             managed_agents::recap_commands::get_recap_settings,
             managed_agents::recap_commands::save_recap_settings,
             managed_agents::recap_commands::get_thread_recap,

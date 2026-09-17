@@ -32,6 +32,25 @@ fn valid_attempt_id(attempt_id: &str) -> bool {
 /// Zero is never retained by the history's own bounds, so an unreadable clock
 /// loses the record rather than writing an entry that would sit at the head of
 /// the list forever.
+/// A managed-agent pubkey, in the shape the store keys records on.
+fn valid_agent_id(agent_id: &str) -> bool {
+    agent_id.len() == 64 && agent_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// A `<owner-hex>:<repo-d>` repository coordinate. The native resolver checks
+/// it against the signed snapshot manifest; this only refuses a shape that
+/// could never be one.
+fn valid_coordinate(coordinate: &str) -> bool {
+    coordinate.split_once(':').is_some_and(|(owner, repo_d)| {
+        owner.len() == 64
+            && owner.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && !repo_d.is_empty()
+            && repo_d.len() <= 256
+            && repo_d == repo_d.trim()
+            && !repo_d.chars().any(char::is_control)
+    })
+}
+
 fn now_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -76,6 +95,14 @@ pub struct PrivateAskRunResult {
     /// swallowed: the outcome still happened, and a history quietly missing it
     /// would be a worse lie than a visible note.
     pub history_recorded: bool,
+}
+
+/// One agent a private Ask may be addressed to.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateAskAgent {
+    pub pubkey: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,6 +154,24 @@ pub async fn private_ask_history<R: tauri::Runtime>(
     Ok(history::load(&ownership, now_seconds()))
 }
 
+/// The agents a private Ask can be addressed to on this machine.
+///
+/// Only agents with a live harness generation appear: an agent with no running
+/// session has no ledger a private Ask could be shown to have left alone, and
+/// the resolver refuses one. Offering the others would be offering a refusal.
+#[tauri::command]
+pub async fn private_ask_agents<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Vec<PrivateAskAgent>, String> {
+    if !private_ask_dev_enabled() {
+        return Err(PRIVATE_ASK_UNAVAILABLE.to_string());
+    }
+    Ok(super::private_ask::live_agents(&app)
+        .into_iter()
+        .map(|(pubkey, name)| PrivateAskAgent { pubkey, name })
+        .collect())
+}
+
 /// Run one private Ask and return its answer.
 ///
 /// The answer and every refusal come from `private_ask::dev_run`, which reaches
@@ -138,6 +183,8 @@ pub async fn private_ask_run<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     attempts: tauri::State<'_, PrivateAskAttempts>,
     attempt_id: String,
+    agent_id: String,
+    coordinate: String,
     question: String,
 ) -> Result<PrivateAskRunResult, String> {
     if !private_ask_dev_enabled() {
@@ -148,6 +195,15 @@ pub async fn private_ask_run<R: tauri::Runtime>(
     }
     if question.trim().is_empty() {
         return Err("a private Ask needs a question".to_string());
+    }
+    // The agent id and the repository coordinate are the only two things a
+    // caller may name, so both are checked in the shape this surface mints
+    // before either reaches a store read.
+    if !valid_agent_id(&agent_id) {
+        return Err("a private Ask needs the agent it is addressed to".to_string());
+    }
+    if !valid_coordinate(&coordinate) {
+        return Err("a private Ask needs the repository it is about".to_string());
     }
     // Registered before the run starts, so a cancel that arrives while the
     // attempt is still choosing whether it may launch reaches it. The guard
@@ -162,16 +218,13 @@ pub async fn private_ask_run<R: tauri::Runtime>(
     let identity =
         super::private_ask::AttemptIdentity::new(&attempt_id, registration.cancel_flag());
     let asked_at = now_seconds();
-    // The attempt is synchronous and bounded by `PRIVATE_ASK_TIMEOUT`, so it is
-    // moved off the async runtime rather than blocking every other command for
-    // the length of a model call. It still runs on ONE thread, which is what the
-    // thread-scoped no-publish attribution relies on.
-    let question_for_run = question.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
-        super::private_ask::dev_run(&question_for_run, &identity)
-    })
-    .await
-    .map_err(|_| "private Ask did not complete safely".to_string())?;
+    // Resolution reads this machine's own state and one scoped Wiki snapshot;
+    // the answer itself is moved onto a blocking worker inside `dev_run`, on
+    // one thread, which is what the thread-scoped no-publish attribution
+    // relies on.
+    let outcome =
+        super::private_ask::dev_run(&app, &agent_id, &coordinate, &question, &identity, asked_at)
+            .await;
 
     // History is written on both outcomes, before anything is returned: a
     // refusal is the attempt a developer most needs to look back at.

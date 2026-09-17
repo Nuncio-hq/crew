@@ -54,6 +54,8 @@ dom.window.__TAURI_INTERNALS__ = {
         return { enabled: true, blockedReason: null };
       case "private_ask_history":
         return [];
+      case "private_ask_agents":
+        return [{ pubkey: "b".repeat(64), name: "Scout" }];
       case "private_ask_run":
         runCalls.push(payload);
         if (runError) throw new Error(runError);
@@ -102,7 +104,9 @@ async function mountAndAsk(onOpenSource) {
       scopeLabel: "Asking about Crew",
     }),
   );
-  // The status poll decides which composer renders.
+  // The status poll decides which composer renders, and the agent list
+  // decides whether Ask is reachable at all.
+  await act(async () => {});
   await act(async () => {});
   fireEvent.change(screen.getByTestId("wiki-ask-dev-input"), {
     target: { value: "What does answer do?" },
@@ -175,4 +179,21 @@ test("a command that could not run at all is still shown as a refusal", async ()
   );
   // Nothing was attempted, so nothing is claimed about the machine's record.
   assert.equal(screen.queryByTestId("wiki-ask-dev-history-unrecorded"), null);
+});
+
+test("the run names the agent and the repository, and nothing else", async () => {
+  // The backend accepts exactly three caller-supplied values: the attempt id,
+  // the agent, and the repository coordinate. Everything the answer is
+  // admitted against is observed natively, so a payload that carried a scope,
+  // a model, or an ACL would be a payload the resolver must ignore.
+  await mountAndAsk(undefined);
+  assert.equal(runCalls.length, 1);
+  assert.deepEqual(Object.keys(runCalls[0]).sort(), [
+    "agentId",
+    "attemptId",
+    "coordinate",
+    "question",
+  ]);
+  assert.equal(runCalls[0].agentId, "b".repeat(64));
+  assert.equal(runCalls[0].coordinate, `${"a".repeat(64)}:crew`);
 });

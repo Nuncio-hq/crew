@@ -28,6 +28,17 @@ fn attempt_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// A well-formed agent id and repository coordinate. These are the only two
+/// values the surface accepts from a caller; a mock app has neither an agent
+/// store nor a snapshot, so a run with them still refuses natively.
+fn agent_id() -> String {
+    "b".repeat(64)
+}
+
+fn coordinate() -> String {
+    format!("{}:repo-a", "c".repeat(64))
+}
+
 /// The gate a closed build would apply. `cfg!(debug_assertions)` is true under
 /// `cargo test`, so the closed branch is exercised through the pure decision
 /// rather than through the cached reader.
@@ -56,19 +67,28 @@ async fn an_open_gate_still_refuses_the_run_with_the_blocking_reason() {
         app.handle().clone(),
         app.state::<PrivateAskAttempts>(),
         id.clone(),
+        agent_id(),
+        coordinate(),
         "What does answer do?".to_string(),
     )
     .await
     .expect("a refusal is a completed attempt, not a failed command");
     assert_eq!(result.attempt_id, id);
     assert!(result.markdown.is_empty());
+    // The reason is the production path's own: a mock app has no owned
+    // staging tree to run inside, which is the first fence the resolver meets.
     assert_eq!(
         result.refusal.as_deref(),
         Some(
             crate::managed_agents::private_ask::dev_run(
+                app.handle(),
+                &agent_id(),
+                &coordinate(),
                 "What does answer do?",
-                &AttemptIdentity::fresh()
+                &AttemptIdentity::fresh(),
+                0,
             )
+            .await
             .expect_err("no selection is bound")
             .to_string()
             .as_str()
@@ -88,6 +108,8 @@ async fn an_empty_question_or_a_foreign_attempt_id_is_refused_at_the_boundary() 
             app.handle().clone(),
             app.state::<PrivateAskAttempts>(),
             attempt_id(),
+            agent_id(),
+            coordinate(),
             blank.to_string(),
         )
         .await
@@ -104,6 +126,8 @@ async fn an_empty_question_or_a_foreign_attempt_id_is_refused_at_the_boundary() 
             app.handle().clone(),
             app.state::<PrivateAskAttempts>(),
             foreign.to_string(),
+            agent_id(),
+            coordinate(),
             "What does answer do?".to_string(),
         )
         .await
@@ -165,8 +189,16 @@ async fn a_cancelled_attempt_is_reported_and_recorded_as_cancelled() {
     assert!(registration.is_cancelled(), "the live flag was raised");
 
     let identity = AttemptIdentity::new(&id, registration.cancel_flag());
-    let failure = crate::managed_agents::private_ask::dev_run("What does answer do?", &identity)
-        .expect_err("a withdrawn question is not asked");
+    let failure = crate::managed_agents::private_ask::dev_run(
+        app.handle(),
+        &agent_id(),
+        &coordinate(),
+        "What does answer do?",
+        &identity,
+        1,
+    )
+    .await
+    .expect_err("a withdrawn question is not asked");
     assert_eq!(failure.to_string(), "the private Ask was cancelled");
     // The owner-local record carries the same sentence the screen does.
     let entry = crate::managed_agents::private_ask::history::PrivateAskHistoryEntry::refused(
@@ -194,6 +226,8 @@ async fn an_attempt_id_that_is_already_running_is_refused() {
         app.handle().clone(),
         app.state::<PrivateAskAttempts>(),
         id,
+        agent_id(),
+        coordinate(),
         "What does answer do?".to_string(),
     )
     .await

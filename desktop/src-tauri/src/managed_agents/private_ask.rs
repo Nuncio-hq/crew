@@ -27,10 +27,11 @@ mod provider;
 mod recovery;
 mod runtime_paths;
 pub(crate) mod selection;
+mod selection_native;
 mod session_evidence;
 mod validation;
 #[allow(unused_imports)]
-pub(crate) use attempt::{dev_run, AttemptIdentity, PrivateAskAttempt, PrivateAskResponse};
+pub(crate) use attempt::{AttemptIdentity, PrivateAskAttempt, PrivateAskResponse};
 pub(crate) use cancel_registry::{PrivateAskAttempts, RegisterFailure};
 use launch::PrivateAskLaunchPlan;
 #[cfg(test)]
@@ -41,6 +42,7 @@ use recovery::finish_after_process_with;
 use recovery::{
     finish_after_process, finish_before_spawn, leave_process_pending, leave_process_pending_state,
 };
+pub(crate) use selection_native::{dev_run, live_agents};
 use validation::{is_hex64, valid_model, valid_profile, valid_scope_value, valid_source_revision};
 // The test modules below are children of this module and share its vocabulary;
 // these re-imports keep them compiling after the attempt half moved out.

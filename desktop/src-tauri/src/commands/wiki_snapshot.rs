@@ -108,7 +108,7 @@ pub(crate) async fn wiki_snapshot_read(
 /// The whole command body, minus the IPC attribute. Tests bind here so they
 /// exercise scope capture, transport construction, and the graph read exactly
 /// as the shipped command does.
-pub(super) async fn read_wiki_snapshot<R: Runtime>(
+pub(crate) async fn read_wiki_snapshot<R: Runtime>(
     app: AppHandle<R>,
     expected: OwnerScopeToken,
     coordinate: String,

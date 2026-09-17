@@ -25,27 +25,14 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// Run one private Ask from the developer surface.
+/// The question fences that cost nothing, checked before anything is resolved.
 ///
-/// This is the production entry point the dev command calls: every safety
-/// decision belongs to [`admit_private_ask`] and [`PrivateAskAttempt::run`],
-/// and this function's job is to reach them with a real selection or to refuse
-/// with the typed reason it could not.
-///
-/// It refuses at the first fence it cannot pass. Today that fence is the
-/// binding itself: nothing in the desktop yet resolves the developer surface's
-/// question to a selected managed agent, an immutable Wiki snapshot and the
-/// retained capability probe for that agent's exact binary. Until a producer
-/// exists for all three there is no selection to admit, and `AgentUnbound` is
-/// the honest answer — not a placeholder result, and not a refusal about a
-/// dimension that is now provable.
-///
-/// The egress bound is no longer the blocker: `PrivateAskCapability::from_probe`
-/// projects it from the attempt proxy's own record.
-pub(crate) fn dev_run(
+/// They are separate from the resolver so an oversized or withdrawn question
+/// never reaches a store read, a relay read or a process.
+pub(crate) fn check_question(
     question: &str,
     attempt: &AttemptIdentity,
-) -> Result<PrivateAskResponse, PrivateAskFailure> {
+) -> Result<(), PrivateAskFailure> {
     if question.trim().is_empty() || question.contains('\0') {
         return Err(PrivateAskFailure::InvalidQuestion);
     }
@@ -58,7 +45,7 @@ pub(crate) fn dev_run(
     if attempt.is_cancelled() {
         return Err(PrivateAskFailure::Process(BoundedFailure::Cancelled));
     }
-    Err(PrivateAskFailure::AgentUnbound)
+    Ok(())
 }
 
 /// The identity one attempt runs under: the id the owner-local record and the
