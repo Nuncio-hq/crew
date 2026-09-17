@@ -2407,6 +2407,13 @@ dev gate and the owned staging tree; it no longer calls the production entry
 point, which would start a contained probe child each time the composer
 appeared.
 
+A private Ask citation opens the same source pane an in-page citation opens, so
+the cited path is resolved against the shown page's signed source references
+rather than by the answer; a citation to a file the shown revision does not
+carry surfaces the pane's existing "unavailable for this revision" notice, and
+where no opener is supplied the citation renders as plain text rather than as a
+control that goes nowhere.
+
 **The answering path is now real.** Given a resolved selection — the selected
 agent's effective configuration and persona, its executable identity, a verified
 snapshot and the owned staging tree — the desktop takes the retained capability
@@ -2451,7 +2458,7 @@ The resolver is therefore a decision, not only an implementation: either those
 producers are built first, or the dev-gated path stays refused at
 `MissingRuntime`. Until then `VerifiedStagingOwnership::load`,
 `resolve_effective_config` and `crew_wiki::snapshot_v1::verify_snapshot` are
-usable, and the rest are not.
+usable; the rest need provisioning that does not exist yet.
 
 **A capability is minted from one real contained run.** The probe launches under
 byte-identical policy text to a production answer, with the proxy serving, and
@@ -2566,12 +2573,6 @@ attempt through the production launch path must move that count by zero.
   root that cannot be resolved is refused rather than assumed unrelated. Only
   the ancestor direction is refused; a directory inside the run roots discloses
   no sibling attempt.
-- A private Ask citation opens the same source pane an in-page citation opens,
-  so the cited path is resolved against the shown page's signed source
-  references rather than by the answer. A citation to a file the shown revision
-  does not carry surfaces the pane's existing "unavailable for this revision"
-  notice. Where no opener is supplied the citation renders as plain text rather
-  than as a control that goes nowhere.
 - The owner-local Ask history is persisted on this machine only, on the owned-run
   retention pattern: a bounded newest-first window capped by count and by age, in
   a 0o700 directory this uid owns, written 0o600 through a temporary file and a

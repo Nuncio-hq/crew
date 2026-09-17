@@ -1338,9 +1338,12 @@ containment stays verified across both.
 What to set up, in order, and what the screen says at each step. Steps 1-4 are
 the existing staging harness; step 5 is where the Ask itself stops today.
 
-1. **Build with the surface open.** `BUZZ_PRIVATE_ASK_DEV=1` (exactly `1`) and a
-   debug build. With the flag absent the composer renders the ordinary
-   unavailable Ask box; with it set, the developer composer appears.
+1. **Build with the surface open.** A debug build opens the surface on its own;
+   a release build needs `BUZZ_PRIVATE_ASK_DEV` set to exactly `1` (not `true`,
+   not a padded `1`). The value is read once at first use, so exporting it in a
+   running process does nothing. With the surface closed the composer renders
+   the ordinary unavailable Ask box; with it open, the developer composer
+   appears.
 2. **Hermes runtime binary.** The acceptance profile runs the Hermes CLI from
    its own virtualenv, installed **outside** `<app-data>/agents` — a runtime
    directory that contains the staging base is refused before any policy text
