@@ -20,8 +20,9 @@ pub(crate) mod dev_gate;
 mod egress_proxy;
 mod launch;
 mod probe_program;
+mod probe_receipt;
 #[cfg(target_os = "macos")]
-mod probe_run;
+pub(crate) mod probe_run;
 mod profile;
 mod prompt;
 mod provider;

@@ -83,6 +83,14 @@ impl PrivateAskAuthEvidence {
     pub(crate) fn auth_available(&self) -> bool {
         self.auth_available
     }
+
+    pub(crate) fn service(&self) -> &str {
+        &self.service
+    }
+
+    pub(crate) fn reference(&self) -> &str {
+        &self.reference
+    }
 }
 
 /// One complete retained probe for a private Ask capability decision.

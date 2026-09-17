@@ -264,6 +264,40 @@ impl EgressObservation {
         self
     }
 
+    /// Rebuild an observation from a receipt this process wrote.
+    ///
+    /// This is the one production path back into a record without a live proxy,
+    /// and it exists only for [`super::probe_receipt`]. It is NOT a general
+    /// constructor: the receipt it comes from is uid-validated, kept 0o600 in
+    /// an owned directory, and bound to this install's ownership digest, so it
+    /// is this process's own earlier observation rather than a caller's claim.
+    /// Everything the record must still satisfy — freshness, the selection, the
+    /// probe program digest, and `bounds_egress` itself — is re-checked by
+    /// `PrivateAskCapability::from_probe` afterwards, exactly as for a record
+    /// captured moments ago.
+    pub(super) fn from_receipt(
+        provider_host: String,
+        proxy_port: u16,
+        accepted: Vec<String>,
+        refused: Vec<(String, RefusalReason)>,
+        dial_failures: u32,
+        truncated: bool,
+        direct_connections: u32,
+    ) -> Self {
+        Self {
+            provider_host,
+            proxy_port,
+            accepted,
+            refused: refused
+                .into_iter()
+                .map(|(target, reason)| RefusedTarget { target, reason })
+                .collect(),
+            dial_failures,
+            truncated,
+            direct_connections,
+        }
+    }
+
     /// Assemble an observation without running a proxy. Test-only on purpose.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
