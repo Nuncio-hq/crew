@@ -118,6 +118,16 @@ struct HistoryDocument {
     entries: Vec<PrivateAskHistoryEntry>,
 }
 
+/// Serializes the read-modify-write in [`record`].
+///
+/// The command is `async` and a renderer can invoke it twice, so two attempts
+/// finishing together would otherwise both read the same list and the second
+/// write would drop the first's entry. The critical section is one small file
+/// read plus one rename, so a plain mutex is the right size; a poisoned lock is
+/// recovered rather than propagated, because a panicking writer left the file
+/// itself untouched — the write is temp-file-plus-rename.
+static RECORD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn history_path(ownership: &VerifiedStagingOwnership) -> Result<PathBuf, PrivateAskFailure> {
     Ok(ownership
         .private_ask_history_base()
@@ -170,6 +180,9 @@ pub(crate) fn record(
     now: u64,
 ) -> Result<Vec<PrivateAskHistoryEntry>, PrivateAskFailure> {
     let path = history_path(ownership)?;
+    let _guard = RECORD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut entries = load(ownership, now);
     // An attempt id is unique per run, but a retry that reused one must replace
     // rather than duplicate: two rows with one id is a history that cannot be

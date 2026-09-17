@@ -80,23 +80,20 @@ pub(super) fn answer(binding: PrivateAskBinding) -> Result<PrivateAskResponse, P
         && capability
             .as_ref()
             .is_none_or(|capability| !capability.certifies_independent_invocation());
-    let capability = if needs_own_probe {
-        let probe = capture(&binding)?;
-        // Persisted before it is used, so the trace this attempt paid for is on
-        // disk. A store failure is returned rather than ignored: a receipt that
-        // silently never lands leaves no record of what was certified.
-        probe_receipt::store(&binding.ownership, &probe)?;
-        PrivateAskCapability::from_probe(&binding.state, probe, binding.now)
-            .map_err(|_| PrivateAskFailure::SelectionChanged)?
-    } else {
-        match capability {
-            Some(capability) => capability,
-            None => {
-                let probe = capture(&binding)?;
-                probe_receipt::store(&binding.ownership, &probe)?;
-                PrivateAskCapability::from_probe(&binding.state, probe, binding.now)
-                    .map_err(|_| PrivateAskFailure::SelectionChanged)?
-            }
+    let capability = match capability {
+        // Reusable only when nothing this attempt can observe is missing from
+        // it. Otherwise — and whenever there is no retained trace at all — this
+        // attempt captures its own.
+        Some(capability) if !needs_own_probe => capability,
+        _ => {
+            let probe = capture(&binding)?;
+            // Persisted before it is used, so the trace this attempt paid for
+            // is on disk. A store failure is returned rather than ignored: a
+            // receipt that silently never lands leaves no record of what was
+            // certified.
+            probe_receipt::store(&binding.ownership, &probe)?;
+            PrivateAskCapability::from_probe(&binding.state, probe, binding.now)
+                .map_err(|_| PrivateAskFailure::SelectionChanged)?
         }
     };
     let admission = admit_private_ask(binding.request, binding.state, capability)?;

@@ -192,3 +192,38 @@ fn a_completed_write_leaves_no_temporary_file() {
         .collect();
     assert_eq!(files, vec!["attempts.json".to_string()]);
 }
+
+#[test]
+fn two_attempts_finishing_together_both_survive() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+
+    // `private_ask_run` is async and a renderer can invoke it twice, so the
+    // read-modify-write in `record` really can interleave. Without the lock one
+    // of these two entries is silently lost: both threads read the same list
+    // and the second rename wins.
+    std::thread::scope(|scope| {
+        for index in 0..2 {
+            let ownership = &ownership;
+            scope.spawn(move || {
+                record(
+                    ownership,
+                    entry(&format!("concurrent-{index}"), 1_000),
+                    1_000,
+                )
+                .expect("record");
+            });
+        }
+    });
+
+    let entries = load(&ownership, 1_000);
+    let ids: std::collections::BTreeSet<_> = entries
+        .iter()
+        .map(|entry| entry.attempt_id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        ["concurrent-0", "concurrent-1"].into_iter().collect(),
+        "neither attempt is lost to the other's write"
+    );
+}
