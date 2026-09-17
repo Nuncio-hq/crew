@@ -176,35 +176,55 @@ fn a_probe_without_session_observations_cannot_verify_independent_invocation() {
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
 }
 
-/// Authentication is its own dimension, observed from the real staging path.
-/// In a unit-test process the platform secret store holds nothing for this
-/// fixture runtime, so the honest observation is "unavailable" — and crucially
-/// containment is NOT dragged down with it. Coupling the two was tried and
-/// reverted because a broken sandbox then reported an authentication failure.
+/// Authentication is its own dimension, and it moves independently of
+/// containment in BOTH directions.
+///
+/// The platform secret store is replaced by a canary here — a unit test must
+/// never read the developer's keychain, and the real reader shells out to
+/// `/usr/bin/security`, which would make this assertion depend on whose Mac ran
+/// the suite. The gate is NOT replaced: the canary is still refused unless the
+/// proxy is serving.
+///
+/// The point of the test is the pairing. Coupling authentication into
+/// `from_probe`'s containment verdict was tried in an earlier round and
+/// reverted, because it reported a broken sandbox as an authentication failure.
+/// So containment must read `Verified` in both directions while authentication
+/// changes underneath it. Restoring that coupling fails the second half.
 #[test]
-fn authentication_is_observed_independently_of_containment() {
+fn authentication_moves_independently_of_containment_in_both_directions() {
     let home = canonical_tempdir();
     let ownership = ownership(home.path());
     let installation = canonical_tempdir();
     let runtime = fixture_runtime(installation.path());
     let selected = state(&runtime, "claude", "claude-fable-5-1", None);
 
-    let probe = capture_probe(ProbeContext {
-        state: &selected,
-        ownership: &ownership,
-        session_isolation: None,
-        now: now(),
-    })
-    .expect("probe");
-    let auth_available = probe.auth.auth_available();
-    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
-    assert_eq!(
-        capability.authentication,
-        if auth_available {
-            ProofStatus::Verified
-        } else {
-            ProofStatus::Unverified
-        }
-    );
+    let capture = || {
+        capture_probe(ProbeContext {
+            state: &selected,
+            ownership: &ownership,
+            session_isolation: None,
+            now: now(),
+        })
+        .expect("probe")
+    };
+
+    super::super::credential::set_test_secret_store_empty(false);
+    let available = capture();
+    assert!(available.auth.auth_available());
+    let capability = PrivateAskCapability::from_probe(&selected, available).expect("projection");
+    assert_eq!(capability.authentication, ProofStatus::Verified);
     assert_eq!(capability.process_containment, ProofStatus::Verified);
+
+    // The same machine, the same envelope, no credential.
+    super::super::credential::set_test_secret_store_empty(true);
+    let absent = capture();
+    super::super::credential::set_test_secret_store_empty(false);
+    assert!(!absent.auth.auth_available());
+    let capability = PrivateAskCapability::from_probe(&selected, absent).expect("projection");
+    assert_eq!(capability.authentication, ProofStatus::Unverified);
+    assert_eq!(
+        capability.process_containment,
+        ProofStatus::Verified,
+        "a missing credential must not report itself as a broken sandbox"
+    );
 }

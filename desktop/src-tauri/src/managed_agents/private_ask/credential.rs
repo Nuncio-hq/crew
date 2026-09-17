@@ -139,14 +139,81 @@ fn map_auth_failure(failure: WikiRuntimeFailure) -> PrivateAskFailure {
 /// binding (runtime plus the environment entry it is handed through) so two
 /// different authentication contracts are distinguishable, and carries no part
 /// of the token.
+#[cfg(not(test))]
 pub(super) fn observe_auth_evidence(
     runtime_id: &str,
     state_dir: &std::path::Path,
     proxy: &EgressProxy,
     cancelled: &AtomicBool,
 ) -> super::capability::PrivateAskAuthEvidence {
+    evidence_from(
+        runtime_id,
+        stage_private_ask_credential(runtime_id, state_dir, proxy, cancelled),
+    )
+}
+
+/// The same observation with the platform secret store replaced by a canary.
+///
+/// A unit test must never read the developer's keychain. The real reader shells
+/// out to `/usr/bin/security find-generic-password`, so without this seam the
+/// evidence would depend on whether the machine running the suite happens to
+/// have a Claude token — `Verified` on a developer's Mac and `Unverified` in
+/// CI, for the same code. `PrivateAskAttempt::stage_credential` already splits
+/// this way for exactly that reason, and this mirrors it.
+///
+/// What is NOT replaced is the gate: the canary is still refused unless the
+/// attempt's proxy is serving, so both directions are observable and
+/// deterministic. [`super::credential::tests`] drives the real
+/// `stage_private_ask_credential` against that same gate.
+#[cfg(test)]
+pub(super) fn observe_auth_evidence(
+    runtime_id: &str,
+    _state_dir: &std::path::Path,
+    proxy: &EgressProxy,
+    _cancelled: &AtomicBool,
+) -> super::capability::PrivateAskAuthEvidence {
+    let staged = if !proxy.is_listening() {
+        Err(PrivateAskFailure::EgressBoundUnverified)
+    } else if test_secret_store_is_empty() {
+        Err(PrivateAskFailure::AuthenticationUnverified)
+    } else {
+        match runtime_id {
+            "hermes" => Ok(None),
+            "claude" => {
+                claude_credential(super::PrivateAskAttempt::TEST_CREDENTIAL_CANARY).map(Some)
+            }
+            _ => Err(PrivateAskFailure::MissingRuntime),
+        }
+    };
+    evidence_from(runtime_id, staged)
+}
+
+/// Whether the stand-in secret store holds nothing for this process.
+///
+/// Set by the test that needs the negative direction. It is process-global and
+/// therefore set and cleared around one observation; the observation itself is
+/// synchronous, so no other test can interleave inside it.
+#[cfg(test)]
+static TEST_SECRET_STORE_EMPTY: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+pub(super) fn test_secret_store_is_empty() -> bool {
+    TEST_SECRET_STORE_EMPTY.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[cfg(test)]
+pub(super) fn set_test_secret_store_empty(empty: bool) {
+    TEST_SECRET_STORE_EMPTY.store(empty, std::sync::atomic::Ordering::Release);
+}
+
+/// Turn one staging outcome into evidence. Shared by both observers so the
+/// test seam cannot describe availability differently from production.
+fn evidence_from(
+    runtime_id: &str,
+    staged: Result<Option<StagedCredential>, PrivateAskFailure>,
+) -> super::capability::PrivateAskAuthEvidence {
     let service = runtime_id.to_owned();
-    match stage_private_ask_credential(runtime_id, state_dir, proxy, cancelled) {
+    match staged {
         Ok(Some(credential)) => super::capability::PrivateAskAuthEvidence::observed(
             service.clone(),
             format!("{service}:{}", credential.name()),

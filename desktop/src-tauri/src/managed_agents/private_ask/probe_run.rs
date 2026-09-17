@@ -24,9 +24,12 @@ use super::capability::{
 };
 use super::egress_proxy::EgressProxy;
 use super::probe_program::{self, ProbeMarker};
+use super::recovery::{
+    finish_after_process, finish_before_spawn, leave_process_pending, leave_process_pending_state,
+};
 use super::{PrivateAskFailure, SelectedAgentState};
 use crate::managed_agents::discovery::bounded_command::{
-    output_with_policy, BoundedPolicy, OutputBudget,
+    output_with_policy_and_spawn_hook, BoundedFailure, BoundedPolicy, OutputBudget,
 };
 use crate::managed_agents::recap_ownership::VerifiedStagingOwnership;
 use crate::managed_agents::recap_state::OwnedRecapRun;
@@ -133,29 +136,39 @@ pub(super) fn capture_probe(
         .ownership
         .recap_base()
         .map_err(PrivateAskFailure::State)?;
-    let mut run =
+    let run =
         OwnedRecapRun::create(&staging_base, context.now).map_err(PrivateAskFailure::State)?;
 
     // The run root must be a child of the staging base, which is what
     // `fresh_and_placed` structurally requires of the retained trace.
     let run_root = run.path().to_path_buf();
-    let outcome = capture_inside(&context, &staging_base, &run_root, &mut run);
-    // The run root is disposable either way. A cleanup failure is not allowed
-    // to mask the probe's own result, but it must not be silently swallowed:
-    // a root that cannot be cleaned is reported when the probe otherwise
-    // succeeded, because the next probe would inherit it.
-    let cleaned = run.cleanup().map_err(PrivateAskFailure::State);
-    let probe = outcome?;
-    cleaned?;
-    Ok(probe)
+    capture_inside(&context, &staging_base, &run_root, run)
 }
 
+/// Run the probe, owning its run root through every exit.
+///
+/// The recovery discipline is the launch path's, not a single blind cleanup:
+/// a failure before spawn removes the root, a failure after the process ran
+/// closes it out through `finish_after_process`, and a run whose child PID
+/// could not be recorded keeps its durable pending marker so startup recovery
+/// can still reap it. A probe that dropped the root on a path where the process
+/// boundary is unknown would leak exactly the process the boundary exists to
+/// account for.
 fn capture_inside(
     context: &ProbeContext<'_>,
     staging_base: &Path,
     run_root: &Path,
-    run: &mut OwnedRecapRun,
+    mut run: OwnedRecapRun,
 ) -> Result<PrivateAskProbe, PrivateAskFailure> {
+    macro_rules! before_spawn {
+        ($expression:expr) => {
+            match $expression {
+                Ok(value) => value,
+                Err(failure) => return Err(finish_before_spawn(run, failure)),
+            }
+        };
+    }
+
     let state = context.state;
     let executable = &state.executable;
 
@@ -164,33 +177,37 @@ fn capture_inside(
     // change", and it is non-empty so a *read* that succeeds is distinguishable
     // from a read that returned nothing.
     let sentinel = staging_base.join(format!(".crew-probe-sentinel-{}", uuid::Uuid::new_v4()));
-    std::fs::write(&sentinel, b"crew-private-ask-probe-sentinel\n")
-        .map_err(|_| PrivateAskFailure::InvalidState)?;
+    before_spawn!(
+        std::fs::write(&sentinel, b"crew-private-ask-probe-sentinel\n")
+            .map_err(|_| PrivateAskFailure::InvalidState)
+    );
     let sentinel_guard = SentinelGuard(sentinel.clone());
-    let sentinel_before = digest_file(&sentinel)?;
-    let external_state_before = external_state_digest(staging_base, run_root, &sentinel)?;
+    let sentinel_before = before_spawn!(digest_file(&sentinel));
+    let external_state_before =
+        before_spawn!(external_state_digest(staging_base, run_root, &sentinel));
 
-    let control = ControlListener::start()?;
+    let control = before_spawn!(ControlListener::start());
 
     // The provider host is derived exactly as a launch derives it, so the probe
     // is bound to the same single destination a real answer would be.
-    let provider_host = super::provider::provider_host(
+    let provider_host = before_spawn!(super::provider::provider_host(
         &state.runtime_id,
         staged_profile_provider(context, run_root).as_deref(),
-    )?;
-    let proxy = EgressProxy::start(provider_host)?;
+    ));
+    let proxy = before_spawn!(EgressProxy::start(provider_host));
 
-    let runtime_directory = super::launch::runtime_directory(&executable.resolved_path)?;
+    let runtime_directory =
+        before_spawn!(super::launch::runtime_directory(&executable.resolved_path));
     let extra_read_roots = super::launch::extra_read_roots(&executable.resolved_path);
-    let containment_profile = super::containment::private_ask_containment_profile(
+    let containment_profile = before_spawn!(super::containment::private_ask_containment_profile(
         run_root,
         &runtime_directory,
         &extra_read_roots,
         proxy.port(),
-    )?;
+    ));
 
-    super::launch::prepare_state_dirs(run_root)?;
-    let program = probe_program::write_probe_program(run_root)?;
+    before_spawn!(super::launch::prepare_state_dirs(run_root));
+    let program = before_spawn!(probe_program::write_probe_program(run_root));
     let lock_path = run_root.join("probe-descendant.lock");
 
     // The nonce is generated here, handed to the probe, and required back in
@@ -223,10 +240,14 @@ fn capture_inside(
     command.env(probe_program::ENV_FOREIGN, FOREIGN_HOST);
     command.env(probe_program::ENV_LOCK, &lock_path);
 
-    run.mark_process_pending()
-        .map_err(PrivateAskFailure::State)?;
+    before_spawn!(run.mark_process_pending().map_err(PrivateAskFailure::State));
     let cancelled = AtomicBool::new(false);
-    let output = output_with_policy(
+    // The owned child PID is persisted before any output is consumed. Without
+    // it a crash between spawn and completion leaves a pending root with no
+    // process identity, which recovery can never reap — it would stay pending
+    // forever. This is the launch path's contract and the probe owes the same.
+    let mut pid_error = None;
+    let output = output_with_policy_and_spawn_hook(
         command,
         BoundedPolicy {
             timeout: PROBE_TIMEOUT,
@@ -236,19 +257,53 @@ fn capture_inside(
             },
         },
         &cancelled,
-    )
-    .map_err(PrivateAskFailure::Process)?;
-    run.mark_finished().map_err(PrivateAskFailure::State)?;
+        |pid| {
+            run.mark_process_started(pid).map_err(|failure| {
+                pid_error = Some(failure);
+                BoundedFailure::Cleanup
+            })
+        },
+    );
+    let output = match output {
+        Ok(outcome) => outcome,
+        Err(BoundedFailure::Cleanup) => {
+            // Teardown was uncertain, or the PID was never recorded. Either way
+            // the process boundary is unknown, so the durable pending marker
+            // must survive for startup recovery instead of being removed here.
+            if let Some(failure) = pid_error {
+                return Err(leave_process_pending_state(run, failure));
+            }
+            return Err(leave_process_pending(run, BoundedFailure::Cleanup));
+        }
+        Err(failure) => {
+            return Err(finish_after_process(
+                run,
+                PrivateAskFailure::Process(failure),
+            ));
+        }
+    };
+
+    macro_rules! after_process {
+        ($expression:expr) => {
+            match $expression {
+                Ok(value) => value,
+                Err(failure) => return Err(finish_after_process(run, failure)),
+            }
+        };
+    }
 
     // Measured only after the bounded owner returned, so "surviving" means
     // survived teardown rather than "was alive during the run".
     let surviving_descendants = surviving_descendants(&lock_path);
 
-    let marker = probe_program::parse_marker(&output.output.stdout, &run_nonce)
-        .ok_or(PrivateAskFailure::InvalidOutput)?;
+    let marker = after_process!(
+        probe_program::parse_marker(&output.output.stdout, &run_nonce)
+            .ok_or(PrivateAskFailure::InvalidOutput)
+    );
 
-    let sentinel_after = digest_file(&sentinel)?;
-    let external_state_after = external_state_digest(staging_base, run_root, &sentinel)?;
+    let sentinel_after = after_process!(digest_file(&sentinel));
+    let external_state_after =
+        after_process!(external_state_digest(staging_base, run_root, &sentinel));
     let direct_connections = control.accepted();
     // Authentication is observed while the proxy is still serving, because that
     // is the gate `stage_private_ask_credential` enforces: no bearer credential
@@ -267,7 +322,7 @@ fn capture_inside(
         .with_observed_direct_connections(direct_connections);
     drop(sentinel_guard);
 
-    Ok(PrivateAskProbe {
+    let probe = PrivateAskProbe {
         runtime_id: state.runtime_id.clone(),
         executable: executable.clone(),
         effective_model: state.effective_model.clone(),
@@ -293,7 +348,15 @@ fn capture_inside(
         external_state_after,
         session_isolation: context.session_isolation.clone(),
         probe_program_digest: probe_program::probe_program_digest(),
-    })
+    };
+
+    // Close the generation out before returning. A probe that returned its
+    // trace while leaving a finished root behind would have the next probe
+    // inherit it, and `fresh_and_placed` would then be describing a root this
+    // run did not create.
+    after_process!(run.mark_finished().map_err(PrivateAskFailure::State));
+    run.cleanup().map_err(PrivateAskFailure::State)?;
+    Ok(probe)
 }
 
 /// Project the probe's attempts and this process's measurements onto the
