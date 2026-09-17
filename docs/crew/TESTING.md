@@ -1226,9 +1226,11 @@ production-bound tests do not replace installed Activity acceptance.
 
 ## Private Wiki Ask contract (#365)
 
-The private Ask is refused end to end today (D-083). Its tests exist to keep
-each refusal honest and each proof falsifiable, so they assert the *reason* a
-request is refused, not merely that it was.
+The private Ask cannot yet be asked from the developer surface (D-083): nothing
+binds a question to a selected agent, a snapshot and a retained probe. Every
+*fence* below it is live, though, so its tests assert the **reason** a request is
+refused and never merely that it was — and the egress proof now runs a real
+loopback proxy rather than describing one.
 
 ### Targets
 
@@ -1256,11 +1258,23 @@ fails closed.
 | `containment_tests.rs` | `PrivateAskLaunchPlan::command`'s `sandbox-exec` wrapper and the policy's allow-lists | Removing the wrapper; widening `file-read*`; the control run proves the fixture is genuinely hostile |
 | `session_evidence_tests.rs` | `SessionSnapshot::capture` reading the session's own bytes | Accepting an unreadable artefact as an empty digest |
 | `capability_tests.rs` | `PrivateAskCapability::from_probe` | Certifying a dimension whose named evidence does not hold |
+| `egress_proxy_tests.rs` | The CONNECT parser and `EgressObservation::bounds_egress` | Accepting a non-CONNECT request, an IP-literal or foreign target; certifying a record with no refusal or no accepted provider connection |
+| `credential_tests.rs` + `privacy_tests.rs` | `stage_private_ask_credential`'s proxy gate and the environment-only handoff | Staging a token without a live proxy; putting it on argv, in the prompt, or in the run root |
+| `runtime_paths_tests.rs` | Shebang interpreter resolution and the `nlink > 1` fence | Stopping at `/usr/bin/env`; letting a hard link into the run root through |
 
 The containment tests are paired: an uncontained control run must reach every
-effect — write outside the run root, read a file outside it, open a socket, fork
-a `setsid` descendant — before the contained run's denials mean anything. A
-proof whose fixture cannot misbehave proves nothing.
+effect — write outside the run root, read a file outside it, open a socket,
+resolve a name, fork a `setsid` descendant — before the contained run's denials
+mean anything. A proof whose fixture cannot misbehave proves nothing.
+
+The hostile fixture also asks the run's own proxy for a destination that is not
+the provider, reading the proxy URL from the child environment exactly as a real
+runtime would. That CONNECT must be answered `403` **and** appear in the proxy's
+own record, which travels back with the answer on `PrivateAskResponse::egress`.
+Two clauses of `bounds_egress` are opposites and both matter: an empty refusal
+list means the proxy was never shown to say no, and an empty accepted list means
+nothing ever reached the provider — a policy that blocks everything must not
+read as one that is correctly scoped.
 
 Keep the read-isolation bait out of the runtime executable's directory. The
 policy allows that directory so the binary can load itself, so a secret parked
@@ -1273,13 +1287,35 @@ acceptance run on the Hermes profile `crew-hpc-acceptance`, with two identities,
 must capture:
 
 - Runtime binary path, version, effective model and profile; the argv with
-  secrets redacted; the exact Seatbelt policy text.
+  secrets redacted; the exact Seatbelt policy text, including the
+  `(allow network-outbound (remote ip "localhost:<port>"))` line and the absence
+  of any mDNSResponder allowance.
+- The proxy's observation for the run: the port it bound, every accepted target
+  (all of which must equal the configured provider host), every refused target
+  with its reason, and the dial-failure count.
 - Sentinel digests before and after, and the descendant PID table.
+- Confirmation that the real runtime started under `(deny mach-lookup)` and the
+  narrowed read allow-list, and — if it did not — the exact denial from
+  `log stream --predicate 'sender == "Sandbox"'`, so the allow-list is widened
+  from evidence rather than from guesswork.
+- For Hermes: the prompt is on argv, so capture `ps` output confirming what is
+  visible, and confirm the staged profile copy carries no provider key.
 - Identity B's REQ/EOSE transcripts across the whole Ask, plus the backfill, and
   the SQL canary count.
 - The employee session's ledger digest, observer sequence and harness PID,
   before and after.
 - Base and head SHAs.
+
+Point the selection at the runtime's **real** executable, not at a shell
+wrapper. `~/.local/bin/hermes` is a bash script that execs the interpreter
+inside `~/.hermes/hermes-agent/venv/bin`; the policy's read allow-list is derived
+from the named executable, so a wrapper leaves the interpreter's installation
+unreadable and the run dies in the dynamic loader before `main`.
+
+The Hermes profile used for acceptance must name a provider in the explicit host
+table (`anthropic`, `openai`, `openrouter`). A profile configured against a
+loopback plain-HTTP endpoint cannot be bound by a CONNECT proxy and is refused
+with `runtime network egress is not bounded to the model provider`.
 
 ### Two-identity relay canary
 

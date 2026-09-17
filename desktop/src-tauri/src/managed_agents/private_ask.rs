@@ -581,6 +581,33 @@ pub(crate) fn admit_private_ask(
     })
 }
 
+/// Run one private Ask from the developer surface.
+///
+/// This is the production entry point the dev command calls: every safety
+/// decision belongs to [`admit_private_ask`] and [`PrivateAskAttempt::run`],
+/// and this function's job is to reach them with a real selection or to refuse
+/// with the typed reason it could not.
+///
+/// It refuses at the first fence it cannot pass. Today that fence is the
+/// binding itself: nothing in the desktop yet resolves the developer surface's
+/// question to a selected managed agent, an immutable Wiki snapshot and the
+/// retained capability probe for that agent's exact binary. Until a producer
+/// exists for all three there is no selection to admit, and `AgentUnbound` is
+/// the honest answer — not a placeholder result, and not a refusal about a
+/// dimension that is now provable.
+///
+/// The egress bound is no longer the blocker: `PrivateAskCapability::from_probe`
+/// projects it from the attempt proxy's own record.
+pub(crate) fn dev_run(question: &str) -> Result<PrivateAskResponse, PrivateAskFailure> {
+    if question.trim().is_empty() || question.contains('\0') {
+        return Err(PrivateAskFailure::InvalidQuestion);
+    }
+    if question.len() > PRIVATE_ASK_INPUT_LIMIT {
+        return Err(PrivateAskFailure::InputLimit);
+    }
+    Err(PrivateAskFailure::AgentUnbound)
+}
+
 /// Result from a completed owned attempt; citations are authenticated request grounding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateAskResponse {

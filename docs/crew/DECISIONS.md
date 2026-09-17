@@ -2366,8 +2366,29 @@ only requirement the feature exists to meet. The one-shot lineage (#351 recap �
 native invocation is an acceptable Crew seam.
 
 The developer-only command surface is a gate, not a feature: `private_ask_run`
-reports the admission refusal and does not yet call `admit_private_ask` or run
-anything, because there is nothing it could be allowed to run.
+returns whatever the production path returns — an answer or a typed refusal —
+and chooses no reason of its own. It cannot yet answer, because nothing in the
+desktop resolves a developer's question to a selected managed agent, an
+immutable Wiki snapshot and the retained capability probe for that agent's exact
+binary; the refusal names that missing binding rather than a dimension that is
+now provable.
+
+**Egress is bounded by a desktop-owned loopback proxy.** Seatbelt matches
+addresses, not names, so a policy broad enough to keep HTTPS working is broad
+enough to reach anything. The boundary therefore moves up one layer: the desktop
+starts a loopback CONNECT proxy for the life of one attempt, the policy allows
+exactly that one loopback port and no resolver, and the proxy speaks one verb to
+one `host:443` derived from the selected runtime's own configuration. Because
+the child cannot resolve a name or open any other socket, the set of
+destinations the proxy recorded is the complete set the child asked for, and the
+capability's `egress_bounded` dimension is projected only from that record: the
+provider was reached, every accepted target was the provider, something else was
+attempted and refused, and nothing bypassed the proxy. A record with an empty
+refusal list, or an empty accepted list, certifies nothing — an untested proxy
+and a proxy that blocked everything must not look like a bounded one.
+
+A provider credential is created only while that proxy is serving, travels in
+the child's environment alone, and never renders its own value.
 
 The privacy claim is enforced, not asserted: relay-bound egress is counted at
 the guard every publish boundary in the desktop already calls, and a complete
@@ -2378,21 +2399,33 @@ attempt through the production launch path must move that count by zero.
 - The model provider sees the prompt. This is inherent to route 2 — the question
   and the grounded source excerpts travel to the provider's API. Route 2 removes
   the *relay operator* from the trust set, not the provider.
-- Network egress is not yet bounded to that provider. Seatbelt cannot resolve
-  hostnames, so the policy allows any host on port 443, and the hostile-runtime
-  probe only ever measured connections against a loopback listener the policy
-  already refuses — a measurement of the closed path, not the open one. The
-  capability therefore carries an `egress_bounded` dimension that no producer
-  can currently satisfy, so every request is refused. Closing it requires the
-  child's only route out to be a desktop-owned proxy that dials nothing but the
-  configured provider.
-- Because no provider credential can reach the child while egress is unbounded,
-  authentication staging for a real `claude` run is blocked behind that proxy.
-- The read set a real `claude` or `hermes` needs is not established. Reads are
-  denied outside the run root, the runtime executable's own directory and the
-  system paths a process needs to start; that allow-list was verified against a
-  perl fixture, not against an installed runtime. Installed acceptance must
-  confirm it.
+- The proxy speaks only `CONNECT` to a single `host:443`. A provider that is not
+  reachable that way — for example a Hermes profile configured against a
+  plain-HTTP endpoint on loopback — is refused rather than accommodated by
+  widening the proxy into a general HTTP forwarder. Only providers in the
+  explicit host table can be bound today.
+- Hermes owns its authentication inside the profile copy staged into the run
+  root, exactly as `wiki_runtime_auth` documents. A profile whose own config
+  carries a provider key therefore puts that key inside the run root; that is
+  Hermes' model, not something this boundary introduces, and the run root is
+  still removed with the finished generation.
+- The prompt reaches Hermes on argv, not on stdin, so it is visible in `ps`
+  output to the same user for the life of the run. Hermes' value-taking
+  `-z/--oneshot` has no stdin form; `hermes chat --query-file - --oneshot` does
+  read stdin, but it dispatches through a path that never writes the usage file
+  the effective-model check reads. Moving to stdin would trade a real
+  model-substitution fence for `ps` hygiene.
+- The read set a real `claude` or `hermes` needs is only partly established. An
+  interpreted runtime's interpreter is canonicalized through its symlinks and
+  its installation prefix is allowed, which covers a Homebrew `node` and a
+  virtualenv interpreter; a runtime launched through a shell wrapper still needs
+  the wrapper's target named directly. `mach-lookup` is denied outright, which
+  perl, `node` and the Hermes CPython interpreter all start under — measured at
+  startup, not across a whole answered run. Installed acceptance must confirm
+  both against the real runtimes.
+- The probe's staging base is carried by the trace rather than re-derived, since
+  a capability does not retain its probe. It rejects a trace captured in an
+  unrelated directory; it does not by itself prove the base was the owned one.
 - The owner-local Ask history is held in the renderer for the life of the window
   and is not persisted. Durable retention on the `OwnedRecapRun` pattern is
   deferred until there is an answer worth keeping.

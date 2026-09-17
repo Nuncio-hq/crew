@@ -23,15 +23,17 @@ fn a_closed_gate_refuses_every_command_before_reading_its_arguments() {
 #[tokio::test]
 async fn an_open_gate_still_refuses_the_run_with_the_blocking_reason() {
     // This build has the gate open (debug assertions), so the command is
-    // reachable — and must still refuse, naming the unbounded egress rather
-    // than returning a placeholder answer.
+    // reachable — and must still refuse, with the reason the production path
+    // produced rather than a placeholder answer or a string chosen here.
     assert!(super::private_ask_dev_enabled());
     let error = private_ask_run("What does answer do?".to_string())
         .await
-        .expect_err("a private Ask must not answer while its egress is unbounded");
+        .expect_err("a private Ask must not answer without a bound selection");
     assert_eq!(
         error,
-        crate::managed_agents::private_ask::PrivateAskFailure::EgressBoundUnverified.to_string()
+        crate::managed_agents::private_ask::dev_run("What does answer do?")
+            .expect_err("no selection is bound")
+            .to_string()
     );
 }
 
@@ -49,14 +51,10 @@ async fn an_empty_question_is_refused_without_reaching_admission() {
 async fn the_status_command_reports_the_blocking_reason_when_it_is_open() {
     let status = private_ask_dev_status().await.expect("status");
     assert!(status.enabled, "debug build opens the surface");
-    assert_eq!(
-        status.blocked_reason.as_deref(),
-        Some(
-            crate::managed_agents::private_ask::PrivateAskFailure::EgressBoundUnverified
-                .to_string()
-                .as_str()
-        )
-    );
+    let expected = crate::managed_agents::private_ask::dev_run("status probe")
+        .expect_err("no selection is bound")
+        .to_string();
+    assert_eq!(status.blocked_reason.as_deref(), Some(expected.as_str()));
 }
 
 /// Cancelling twice, or cancelling something that already finished, is not an

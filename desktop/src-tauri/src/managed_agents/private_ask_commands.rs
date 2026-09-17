@@ -8,9 +8,10 @@
 //! [`PRIVATE_ASK_UNAVAILABLE`] before any argument is read.
 //!
 //! The surface is deliberately thin. Admission owns every safety decision, and
-//! today it refuses every request (see `docs/crew/DECISIONS.md` D-083), so
-//! these commands exist to carry that refusal to a developer's screen —  not to
-//! soften it. Nothing here mints a capability.
+//! these commands carry its answer — an answer or a typed refusal — to a
+//! developer's screen without softening it. Nothing here mints a capability,
+//! and nothing here decides why a request was refused: the reason comes from
+//! `private_ask::dev_run`, so the screen cannot drift from the fences.
 
 use super::private_ask::dev_gate::private_ask_dev_enabled;
 use serde::Serialize;
@@ -38,21 +39,22 @@ pub async fn private_ask_dev_status() -> Result<PrivateAskDevStatus, String> {
     let enabled = private_ask_dev_enabled();
     Ok(PrivateAskDevStatus {
         enabled,
-        blocked_reason: enabled.then(|| {
-            // Stated up front rather than after a spinner: no producer can
-            // currently bound the run's egress to the model provider, so every
-            // request is refused at admission.
-            super::private_ask::PrivateAskFailure::EgressBoundUnverified.to_string()
-        }),
+        // Stated up front rather than after a spinner. The reason is taken from
+        // the same production path a real request would take, with a probe
+        // question, so the status row and the run can never disagree.
+        blocked_reason: enabled
+            .then(|| super::private_ask::dev_run("status probe").err())
+            .flatten()
+            .map(|failure| failure.to_string()),
     })
 }
 
-/// Run one private Ask.
+/// Run one private Ask and return its answer.
 ///
-/// Every safety decision belongs to `admit_private_ask`, which today refuses
-/// unconditionally. This command therefore returns that refusal rather than a
-/// placeholder answer: a developer surface that fakes a result would hide the
-/// exact thing the feature is gated on.
+/// The answer and every refusal come from `private_ask::dev_run`, which reaches
+/// `admit_private_ask` and `PrivateAskAttempt::run`. This command adds only the
+/// dev gate and the empty-question check; it never invents a result, and it
+/// never decides a reason of its own.
 #[tauri::command]
 pub async fn private_ask_run(question: String) -> Result<String, String> {
     if !private_ask_dev_enabled() {
@@ -61,7 +63,9 @@ pub async fn private_ask_run(question: String) -> Result<String, String> {
     if question.trim().is_empty() {
         return Err("a private Ask needs a question".to_string());
     }
-    Err(super::private_ask::PrivateAskFailure::EgressBoundUnverified.to_string())
+    super::private_ask::dev_run(&question)
+        .map(|response| response.markdown)
+        .map_err(|failure| failure.to_string())
 }
 
 /// Cancel an in-flight private Ask.
