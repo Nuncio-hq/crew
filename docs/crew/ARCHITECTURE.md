@@ -935,6 +935,7 @@ submodules split the responsibilities:
 | `binding.rs` | The sequencing from a resolved selection to an answer: retained-or-fresh probe, projection, admission, attempt |
 | `citations.rs` | The answer-citation fence: every cited path must be one the verified grounding accounts for |
 | `history.rs` | The bounded owner-local record of what was asked and what came back |
+| `cancel_registry.rs` | Which attempts are in flight, and the flag `private_ask_cancel` raises on one |
 | `session_evidence.rs` | Observation of a running employee session; the only way to obtain isolation evidence |
 | `profile.rs`, `recovery.rs`, `validation.rs` | Hermes profile staging, crash recovery, input fences |
 

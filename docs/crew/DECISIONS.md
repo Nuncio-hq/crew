@@ -2392,6 +2392,21 @@ The developer-only command surface is a gate, not a feature: `private_ask_run`
 returns whatever the production path returns — an answer or a typed refusal —
 and chooses no reason of its own.
 
+Three properties of that surface are now enforced rather than intended. The
+attempt id is **minted by the caller and registered before the run starts**, so
+`private_ask_cancel` can reach a run that has not spawned yet; it raises the same
+flag the attempt and its capability probe already poll, so cancellation travels
+through the bounded runner rather than through a second teardown path, and a
+withdrawn attempt is reported and recorded as cancelled rather than as a process
+that "did not complete safely". A refusal comes back as a **completed attempt**
+carrying its own `historyRecorded` flag, so a refusal whose owner-local record
+could not be written is visible on screen instead of silently dropped — an
+`Err(String)` had room for only one of the two signals. And
+`private_ask_dev_status`, which the composer polls on every mount, stops at the
+dev gate and the owned staging tree; it no longer calls the production entry
+point, which would start a contained probe child each time the composer
+appeared.
+
 **The answering path is now real.** Given a resolved selection — the selected
 agent's effective configuration and persona, its executable identity, a verified
 snapshot and the owned staging tree — the desktop takes the retained capability
@@ -2409,12 +2424,34 @@ hostile.
 What is still missing is the *resolver* in front of that path: nothing yet
 resolves a developer's question to a selected managed agent record, the grant
 anchored repository scope and a verified snapshot, so `dev_run` still refuses
-with `AgentUnbound` and the composer shows that refusal. The producers it needs
-all exist — `VerifiedStagingOwnership::load`,
-`runtime_ready_proof_for_captured_scope`, `resolve_effective_config`, the native
-`GrantStore` root and `crew_wiki::snapshot_v1::verify_snapshot` — plus one that
-does not: the path to a selected agent's live ACP session ledger and observer
-sequence, which `independent_invocation` is observed from.
+with `AgentUnbound` and the composer shows that refusal. An earlier revision of
+this entry said the producers it needs all exist. That was wrong, and the
+correction decides whether a dev-gated build can answer at all:
+
+- **The runtime-ready grant has no in-app writer.**
+  `runtime_ready_proof_for_captured_scope` reads a grant document that only a
+  `RecapRuntimeCertification` can write, and the single app entry point for one
+  — `certify_runtime_probe_for_app` — returns `RuntimeNotReady` unconditionally,
+  by design, because no native observer yet binds provider output to the
+  executed command. So a desktop build cannot obtain the selected agent's
+  certified executable, model or profile by any path, and no resolver can supply
+  them from inside the Ask.
+- **There is no native observer-sequence source.** The observer store and the
+  session-generation bookkeeping are renderer state, and `buzz-acp`'s session
+  ledger is a private module of a crate the desktop does not depend on. The
+  desktop must not write a sequence file and read it back: that would make the
+  evidence a statement about itself, the same defect that was removed from
+  `child_parent_pid`.
+- **Grounded citations need a chosen source root.** `VerifiedSourceFile` is
+  produced only through the `wiki_source` grant store, so a grounded Ask needs
+  the viewer to have chosen the repository's source folder. A zero-grounding
+  Ask does not.
+
+The resolver is therefore a decision, not only an implementation: either those
+producers are built first, or the dev-gated path stays refused at
+`MissingRuntime`. Until then `VerifiedStagingOwnership::load`,
+`resolve_effective_config` and `crew_wiki::snapshot_v1::verify_snapshot` are
+usable, and the rest are not.
 
 **A capability is minted from one real contained run.** The probe launches under
 byte-identical policy text to a production answer, with the proxy serving, and
@@ -2529,6 +2566,12 @@ attempt through the production launch path must move that count by zero.
   root that cannot be resolved is refused rather than assumed unrelated. Only
   the ancestor direction is refused; a directory inside the run roots discloses
   no sibling attempt.
+- A private Ask citation opens the same source pane an in-page citation opens,
+  so the cited path is resolved against the shown page's signed source
+  references rather than by the answer. A citation to a file the shown revision
+  does not carry surfaces the pane's existing "unavailable for this revision"
+  notice. Where no opener is supplied the citation renders as plain text rather
+  than as a control that goes nowhere.
 - The owner-local Ask history is persisted on this machine only, on the owned-run
   retention pattern: a bounded newest-first window capped by count and by age, in
   a 0o700 directory this uid owns, written 0o600 through a temporary file and a

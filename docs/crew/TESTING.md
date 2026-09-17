@@ -1237,6 +1237,15 @@ admit it, run the one-shot, resolve the answer's own citations. What is still
 missing is the resolver in front of that path, so the developer surface itself
 still shows `AgentUnbound` (D-083).
 
+**A dev-gated build cannot yet answer, and the reason is a missing producer
+rather than a missing wire.** Even with a resolver, the selected agent's
+certified executable/model/profile come from the recap runtime-ready grant, and
+nothing in the app writes that grant — `certify_runtime_probe_for_app` returns
+`RuntimeNotReady` unconditionally. An installed acceptance run therefore stops
+at `MissingRuntime` unless the grant is provisioned first. Do not report a
+dev-gated end-to-end answer as available until that producer exists; D-083
+records the same correction.
+
 Every fence below the binding is live, so its tests assert the **reason** a
 request is refused and never merely that it was — the egress proof runs a real
 loopback proxy rather than describing one, and the capability probe is produced
@@ -1278,6 +1287,8 @@ fails closed.
 | `citation_tests.rs` + `answer_tests.rs` | `citations::resolve`, called from `PrivateAskAttempt::run` | Restoring `request.grounding.clone()`; matching a cited path by prefix; treating an empty citation line as no citation |
 | `history_tests.rs` | `history::{record, load}` and its count/age bounds | Growing without bound; keeping a future-stamped entry; presenting a damaged file as a partial record |
 | `containment_read_roots_tests.rs` | The read-root fence in `private_ask_containment_profile` | Allowing a runtime directory that contains the run roots; comparing paths as strings rather than component-wise |
+| `cancel_registry_tests.rs` + `private_ask_commands_tests.rs` | `PrivateAskAttempts::{register, cancel}` and the command's registration guard | Aliasing one id across two runs; leaving an id in flight after the run returned or panicked; letting an unbounded number of attempts register |
+| `WikiAskBox.citations.test.mjs` | The composer's citation control and its `historyRecorded` notice, through the real Tauri invoke boundary | Rendering a citation as text when an opener exists; dropping the "not kept on this machine" note on the refused path |
 
 The containment tests are paired: an uncontained control run must reach every
 effect — write outside the run root, read a file outside it, open a socket,
@@ -1321,6 +1332,38 @@ shells out to `security find-generic-password`, so `observe_auth_evidence` has a
 proxy gate is not replaced, so both directions stay real and deterministic:
 credential present certifies authentication, credential absent does not, and
 containment stays verified across both.
+
+### Staging runbook for a dev-gated Ask
+
+What to set up, in order, and what the screen says at each step. Steps 1-4 are
+the existing staging harness; step 5 is where the Ask itself stops today.
+
+1. **Build with the surface open.** `BUZZ_PRIVATE_ASK_DEV=1` (exactly `1`) and a
+   debug build. With the flag absent the composer renders the ordinary
+   unavailable Ask box; with it set, the developer composer appears.
+2. **Hermes runtime binary.** The acceptance profile runs the Hermes CLI from
+   its own virtualenv, installed **outside** `<app-data>/agents` — a runtime
+   directory that contains the staging base is refused before any policy text
+   exists, and the screen shows `runtime process containment is unverified`.
+3. **An HTTPS provider profile.** The staged Hermes profile must name a provider
+   the loopback proxy can bind: one `host:443` in the explicit host table. A
+   profile pointed at a plain-HTTP loopback endpoint is refused, and the screen
+   shows `runtime network egress is not bounded to the model provider`.
+4. **Two identities.** The viewer and an observer on the same relay, the
+   observer holding a wide live subscription. Nothing about the Ask may appear
+   on the observer's side; that is the privacy half, and the relay-side canary
+   in `buzz-relay` is its automated counterpart.
+5. **Start the selected agent and give it one turn** before asking, so its ACP
+   session ledger entry exists. An agent that has never run has no observable
+   session, and `independent_invocation` is refused —
+   `the selected agent's running session could not be observed`.
+
+Then ask. **What the screen shows today is a refusal**, and which one is the
+evidence: `selected agent is unavailable` while no resolver is wired, and
+`selected runtime is unavailable` once one is, because the runtime-ready grant
+has no writer. Cancel during a run reports `the private Ask was cancelled`, and
+that sentence — not a process error — is what the owner-local list keeps. If an
+attempt cannot be written to that list, the composer says so under the answer.
 
 ### Staging evidence list
 
