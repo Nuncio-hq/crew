@@ -1,7 +1,7 @@
 #![cfg(unix)]
 use super::*;
 use std::io::{Read, Write};
-use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{symlink, PermissionsExt};
 
 fn canonical_tempdir() -> tempfile::TempDir {
     // macOS /var is an alias for /private/var; production accepts canonical bases only.
@@ -89,7 +89,6 @@ fn cleanup_restores_manifest_after_partial_recursive_remove() {
     let path = run.path().to_owned();
     let expected = run.manifest.clone();
     let owner_path = path.join(MANIFEST);
-    let owner_inode = std::fs::metadata(&owner_path).unwrap().ino();
     let payload = path.join("payload");
     std::fs::create_dir(&payload).unwrap();
     std::fs::write(payload.join("file"), b"payload").unwrap();
@@ -101,17 +100,27 @@ fn cleanup_restores_manifest_after_partial_recursive_remove() {
     // runs on — there the walk could fail before the manifest was touched and
     // the run would never exercise the restore path at all. The remover here
     // reproduces the exact state that path exists for, on every filesystem.
+    // The removal is observed through the seam rather than inferred afterwards.
+    // Inode identity is NOT a portable "newly written" signal: ext4 hands the
+    // freed inode straight back, so the restored file legitimately reuses it.
+    // What proves the restore is that the manifest was observed *absent* part
+    // way through, and is present and correct once cleanup has returned.
+    let removed = std::cell::Cell::new(false);
     let result = run.cleanup_with_remover(|path| {
-        std::fs::remove_file(path.join(MANIFEST)).unwrap();
+        let manifest = path.join(MANIFEST);
+        assert!(manifest.exists(), "the manifest exists before the removal");
+        std::fs::remove_file(&manifest).unwrap();
+        assert!(!manifest.exists(), "the original manifest is gone");
+        removed.set(true);
         Err(std::io::Error::other("partial cleanup"))
     });
 
     assert_eq!(result, Err(RecapStateFailure::Io));
+    assert!(removed.get(), "the partial removal really happened");
     assert!(path.exists());
-    assert_ne!(
-        std::fs::metadata(&owner_path).unwrap().ino(),
-        owner_inode,
-        "the restored manifest must be a newly written file, not the original"
+    assert!(
+        owner_path.exists(),
+        "the manifest removed mid-cleanup must be written back"
     );
     assert_eq!(read_manifest(&path).unwrap(), expected);
     assert!(payload.join("file").exists());
