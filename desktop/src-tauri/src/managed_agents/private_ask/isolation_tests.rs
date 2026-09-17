@@ -1,10 +1,10 @@
 //! Session isolation: a private Ask runs beside a genuinely busy employee
 //! session without touching anything that session owns.
 //!
-//! The busy session here is a real process holding a real ledger file. The
+//! The busy session here is a real process holding a real ledger directory. The
 //! private Ask runs through the production launch path while it is still
-//! working, and the assertions are taken from the ledger bytes, the observer
-//! sequence and the live PID — not from the adapter's own report.
+//! working, and the assertions are taken from the ledger bytes, the ledger
+//! entry set and the live PID — not from the adapter's own report.
 
 #![cfg(all(unix, target_os = "macos"))]
 
@@ -28,16 +28,19 @@ use std::time::{Duration, Instant};
 /// ledger for a few seconds, exactly as a long agent turn would.
 struct BusyEmployeeSession {
     child: Child,
+    /// The harness's own ledger directory for this session.
+    ledger_dir: PathBuf,
+    /// The one entry inside it, kept so the fixture can assert the bytes
+    /// themselves were never touched.
     ledger: PathBuf,
-    observer_sequence: PathBuf,
 }
 
 impl BusyEmployeeSession {
     fn start(directory: &Path) -> Self {
-        let ledger = directory.join("employee-ledger.json");
-        let observer_sequence = directory.join("employee-observer-sequence");
+        let ledger_dir = directory.join("employee-session-ledger");
+        std::fs::create_dir_all(&ledger_dir).expect("ledger directory");
+        let ledger = ledger_dir.join("employee-ledger.json");
         std::fs::write(&ledger, b"{\"turn\":\"in-progress\",\"messages\":3}").expect("ledger");
-        std::fs::write(&observer_sequence, b"42").expect("observer sequence");
         let child = std::process::Command::new("/usr/bin/perl")
             .arg("-e")
             .arg("$| = 1; print \"busy\\n\"; sleep 30;")
@@ -48,8 +51,8 @@ impl BusyEmployeeSession {
             .expect("busy employee session");
         let mut session = Self {
             child,
+            ledger_dir,
             ledger,
-            observer_sequence,
         };
         session.wait_until_working();
         session
@@ -80,14 +83,6 @@ impl BusyEmployeeSession {
 
     fn ledger_digest(&self) -> String {
         hex::encode(Sha256::digest(std::fs::read(&self.ledger).expect("ledger")))
-    }
-
-    fn observer_sequence(&self) -> u64 {
-        std::fs::read_to_string(&self.observer_sequence)
-            .expect("observer sequence")
-            .trim()
-            .parse()
-            .expect("observer sequence is numeric")
     }
 }
 
@@ -146,7 +141,7 @@ fn digest_of(value: &str) -> String {
 }
 
 /// A private Ask running beside a busy employee
-/// session leaves that session's ledger bytes, observer sequence and process
+/// session leaves that session's ledger bytes, ledger entries and process
 /// untouched, is parented to this process rather than to the session, and never
 /// sees the employee's home. Removing the `HOME` entry from `isolated_env`
 /// fails the home assertion; removing the `sandbox-exec` wrapper from
@@ -156,14 +151,9 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     let directory = canonical_tempdir();
     let mut session = BusyEmployeeSession::start(directory.path());
     let ledger_before = session.ledger_digest();
-    let observer_before = session.observer_sequence();
     let acp_pid_before = session.pid();
-    let snapshot_before = SessionSnapshot::capture(
-        &session.ledger,
-        &session.observer_sequence,
-        Some(acp_pid_before),
-    )
-    .expect("observe the busy session before the Ask");
+    let snapshot_before = SessionSnapshot::capture(&session.ledger_dir, Some(acp_pid_before))
+        .expect("observe the busy session before the Ask");
 
     let runtime = reporting_runtime(directory.path(), &session.ledger);
     let mut selected = state(&runtime, "claude", "claude-fable-5-1", None);
@@ -181,7 +171,6 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     assert!(session.is_alive(), "the busy session must not be disturbed");
     assert_eq!(session.pid(), acp_pid_before, "no session was restarted");
     assert_eq!(session.ledger_digest(), ledger_before, "ledger was mutated");
-    assert_eq!(session.observer_sequence(), observer_before);
 
     // The private child was owned by this process, not adopted by the session,
     // and never saw the employee's home or ledger.
@@ -263,12 +252,8 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
         session_isolation: Some(
             SessionIsolationEvidence::observe(
                 snapshot_before,
-                SessionSnapshot::capture(
-                    &session.ledger,
-                    &session.observer_sequence,
-                    Some(session.pid()),
-                )
-                .expect("observe the busy session after the Ask"),
+                SessionSnapshot::capture(&session.ledger_dir, Some(session.pid()))
+                    .expect("observe the busy session after the Ask"),
                 // Read the child's parent from what the child itself reported,
                 // not from this process's own PID. Asserting the trace and then
                 // certifying a value taken from elsewhere would let the

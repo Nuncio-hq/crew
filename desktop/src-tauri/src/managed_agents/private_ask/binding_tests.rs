@@ -25,7 +25,7 @@ use super::{answer, PrivateAskBinding};
 use crate::managed_agents::recap_ownership::VerifiedStagingOwnership;
 use std::path::Path;
 
-/// A stand-in employee session: two readable artefacts and one real live child
+/// A stand-in employee session: a readable ledger directory and one real live child
 /// whose handle this fixture owns, so the PID in the observation comes from a
 /// handle rather than from a PID probe — the same rule production follows.
 struct LiveSession {
@@ -35,10 +35,13 @@ struct LiveSession {
 
 impl LiveSession {
     fn start(directory: &Path) -> Self {
-        let ledger = directory.join("employee-ledger.json");
-        let observer_sequence = directory.join("employee-observer-sequence");
-        std::fs::write(&ledger, b"{\"turn\":\"idle\"}").expect("ledger");
-        std::fs::write(&observer_sequence, b"42").expect("observer sequence");
+        let ledger_dir = directory.join("employee-session-ledger");
+        std::fs::create_dir_all(&ledger_dir).expect("ledger directory");
+        std::fs::write(
+            ledger_dir.join("employee-ledger.json"),
+            b"{\"turn\":\"idle\"}",
+        )
+        .expect("ledger");
         let child = std::process::Command::new("/usr/bin/perl")
             .arg("-e")
             .arg("sleep 120;")
@@ -48,8 +51,7 @@ impl LiveSession {
             .spawn()
             .expect("employee session");
         let observation = SessionObservation {
-            ledger,
-            observer_sequence,
+            ledger_dir,
             acp_pid: Some(child.id()),
         };
         Self { child, observation }
