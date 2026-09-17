@@ -8,6 +8,7 @@
 //! viewer sees still comes from [`super::admit_private_ask`] — a probe can never
 //! mint a capability the admission fences did not also accept.
 
+use super::egress_proxy::EgressObservation;
 use super::prompt::config_fingerprint;
 pub(crate) use super::session_evidence::SessionIsolationEvidence;
 use super::validation::{is_hex64, valid_model, valid_profile, valid_scope_value};
@@ -78,6 +79,22 @@ pub(crate) struct PrivateAskProbe {
     /// weaker hand-written profile cannot certify this recipe.
     pub(crate) containment_profile: String,
     pub(crate) probe_run_root: PathBuf,
+    /// What the attempt's own loopback proxy observed. This is the ONLY input
+    /// that can make `egress_bounded` positive.
+    pub(crate) egress: EgressObservation,
+    /// Unix seconds at which this trace was captured, and the per-run nonce it
+    /// was captured under. Together they stop one retained trace from
+    /// certifying forever, or from being replayed onto a different run.
+    pub(crate) captured_at: u64,
+    pub(crate) run_nonce: String,
+    /// The verified managed-agent staging base the probe's run root sat under.
+    ///
+    /// LIMIT: this is carried by the trace rather than re-derived here, because
+    /// a capability does not retain its probe and this producer has no handle
+    /// on the process's `VerifiedStagingOwnership`. It rejects a probe captured
+    /// in an unrelated directory; it does not by itself prove the base was the
+    /// owned one. The launch path re-derives the real base independently.
+    pub(crate) staging_base: PathBuf,
     /// Digest of the working checkout and external fixture state, bracketing
     /// the whole run. This is the no-side-effect observation.
     pub(crate) external_state_before: String,
@@ -89,6 +106,9 @@ pub(crate) struct PrivateAskProbe {
 /// distinct from an unverified dimension: the trace is about something else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrivateAskProbeRejection {
+    /// The trace is older than [`PROBE_MAX_AGE`], carries no per-run nonce, or
+    /// ran somewhere that is not under the verified staging base.
+    StaleOrMisplacedProbe,
     RuntimeMismatch,
     ExecutableMismatch,
     SelectionMismatch,
@@ -145,18 +165,31 @@ impl PrivateAskCapability {
         if !is_hex64(&probe.acl_fingerprint) || !valid_scope_value(&probe.session_generation) {
             return Err(PrivateAskProbeRejection::InvalidState);
         }
+        if !fresh_and_placed(&probe) {
+            return Err(PrivateAskProbeRejection::StaleOrMisplacedProbe);
+        }
 
+        // The probe's own proxy port is rebuilt into the expected policy. A
+        // trace captured under a different port — or under the old any-host
+        // rule — no longer reproduces this policy text and cannot certify it.
         let expected_profile = super::launch::runtime_directory(&probe.executable.resolved_path)
             .and_then(|directory| {
                 super::containment::private_ask_containment_profile(
                     &probe.probe_run_root,
                     &directory,
+                    &super::launch::extra_read_roots(&probe.executable.resolved_path),
+                    probe.egress.proxy_port(),
                 )
             })
             .ok();
         let containment_verified = expected_profile
             .is_some_and(|expected| expected == probe.containment_profile)
             && probe.tool_probe.surviving_descendants == 0;
+        // Egress is projected from the proxy's own record and from nothing
+        // else: no flag, no exit code, no absence of evidence.
+        let egress_verified = containment_verified
+            && probe.egress.bounds_egress()
+            && probe.tool_probe.network_connections_observed == 0;
         let tool_isolation_verified =
             containment_verified && valid_tool_probe_evidence(&probe.tool_probe);
         // Read isolation is its own dimension: a policy can deny every write
@@ -167,6 +200,12 @@ impl PrivateAskCapability {
         let side_effect_free_verified = tool_isolation_verified
             && is_sha256(&probe.external_state_before)
             && probe.external_state_before == probe.external_state_after;
+        // Authentication stays an independent dimension here so a refusal names
+        // the thing that actually failed: folding egress into it would report a
+        // broken containment as an authentication problem. The gate that ties a
+        // credential to a bounded egress lives where the credential is created
+        // — `credential::stage_private_ask_credential` refuses unless the
+        // attempt's proxy is serving — which is the moment that matters.
         let authentication_verified = probe.auth.auth_available
             && valid_bounded_label(&probe.auth.service)
             && valid_bounded_label(&probe.auth.reference);
@@ -190,24 +229,47 @@ impl PrivateAskCapability {
             session_generation: probe.session_generation,
             authentication: status(authentication_verified),
             tool_isolation: status(tool_isolation_verified),
-            // NAMED LIMIT, deliberately never Verified by this producer.
-            //
-            // The Seatbelt policy allows `remote ip "*:443"` — any host on 443,
-            // because SBPL cannot resolve a hostname — and the probe's
-            // `network_connections_observed` is measured only against a
-            // loopback listener on an ephemeral port, which the policy already
-            // refuses. That measurement therefore says nothing about the path
-            // that IS open. Until egress is forced through a desktop-owned
-            // proxy that dials only the configured provider, no evidence here
-            // can bound it, so certification is refused rather than granted on
-            // a measurement of the wrong path.
-            egress_bounded: ProofStatus::Unverified,
+            egress_bounded: status(egress_verified),
             read_bounded: status(read_bounded_verified),
             process_containment: status(containment_verified),
             side_effect_free: status(side_effect_free_verified),
             independent_invocation: status(independent_verified),
         })
     }
+}
+
+/// How long one retained trace may certify a selection.
+///
+/// A capability is a statement about a machine, and a machine changes: a
+/// runtime is upgraded, a credential expires, a proxy is no longer listening. A
+/// trace with no expiry certifies forever, which is the failure this bound
+/// exists to stop. It is generous rather than tight because re-probing is
+/// expensive; the executable re-hash immediately before launch covers the fast-
+/// moving part.
+pub(crate) const PROBE_MAX_AGE: u64 = 24 * 60 * 60;
+
+/// The trace is recent, carries a per-run nonce, and ran under the staging base.
+///
+/// A clock that cannot be read at all fails closed: without a `now` there is no
+/// age, and an ageless trace is exactly the thing being refused. A trace stamped
+/// in the future is refused for the same reason — it is not a reading of this
+/// machine's clock.
+fn fresh_and_placed(probe: &PrivateAskProbe) -> bool {
+    let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return false;
+    };
+    let now = now.as_secs();
+    if probe.captured_at == 0 || probe.captured_at > now || now - probe.captured_at > PROBE_MAX_AGE
+    {
+        return false;
+    }
+    if !valid_scope_value(&probe.run_nonce) {
+        return false;
+    }
+    probe.staging_base.is_absolute()
+        && probe.probe_run_root.is_absolute()
+        && probe.probe_run_root != probe.staging_base
+        && probe.probe_run_root.starts_with(&probe.staging_base)
 }
 
 fn status(verified: bool) -> ProofStatus {

@@ -12,7 +12,10 @@
 use super::capability::{
     PrivateAskAuthEvidence, PrivateAskProbe, PrivateAskToolProbe, PRIVATE_ASK_TOOL_PROBE_ID,
 };
-use super::tests::{canonical_tempdir, executable, owned_receipt, request, state, FIXTURE_PERSONA};
+use super::tests::{
+    bounded_egress, canonical_tempdir, captured_now, executable, owned_receipt, request, state,
+    FIXTURE_PERSONA, PROBE_PROXY_PORT,
+};
 use super::*;
 use sha2::{Digest, Sha256};
 use std::net::{TcpListener, TcpStream};
@@ -324,8 +327,17 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
         containment_profile: containment::private_ask_containment_profile(
             &run_root,
             &probe_runtime_directory(&fixture.executable),
+            &super::launch::extra_read_roots(&fixture.executable),
+            PROBE_PROXY_PORT,
         )
         .unwrap(),
+        staging_base: run_root
+            .parent()
+            .expect("probe root has a parent")
+            .to_path_buf(),
+        egress: bounded_egress(),
+        captured_at: captured_now(),
+        run_nonce: "fixture-run-nonce".into(),
         probe_run_root: run_root,
         external_state_before: digest_of("checkout-unchanged"),
         external_state_after: digest_of("checkout-unchanged"),
@@ -357,7 +369,8 @@ fn the_launch_command_applies_the_effect_denying_policy_to_the_runtime() {
     let ownership = owned_receipt(&directory);
     let base = ownership.recap_base().expect("base");
     let run = super::super::recap_state::OwnedRecapRun::create(&base, 1).expect("run");
-    let plan = PrivateAskLaunchPlan::for_admission(&admission, &run).expect("plan");
+    let proxy = super::tests::fixture_proxy();
+    let plan = PrivateAskLaunchPlan::for_admission(&admission, &run, &proxy).expect("plan");
     let command = plan.command();
     let args: Vec<String> = command
         .get_args()

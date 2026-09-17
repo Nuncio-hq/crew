@@ -7,7 +7,10 @@ use super::capability::{
     PrivateAskAuthEvidence, PrivateAskProbe, PrivateAskProbeRejection, PrivateAskToolProbe,
     SessionIsolationEvidence, PRIVATE_ASK_TOOL_PROBE_ID,
 };
-use super::tests::{canonical_tempdir, executable, request, state, FIXTURE_PERSONA};
+use super::tests::{
+    bounded_egress, canonical_tempdir, captured_now, executable, request, state, FIXTURE_PERSONA,
+    PROBE_PROXY_PORT,
+};
 use super::*;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -55,8 +58,17 @@ fn healthy_probe(state: &SelectedAgentState, run_root: PathBuf) -> PrivateAskPro
         containment_profile: containment::private_ask_containment_profile(
             &run_root,
             &runtime_directory_of(&state.executable.resolved_path),
+            &super::launch::extra_read_roots(&state.executable.resolved_path),
+            PROBE_PROXY_PORT,
         )
         .unwrap_or_default(),
+        staging_base: run_root
+            .parent()
+            .expect("probe root has a parent")
+            .to_path_buf(),
+        egress: bounded_egress(),
+        captured_at: captured_now(),
+        run_nonce: "fixture-run-nonce".into(),
         probe_run_root: run_root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
@@ -96,14 +108,86 @@ fn a_complete_probe_certifies_every_provable_dimension_but_egress_still_refuses(
     assert_eq!(capability.process_containment, ProofStatus::Verified);
     assert_eq!(capability.side_effect_free, ProofStatus::Verified);
     assert_eq!(capability.independent_invocation, ProofStatus::Verified);
-    // Every dimension a probe can prove is proved — and the request is still
-    // refused, because nothing today can show the run's egress reached only
-    // the model provider. This is the fail-closed floor: it must stay a
-    // refusal until a desktop-owned proxy makes the claim provable.
+    // Every dimension is proved, including egress: the probe carries the
+    // attempt proxy's own record, showing the provider was reached, something
+    // else was refused, and nothing bypassed the proxy. The request is admitted.
+    assert_eq!(capability.egress_bounded, ProofStatus::Verified);
+    admit_private_ask(request(), selected, capability).expect("complete admission");
+}
+
+/// The fail-closed floor moved, it did not disappear. A probe whose proxy
+/// record does not bound egress still refuses, and the refusal names egress.
+/// Removing the `probe.egress.bounds_egress()` clause in `from_probe` fails this.
+#[test]
+fn a_probe_whose_proxy_record_does_not_bound_egress_is_still_refused() {
+    use super::egress_proxy::{EgressObservation, RefusalReason};
+    let (_directory, selected, run_root) = fixture();
+    let mut probe = healthy_probe(&selected, run_root);
+    // Nothing was ever refused: this proxy was never shown to say no.
+    probe.egress = EgressObservation::from_parts(
+        "api.anthropic.com".into(),
+        PROBE_PROXY_PORT,
+        vec!["api.anthropic.com".into()],
+        Vec::new(),
+        0,
+        false,
+        0,
+    );
+    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
     assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
     assert_eq!(
-        admit_private_ask(request(), selected, capability).unwrap_err(),
+        admit_private_ask(request(), selected.clone(), capability).unwrap_err(),
         PrivateAskFailure::EgressBoundUnverified
+    );
+
+    // A foreign host the proxy accepted is not a bounded egress either.
+    let (_directory, selected, run_root) = fixture();
+    let mut probe = healthy_probe(&selected, run_root);
+    probe.egress = EgressObservation::from_parts(
+        "api.anthropic.com".into(),
+        PROBE_PROXY_PORT,
+        vec!["api.anthropic.com".into(), "evil.test".into()],
+        vec![("other.test:80".into(), RefusalReason::ForeignPort)],
+        0,
+        false,
+        0,
+    );
+    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
+    assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
+}
+
+/// A trace that is too old, has no per-run nonce, or ran outside the verified
+/// staging base is not evidence about this run at all. Removing the
+/// `fresh_and_placed` fence in `from_probe` fails this.
+#[test]
+fn a_stale_nonceless_or_misplaced_trace_is_rejected_structurally() {
+    let (_directory, selected, run_root) = fixture();
+    let mut probe = healthy_probe(&selected, run_root.clone());
+    probe.captured_at = captured_now() - super::capability::PROBE_MAX_AGE - 1;
+    assert_eq!(
+        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
+    );
+
+    let mut probe = healthy_probe(&selected, run_root.clone());
+    probe.captured_at = captured_now() + 3600;
+    assert_eq!(
+        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
+    );
+
+    let mut probe = healthy_probe(&selected, run_root.clone());
+    probe.run_nonce = String::new();
+    assert_eq!(
+        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
+    );
+
+    let mut probe = healthy_probe(&selected, run_root);
+    probe.staging_base = std::path::PathBuf::from("/elsewhere");
+    assert_eq!(
+        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
     );
 }
 

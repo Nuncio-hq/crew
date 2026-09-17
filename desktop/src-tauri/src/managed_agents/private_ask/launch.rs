@@ -37,7 +37,14 @@ impl PrivateAskLaunchPlan {
     pub(super) fn for_admission(
         admission: &PrivateAskAdmission,
         run: &OwnedRecapRun,
+        proxy: &super::egress_proxy::EgressProxy,
     ) -> Result<Self, PrivateAskFailure> {
+        // The proxy must already be serving. A plan built against a dead proxy
+        // would name a policy port nothing is listening on, and the child would
+        // fail with a connection error rather than an honest refusal.
+        if !proxy.is_listening() {
+            return Err(PrivateAskFailure::EgressBoundUnverified);
+        }
         let root = run.path();
         if !root.is_absolute()
             || !admission.capability.executable.resolved_path.is_absolute()
@@ -53,10 +60,18 @@ impl PrivateAskLaunchPlan {
         // trusting the raw path) keeps the policy and the executed binary the
         // same file.
         let runtime_directory = runtime_directory(&admission.capability.executable.resolved_path)?;
-        let containment_profile =
-            super::containment::private_ask_containment_profile(root, &runtime_directory)?;
+        let extra_read_roots = extra_read_roots(&admission.capability.executable.resolved_path);
+        let containment_profile = super::containment::private_ask_containment_profile(
+            root,
+            &runtime_directory,
+            &extra_read_roots,
+            proxy.port(),
+        )?;
         prepare_state_dirs(root)?;
         let mut env = isolated_env(root, &admission.capability.executable.resolved_path);
+        for (name, value) in proxy.child_env() {
+            env.insert(OsString::from(name), OsString::from(value));
+        }
         let (args, usage_file, prompt_on_stdin) = match admission.state.runtime_id.as_str() {
             "claude" => {
                 env.insert(
@@ -168,7 +183,11 @@ impl PrivateAskLaunchPlan {
                     .usage_file
                     .as_deref()
                     .ok_or(PrivateAskFailure::ModelMismatch)?;
-                if read_usage_model(usage)?.as_deref() != Some(self.model.as_str()) {
+                let reported = read_usage_model(usage)?;
+                if !reported
+                    .as_deref()
+                    .is_some_and(|reported| model_key_matches(&self.model, reported))
+                {
                     return Err(PrivateAskFailure::ModelMismatch);
                 }
                 Ok(text)
@@ -237,18 +256,29 @@ pub(super) fn isolated_env(root: &Path, executable: &Path) -> BTreeMap<OsString,
     ] {
         env.insert(name.into(), root.join(directory).into_os_string());
     }
-    env.insert(
-        OsString::from("PATH"),
-        format!(
-            "{}:/usr/bin:/bin",
-            executable
-                .parent()
-                .unwrap_or_else(|| Path::new("/usr/bin"))
-                .display()
-        )
-        .into(),
-    );
+    // The interpreter directory of a `#!` runtime joins `PATH` as well as the
+    // read allow-list: an npm-installed `claude` is `#!/usr/bin/env node`, and
+    // without `node` on `PATH` it exits before it has read the prompt.
+    let mut path = executable
+        .parent()
+        .unwrap_or_else(|| Path::new("/usr/bin"))
+        .display()
+        .to_string();
+    for extra in extra_read_roots(executable) {
+        path.push(':');
+        path.push_str(&extra.display().to_string());
+    }
+    path.push_str(":/usr/bin:/bin");
+    env.insert(OsString::from("PATH"), path.into());
     env
+}
+
+/// Directories beyond the runtime's own that this executable needs to be
+/// readable and executable. Empty for a native binary.
+pub(super) fn extra_read_roots(executable: &Path) -> Vec<PathBuf> {
+    super::runtime_paths::interpreter_directory(executable)
+        .into_iter()
+        .collect()
 }
 
 fn prepare_state_dirs(root: &Path) -> Result<(), PrivateAskFailure> {
@@ -332,22 +362,46 @@ fn read_usage_model(path: &Path) -> Result<Option<String>, PrivateAskFailure> {
 fn parse_claude_output(model: &str, stdout: &[u8]) -> Result<String, PrivateAskFailure> {
     let parsed: ClaudeResult =
         serde_json::from_slice(stdout).map_err(|_| PrivateAskFailure::InvalidOutput)?;
+    let model_matches = parsed.model_usage.len() == 1
+        && parsed
+            .model_usage
+            .keys()
+            .any(|key| model_key_matches(model, key));
     if parsed.kind != "result"
         || parsed.subtype != "success"
         || parsed.is_error
         || parsed.result.trim().is_empty()
-        || parsed.model_usage.len() != 1
-        || !parsed.model_usage.contains_key(model)
+        || !model_matches
     {
-        return Err(
-            if parsed.model_usage.len() != 1 || !parsed.model_usage.contains_key(model) {
-                PrivateAskFailure::ModelMismatch
-            } else {
-                PrivateAskFailure::InvalidOutput
-            },
-        );
+        return Err(if !model_matches {
+            PrivateAskFailure::ModelMismatch
+        } else {
+            PrivateAskFailure::InvalidOutput
+        });
     }
     Ok(parsed.result)
+}
+
+/// Whether Claude's reported usage key names the selected model.
+///
+/// The selection is an alias (`claude-fable-5-1`); the usage key is often the
+/// resolved id with a date suffix (`claude-fable-5-1-20260101`). Requiring
+/// exact equality refuses a run that used exactly the right model, which reads
+/// to a viewer as a substitution that did not happen.
+///
+/// The leniency is a *prefix at a component boundary*, not a substring: a
+/// different family or size never matches, because the next character after
+/// the selected name must be a `-`.
+pub(super) fn model_key_matches(selected: &str, usage_key: &str) -> bool {
+    if selected.is_empty() || usage_key.is_empty() {
+        return false;
+    }
+    if selected == usage_key {
+        return true;
+    }
+    usage_key
+        .strip_prefix(selected)
+        .is_some_and(|rest| rest.starts_with('-'))
 }
 
 #[derive(serde::Deserialize)]

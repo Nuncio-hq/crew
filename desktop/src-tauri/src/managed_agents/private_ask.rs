@@ -15,14 +15,20 @@ use std::time::Duration;
 
 mod capability;
 mod containment;
+mod credential;
 pub(crate) mod dev_gate;
+mod egress_proxy;
 mod launch;
 mod profile;
 mod prompt;
+mod provider;
 mod recovery;
+mod runtime_paths;
 mod session_evidence;
 mod validation;
 use launch::PrivateAskLaunchPlan;
+#[cfg(test)]
+use prompt::build_prompt_with_nonce;
 use prompt::{build_prompt, config_fingerprint};
 #[cfg(test)]
 use recovery::finish_after_process_with;
@@ -662,6 +668,74 @@ impl PrivateAskAttempt {
         Ok(())
     }
 
+    /// The single destination this attempt's egress proxy may reach.
+    ///
+    /// For hermes it comes from the profile copy already staged inside the run
+    /// root — the bytes the child will actually read — so the bound destination
+    /// and the configured one cannot disagree.
+    fn provider_host(
+        &self,
+        run: &OwnedRecapRun,
+    ) -> Result<egress_proxy::ProviderHost, PrivateAskFailure> {
+        let configured = if self.admission.state.runtime_id == "hermes" {
+            let profile = self
+                .admission
+                .state
+                .profile
+                .as_deref()
+                .ok_or(PrivateAskFailure::MissingProfile)?;
+            provider::staged_hermes_provider(
+                &run.path().join("hermes").join("profiles").join(profile),
+            )
+        } else {
+            None
+        };
+        provider::provider_host(&self.admission.state.runtime_id, configured.as_deref())
+    }
+
+    /// The provider credential this attempt hands to its child, if any.
+    ///
+    /// Under test the platform secret store is not the thing being examined —
+    /// and must not be touched by a unit test — so a known canary replaces the
+    /// keychain read. The gate it is subject to is NOT replaced: the canary is
+    /// still refused unless the proxy is serving, and `credential_tests` drives
+    /// the real `stage_private_ask_credential` against that same gate. The
+    /// canary exists so the privacy tests can prove where a credential does and
+    /// does not end up on the real launch path.
+    #[cfg(test)]
+    pub(crate) const TEST_CREDENTIAL_CANARY: &'static str =
+        "canary-private-ask-credential-must-not-leak";
+
+    #[cfg(test)]
+    fn stage_credential(
+        &self,
+        _state_dir: &Path,
+        proxy: &egress_proxy::EgressProxy,
+    ) -> Result<Option<credential::StagedCredential>, PrivateAskFailure> {
+        if !proxy.is_listening() {
+            return Err(PrivateAskFailure::EgressBoundUnverified);
+        }
+        match self.admission.state.runtime_id.as_str() {
+            "claude" => credential::claude_credential(Self::TEST_CREDENTIAL_CANARY).map(Some),
+            "hermes" => Ok(None),
+            _ => Err(PrivateAskFailure::MissingRuntime),
+        }
+    }
+
+    #[cfg(not(test))]
+    fn stage_credential(
+        &self,
+        state_dir: &Path,
+        proxy: &egress_proxy::EgressProxy,
+    ) -> Result<Option<credential::StagedCredential>, PrivateAskFailure> {
+        credential::stage_private_ask_credential(
+            &self.admission.state.runtime_id,
+            state_dir,
+            proxy,
+            &self.cancel,
+        )
+    }
+
     /// Execute one fixed native plan and clean only its finished generation.
     pub(crate) fn run(mut self) -> Result<PrivateAskResponse, PrivateAskFailure> {
         let mut run = self.run.take().ok_or(PrivateAskFailure::InvalidState)?;
@@ -675,8 +749,28 @@ impl PrivateAskAttempt {
         if self.admission.state.runtime_id == "hermes" && !self.profile_staged {
             return Err(finish_before_spawn(run, PrivateAskFailure::MissingProfile));
         }
-        let plan = match PrivateAskLaunchPlan::for_admission(&self.admission, &run) {
+        // Egress is bounded before anything else is prepared: the proxy's port
+        // goes into the Seatbelt policy and into the child's environment, so it
+        // must be settled before the plan exists. The handle lives for the rest
+        // of this function, and every return path below drops it, which stops
+        // the listener — there is no exit that leaves the port open.
+        let provider_host = match self.provider_host(&run) {
+            Ok(host) => host,
+            Err(failure) => return Err(finish_before_spawn(run, failure)),
+        };
+        let proxy = match egress_proxy::EgressProxy::start(provider_host) {
+            Ok(proxy) => proxy,
+            Err(failure) => return Err(finish_before_spawn(run, failure)),
+        };
+        let plan = match PrivateAskLaunchPlan::for_admission(&self.admission, &run, &proxy) {
             Ok(plan) => plan,
+            Err(failure) => return Err(finish_before_spawn(run, failure)),
+        };
+        // Read only after the proxy is serving: `stage_private_ask_credential`
+        // refuses otherwise, so a bearer token cannot exist for a child whose
+        // egress is not already bounded.
+        let credential = match self.stage_credential(run.path(), &proxy) {
+            Ok(credential) => credential,
             Err(failure) => return Err(finish_before_spawn(run, failure)),
         };
         let prompt = match build_prompt(&self.admission.request, &self.admission.state.persona) {
@@ -699,7 +793,19 @@ impl PrivateAskAttempt {
         if let Err(failure) = same_executable_now(&self.admission.capability.executable) {
             return Err(finish_before_spawn(run, failure));
         }
+        // A hard link inside the run root to an outside inode would turn the
+        // policy's run-root write allowance into a write allowance for that
+        // outside file: Seatbelt matches the path, and both names reach the
+        // same bytes. Checked immediately before spawn, after profile staging.
+        if let Err(failure) = runtime_paths::assert_no_hard_links(run.path()) {
+            return Err(finish_before_spawn(run, failure));
+        }
         let mut command = plan.command();
+        if let Some(credential) = credential.as_ref() {
+            // Environment only. Never argv, never a file in the run root.
+            let (name, value) = credential.env_entry();
+            command.env(name, value);
+        }
         if plan.prompt_on_stdin {
             let input = match run.input(prompt.as_bytes()) {
                 Ok(input) => input,

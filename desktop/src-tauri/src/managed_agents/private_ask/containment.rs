@@ -23,21 +23,23 @@
 //!   without it.
 //! * `file-read-metadata` stays open. Path resolution needs it on every ancestor
 //!   and it discloses names, not contents.
-//! * `remote ip "*:443"` keeps the provider HTTPS path reachable. SBPL does not
-//!   resolve hostnames, so a host-scoped rule is not available; the mDNSResponder
-//!   socket is allowed separately because name resolution is a local UNIX socket
-//!   connect, which `deny network-outbound` would otherwise refuse.
-//!   NAMED LIMIT: this is any host on 443, not the provider. Egress is therefore
-//!   not certifiable from this policy alone — see `PrivateAskCapability`, whose
-//!   `read_bounded` dimension this module does feed and whose egress dimension
-//!   remains outside its scope.
+//! * Network egress is a single loopback port: the desktop-owned CONNECT proxy
+//!   for this attempt. `(remote ip "localhost:<port>")` was verified on macOS
+//!   25.5 to permit exactly that port and to refuse a second loopback port. The
+//!   previous `remote ip "*:443"` rule was any host on 443, which no evidence
+//!   could bound.
+//! * There is deliberately NO mDNSResponder allowance. Name resolution is a
+//!   local UNIX-socket connect that `deny network-outbound` refuses, so the
+//!   child cannot resolve a name at all — verified: `gethostbyname` fails under
+//!   this policy. The proxy does every lookup, which is exactly why the set of
+//!   destinations it recorded is the complete set the child asked for.
 //! * `process-exec*` is deliberately *not* denied: `sandbox-exec` applies the
 //!   policy and then `execvp`s the runtime itself, so denying exec makes the
 //!   launch fail outright. `deny process-fork` is what stops new processes; an
 //!   in-place `execve` inherits this same policy and escapes nothing.
 
 use super::PrivateAskFailure;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Build the Seatbelt policy text confining one attempt to `run_root`.
 ///
@@ -48,11 +50,29 @@ use std::path::Path;
 pub(super) fn private_ask_containment_profile(
     run_root: &Path,
     runtime_directory: &Path,
+    extra_read_roots: &[PathBuf],
+    proxy_port: u16,
 ) -> Result<String, PrivateAskFailure> {
     #[cfg(target_os = "macos")]
     {
+        // A port of zero is not a bound listener. Refusing it here stops a
+        // policy that would read as `localhost:0` — which SBPL accepts and
+        // which no proxy can ever be listening on.
+        if proxy_port == 0 {
+            return Err(PrivateAskFailure::ProcessContainmentUnverified);
+        }
         let root = sbpl_path(run_root)?;
         let runtime = sbpl_path(runtime_directory)?;
+        // An npm-installed runtime is a `#!` script, so its interpreter's own
+        // directory must be readable too. The set is fixed by the caller from
+        // the resolved shebang, never from caller-supplied text.
+        let mut extra = String::new();
+        for path in extra_read_roots {
+            let rendered = sbpl_path(path)?;
+            extra.push_str(&format!(
+                "(allow file-read* (subpath \"{rendered}\"))\n             "
+            ));
+        }
         if !std::fs::metadata("/usr/bin/sandbox-exec").is_ok_and(|metadata| metadata.is_file()) {
             return Err(PrivateAskFailure::ProcessContainmentUnverified);
         }
@@ -66,19 +86,18 @@ pub(super) fn private_ask_containment_profile(
              (subpath \"/System\") (subpath \"/Library\") (subpath \"/dev\") \
              (subpath \"/private/var/db\"))\n\
              (allow file-read* (subpath \"{runtime}\"))\n\
-             (allow file-read* (subpath \"{root}\"))\n\
+             {extra}(allow file-read* (subpath \"{root}\"))\n\
              (deny file-write*)\n\
              (allow file-write* (subpath \"{root}\"))\n\
              (allow file-write-data (literal \"/dev/null\") (literal \"/dev/dtracehelper\"))\n\
              (deny network-outbound)\n\
-             (allow network-outbound (remote ip \"*:443\"))\n\
-             (allow network-outbound (literal \"/private/var/run/mDNSResponder\"))\n\
+             (allow network-outbound (remote ip \"localhost:{proxy_port}\"))\n\
              (deny process-fork)"
         ))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (run_root, runtime_directory);
+        let _ = (run_root, runtime_directory, extra_read_roots, proxy_port);
         Err(PrivateAskFailure::ProcessContainmentUnverified)
     }
 }

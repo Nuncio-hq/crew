@@ -13,7 +13,10 @@ use super::capability::{
     PRIVATE_ASK_TOOL_PROBE_ID,
 };
 use super::session_evidence::SessionSnapshot;
-use super::tests::{canonical_tempdir, executable, owned_receipt, request, state, FIXTURE_PERSONA};
+use super::tests::{
+    bounded_egress, canonical_tempdir, captured_now, executable, owned_receipt, request, state,
+    FIXTURE_PERSONA, PROBE_PROXY_PORT,
+};
 use super::*;
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
@@ -237,8 +240,17 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
         containment_profile: containment::private_ask_containment_profile(
             &run_root,
             &runtime_directory_of(&selected.executable.resolved_path),
+            &super::launch::extra_read_roots(&selected.executable.resolved_path),
+            PROBE_PROXY_PORT,
         )
         .unwrap(),
+        staging_base: run_root
+            .parent()
+            .expect("probe root has a parent")
+            .to_path_buf(),
+        egress: bounded_egress(),
+        captured_at: captured_now(),
+        run_nonce: "fixture-run-nonce".into(),
         probe_run_root: run_root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
@@ -267,13 +279,12 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     };
     let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Verified);
-    // The busy-session fence is satisfied by a real observation: the request no
-    // longer fails as `AgentBusy`. It stops at the egress bound instead, which
-    // nothing can yet prove.
-    assert_eq!(
-        admit_private_ask(request(), selected, capability).unwrap_err(),
-        PrivateAskFailure::EgressBoundUnverified
-    );
+    // The busy-session fence is satisfied by a real observation, so the request
+    // no longer fails as `AgentBusy` — and with the proxy's own record carried
+    // by the probe, the egress bound is satisfied too. This is a complete
+    // admission built entirely from observations of a real run.
+    assert_eq!(capability.egress_bounded, ProofStatus::Verified);
+    admit_private_ask(request(), selected, capability).expect("complete admission");
 }
 
 /// Without that observation a busy agent is refused, and the refusal names the
@@ -334,8 +345,17 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
         containment_profile: containment::private_ask_containment_profile(
             &root,
             &runtime_directory_of(&probe_state.executable.resolved_path),
+            &super::launch::extra_read_roots(&probe_state.executable.resolved_path),
+            PROBE_PROXY_PORT,
         )
         .unwrap_or_default(),
+        staging_base: root
+            .parent()
+            .expect("probe root has a parent")
+            .to_path_buf(),
+        egress: bounded_egress(),
+        captured_at: captured_now(),
+        run_nonce: "fixture-run-nonce".into(),
         probe_run_root: root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
