@@ -12,15 +12,15 @@ use std::path::Path;
 #[test]
 fn a_run_root_that_cannot_be_confined_refuses_a_containment_profile() {
     assert_eq!(
-        private_ask_containment_profile(Path::new("relative/root")),
+        private_ask_containment_profile(Path::new("relative/root"), Path::new("/usr/bin")),
         Err(PrivateAskFailure::ProcessContainmentUnverified)
     );
     assert_eq!(
-        private_ask_containment_profile(Path::new("/tmp/run\"root")),
+        private_ask_containment_profile(Path::new("/tmp/run\"root"), Path::new("/usr/bin")),
         Err(PrivateAskFailure::ProcessContainmentUnverified)
     );
     assert_eq!(
-        private_ask_containment_profile(Path::new("/tmp/run\\root")),
+        private_ask_containment_profile(Path::new("/tmp/run\\root"), Path::new("/usr/bin")),
         Err(PrivateAskFailure::ProcessContainmentUnverified)
     );
 }
@@ -31,7 +31,7 @@ fn a_run_root_that_cannot_be_confined_refuses_a_containment_profile() {
 #[test]
 fn a_platform_without_this_boundary_never_returns_a_profile() {
     assert_eq!(
-        private_ask_containment_profile(Path::new("/tmp/well-formed-root")),
+        private_ask_containment_profile(Path::new("/tmp/well-formed-root"), Path::new("/usr/bin")),
         Err(PrivateAskFailure::ProcessContainmentUnverified)
     );
 }

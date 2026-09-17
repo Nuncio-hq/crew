@@ -39,6 +39,11 @@ pub(crate) struct PrivateAskToolProbe {
     pub(crate) sentinel_before: String,
     /// The same digest after the attempt and after teardown.
     pub(crate) sentinel_after: String,
+    /// The fixture attempted to read a controlled file outside its run root.
+    /// A read that was never attempted proves nothing about read isolation.
+    pub(crate) read_outside_requested: bool,
+    /// That read returned no bytes.
+    pub(crate) read_outside_denied: bool,
     /// Connections the probe's own listener accepted from the contained child.
     pub(crate) network_connections_observed: u32,
     /// Descendants still alive after the bounded owner completed cleanup.
@@ -141,13 +146,24 @@ impl PrivateAskCapability {
             return Err(PrivateAskProbeRejection::InvalidState);
         }
 
-        let expected_profile =
-            super::containment::private_ask_containment_profile(&probe.probe_run_root).ok();
+        let expected_profile = super::launch::runtime_directory(&probe.executable.resolved_path)
+            .and_then(|directory| {
+                super::containment::private_ask_containment_profile(
+                    &probe.probe_run_root,
+                    &directory,
+                )
+            })
+            .ok();
         let containment_verified = expected_profile
             .is_some_and(|expected| expected == probe.containment_profile)
             && probe.tool_probe.surviving_descendants == 0;
         let tool_isolation_verified =
             containment_verified && valid_tool_probe_evidence(&probe.tool_probe);
+        // Read isolation is its own dimension: a policy can deny every write
+        // and still let the child read the employee's worktree.
+        let read_bounded_verified = containment_verified
+            && probe.tool_probe.read_outside_requested
+            && probe.tool_probe.read_outside_denied;
         let side_effect_free_verified = tool_isolation_verified
             && is_sha256(&probe.external_state_before)
             && probe.external_state_before == probe.external_state_after;
@@ -174,6 +190,7 @@ impl PrivateAskCapability {
             session_generation: probe.session_generation,
             authentication: status(authentication_verified),
             tool_isolation: status(tool_isolation_verified),
+            read_bounded: status(read_bounded_verified),
             process_containment: status(containment_verified),
             side_effect_free: status(side_effect_free_verified),
             independent_invocation: status(independent_verified),

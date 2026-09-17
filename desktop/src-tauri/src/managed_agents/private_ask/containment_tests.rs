@@ -27,6 +27,13 @@ const FIXTURE_SOURCE: &str = include_str!("../../../test-fixtures/private-ask-ho
 struct HostileFixture {
     executable: PathBuf,
     sentinel: PathBuf,
+    /// A file outside the run root holding bytes the run must never see. It
+    /// lives in its own directory, NOT beside the runtime executable: the
+    /// policy allows the runtime's own directory so the binary can load
+    /// itself, and a secret parked there would be legitimately readable.
+    readable: PathBuf,
+    /// Owns the lifetime of that directory.
+    _secrets: tempfile::TempDir,
     descendant_marker: PathBuf,
     descendant_pid_file: PathBuf,
     listener_port: u16,
@@ -39,6 +46,9 @@ impl HostileFixture {
     fn create(directory: &Path, name: &str) -> Self {
         let sentinel = directory.join("sentinel-outside-run-root");
         std::fs::write(&sentinel, b"untouched").expect("sentinel");
+        let secrets = canonical_tempdir();
+        let readable = secrets.path().join("employee-secret-outside-run-root");
+        std::fs::write(&readable, b"employee-secret").expect("readable");
         let descendant_marker = directory.join("descendant-marker");
         let descendant_pid_file = directory.join("descendant-pid");
 
@@ -76,7 +86,8 @@ impl HostileFixture {
             .replace(
                 "__PID_FILE__",
                 descendant_pid_file.to_str().expect("pid path"),
-            );
+            )
+            .replace("__READABLE__", readable.to_str().expect("readable path"));
         let executable = directory.join(name);
         std::fs::write(&executable, script).expect("fixture");
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
@@ -85,6 +96,8 @@ impl HostileFixture {
         Self {
             executable,
             sentinel,
+            readable,
+            _secrets: secrets,
             descendant_marker,
             descendant_pid_file,
             listener_port,
@@ -135,6 +148,17 @@ impl Drop for HostileFixture {
     }
 }
 
+/// The directory `from_probe` will rebuild the policy from. A test that names a
+/// different one would compare two unequal policies and fail for the wrong
+/// reason.
+fn probe_runtime_directory(executable: &Path) -> PathBuf {
+    executable
+        .parent()
+        .expect("runtime parent")
+        .canonicalize()
+        .expect("canonical runtime directory")
+}
+
 fn digest_of(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
@@ -180,6 +204,10 @@ fn the_hostile_fixture_reaches_every_effect_when_it_is_not_contained() {
 
     assert!(outcome.output.status.success(), "control trace: {trace}");
     assert!(trace.contains("effect:write-outside"), "trace: {trace}");
+    assert!(
+        trace.contains("effect:read-outside"),
+        "an uncontained fixture must read the file outside its run root: {trace}"
+    );
     assert!(trace.contains("effect:connect"), "trace: {trace}");
     assert!(trace.contains("effect:fork"), "trace: {trace}");
     assert_ne!(
@@ -235,6 +263,11 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
         "trace: {}",
         trace.markdown
     );
+    assert!(
+        trace.markdown.contains("denied:read-outside"),
+        "a contained run must not read a file outside its run root: {}",
+        trace.markdown
+    );
     assert!(!trace.markdown.contains("effect:"));
 
     assert_eq!(
@@ -281,12 +314,18 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
             tool_name: "write_file".into(),
             request_observed: trace.markdown.contains("attempt:write-outside"),
             denied_before_effect: !trace.markdown.contains("effect:"),
+            read_outside_requested: trace.markdown.contains("attempt:read-outside"),
+            read_outside_denied: !trace.markdown.contains("effect:read-outside"),
             sentinel_before,
             sentinel_after,
             network_connections_observed: fixture.accepted_connections(),
             surviving_descendants: fixture.recorded_descendants(),
         },
-        containment_profile: containment::private_ask_containment_profile(&run_root).unwrap(),
+        containment_profile: containment::private_ask_containment_profile(
+            &run_root,
+            &probe_runtime_directory(&fixture.executable),
+        )
+        .unwrap(),
         probe_run_root: run_root,
         external_state_before: digest_of("checkout-unchanged"),
         external_state_after: digest_of("checkout-unchanged"),

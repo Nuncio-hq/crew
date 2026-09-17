@@ -25,50 +25,38 @@
 //! here would break pairing. Raw-key DLP is separate policy work.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Count of relay-bound egress attempts that have reached a guarded boundary.
-///
-/// Every relay-bound egress site in the tree calls one of the guard functions
-/// below — the `EVENTS_INVENTORY` scan in `egress_guard_tests.rs` fails the
-/// build if a new one does not. That makes this counter a complete, always-on
-/// census of relay traffic originating from the desktop's own identity, which
-/// is what lets a feature assert it performed *no* relay egress at all.
-///
-/// It counts attempts, not accepted publications, and it counts every frame
-/// kind a boundary carries (EVENT, REQ, CLOSE), so a zero reading is the
-/// strong claim and a non-zero reading is not by itself a fault.
-static RELAY_EGRESS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
-    /// The same census, attributed to the thread that performed the egress.
+    /// Census of relay-bound egress attempts, attributed to the thread that
+    /// performed them.
     ///
-    /// The process-global counter cannot support a "this operation published
-    /// nothing" assertion, because any concurrent test performing a real
-    /// egress inflates it. A synchronous operation's own egress — including a
-    /// future polled with `block_on` — lands on its calling thread, so a
-    /// thread-scoped reading attributes precisely.
+    /// Every relay-bound egress site in the tree calls one of the guard
+    /// functions below — the `EVENTS_INVENTORY` scan in `egress_guard_tests.rs`
+    /// fails the build if a new one does not. That makes this a complete census
+    /// of relay traffic originating from the desktop's own identity, which is
+    /// what lets a feature assert it performed *no* relay egress at all.
+    ///
+    /// Attribution is per thread rather than process-global on purpose: a
+    /// process-global count cannot support a "this operation published nothing"
+    /// assertion, because any concurrent work performing a real egress inflates
+    /// it. A synchronous operation's own egress — including a future polled with
+    /// `block_on` — lands on its calling thread.
+    ///
+    /// It counts attempts, not accepted publications, and it counts every frame
+    /// kind a boundary carries (EVENT, REQ, CLOSE), so a zero reading is the
+    /// strong claim and a non-zero reading is not by itself a fault.
     static EGRESS_ATTEMPTS_ON_THREAD: Cell<u64> = const { Cell::new(0) };
-}
-
-/// Relay-bound egress attempts observed since process start.
-///
-/// Callers compare two readings around an operation; the absolute value is
-/// meaningless because the counter is process-global.
-///
-/// The counting side is ordinary production code on every relay boundary; only
-/// this reader is test-scoped, because the sole consumer today is the private
-/// Ask zero-publish proof. Widening it to a diagnostic is a deliberate act.
-#[cfg(test)]
-pub fn relay_egress_attempts() -> u64 {
-    RELAY_EGRESS_ATTEMPTS.load(Ordering::SeqCst)
 }
 
 /// Relay-bound egress attempts performed by the calling thread.
 ///
-/// Limit: a detached `spawn` escapes this attribution. No `spawn` exists under
-/// `managed_agents/private_ask/`; introducing one there is a privacy-boundary
-/// change and must come with its own proof.
+/// Callers compare two readings around an operation; the absolute value is
+/// meaningless.
+///
+/// Limit: a detached `spawn` escapes this attribution. The counting side is
+/// ordinary production code on every relay boundary; only this reader is
+/// test-scoped, because the sole consumer today is the private Ask
+/// zero-publish proof.
 #[cfg(test)]
 pub fn relay_egress_attempts_on_this_thread() -> u64 {
     EGRESS_ATTEMPTS_ON_THREAD.with(Cell::get)
@@ -91,7 +79,6 @@ const NCRYPTSEC_PREFIX_UPPER: &str = "NCRYPTSEC1";
 pub fn assert_no_key_backup(text: &str, context: &'static str) -> Result<(), String> {
     // Counted before the check so a rejected payload still records that this
     // identity tried to reach the relay.
-    RELAY_EGRESS_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
     EGRESS_ATTEMPTS_ON_THREAD.with(|count| count.set(count.get().saturating_add(1)));
     if text.contains(NCRYPTSEC_PREFIX) || text.contains(NCRYPTSEC_PREFIX_UPPER) {
         return Err(format!(

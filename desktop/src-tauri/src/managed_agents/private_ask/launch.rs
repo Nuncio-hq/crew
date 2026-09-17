@@ -48,7 +48,13 @@ impl PrivateAskLaunchPlan {
         {
             return Err(PrivateAskFailure::InvalidState);
         }
-        let containment_profile = super::containment::private_ask_containment_profile(root)?;
+        // The runtime must be able to read its own installation, so its
+        // directory joins the read allow-list. Resolving it here (rather than
+        // trusting the raw path) keeps the policy and the executed binary the
+        // same file.
+        let runtime_directory = runtime_directory(&admission.capability.executable.resolved_path)?;
+        let containment_profile =
+            super::containment::private_ask_containment_profile(root, &runtime_directory)?;
         prepare_state_dirs(root)?;
         let mut env = isolated_env(root, &admission.capability.executable.resolved_path);
         let (args, usage_file, prompt_on_stdin) = match admission.state.runtime_id.as_str() {
@@ -358,4 +364,18 @@ struct ClaudeResult {
 #[derive(serde::Deserialize)]
 struct HermesUsage {
     model: String,
+}
+
+/// Directory holding the runtime executable, canonicalized.
+///
+/// A runtime whose directory cannot be resolved is refused rather than run
+/// under a policy that omits it: the alternative is a launch that fails deep
+/// inside the runtime for reasons that look like a model error.
+pub(super) fn runtime_directory(executable: &Path) -> Result<PathBuf, PrivateAskFailure> {
+    let parent = executable
+        .parent()
+        .ok_or(PrivateAskFailure::ProcessContainmentUnverified)?;
+    parent
+        .canonicalize()
+        .map_err(|_| PrivateAskFailure::ProcessContainmentUnverified)
 }

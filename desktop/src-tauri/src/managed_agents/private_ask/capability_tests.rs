@@ -12,6 +12,14 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+/// Mirror of what `from_probe` resolves, so the rebuilt policy compares equal.
+fn runtime_directory_of(executable: &Path) -> PathBuf {
+    executable
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
 fn digest_of(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
@@ -37,13 +45,18 @@ fn healthy_probe(state: &SelectedAgentState, run_root: PathBuf) -> PrivateAskPro
             tool_name: "write_file".into(),
             request_observed: true,
             denied_before_effect: true,
+            read_outside_requested: true,
+            read_outside_denied: true,
             sentinel_before: digest_of("sentinel"),
             sentinel_after: digest_of("sentinel"),
             network_connections_observed: 0,
             surviving_descendants: 0,
         },
-        containment_profile: containment::private_ask_containment_profile(&run_root)
-            .unwrap_or_default(),
+        containment_profile: containment::private_ask_containment_profile(
+            &run_root,
+            &runtime_directory_of(&state.executable.resolved_path),
+        )
+        .unwrap_or_default(),
         probe_run_root: run_root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
@@ -222,5 +235,41 @@ fn a_probe_for_another_selection_is_rejected_rather_than_projected() {
     assert_eq!(
         PrivateAskCapability::from_probe(&selected, other_persona).unwrap_err(),
         PrivateAskProbeRejection::SelectionMismatch
+    );
+}
+
+/// A policy can deny every write and still hand the run the employee's
+/// worktree. Read isolation is therefore its own dimension, and the refusal the
+/// viewer sees names it. Removing the `read_bounded` fence from
+/// `admit_private_ask`, or the read allow-list from
+/// `private_ask_containment_profile`, fails this.
+#[test]
+fn a_probe_that_read_outside_its_run_root_cannot_certify_read_isolation() {
+    let fixture = canonical_tempdir();
+    let path = fixture.path().join("runtime");
+    let selected = state(&path, "claude", "claude-fable-5-1", None);
+
+    // A read that was never attempted proves nothing.
+    let run_root = fixture.path().join("probe-root-read-unattempted");
+    std::fs::create_dir(&run_root).unwrap();
+    let mut probe = healthy_probe(&selected, run_root);
+    probe.tool_probe.read_outside_requested = false;
+    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
+    assert_eq!(capability.read_bounded, ProofStatus::Unverified);
+    assert_eq!(
+        admit_private_ask(request(), selected.clone(), capability).unwrap_err(),
+        PrivateAskFailure::ReadIsolationUnverified
+    );
+
+    // A read that returned the employee's bytes is an escape.
+    let run_root = fixture.path().join("probe-root-read-escaped");
+    std::fs::create_dir(&run_root).unwrap();
+    let mut probe = healthy_probe(&selected, run_root);
+    probe.tool_probe.read_outside_denied = false;
+    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
+    assert_eq!(capability.read_bounded, ProofStatus::Unverified);
+    assert_eq!(
+        admit_private_ask(request(), selected, capability).unwrap_err(),
+        PrivateAskFailure::ReadIsolationUnverified
     );
 }

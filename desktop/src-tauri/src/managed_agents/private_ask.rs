@@ -318,6 +318,10 @@ pub(crate) struct PrivateAskCapability {
     session_generation: String,
     authentication: ProofStatus,
     tool_isolation: ProofStatus,
+    /// The run could not read outside its own root: no employee worktree, no
+    /// `~/.ssh`, no other agent's credentials. Separate from `tool_isolation`,
+    /// which is about a hostile *write* or connect.
+    read_bounded: ProofStatus,
     process_containment: ProofStatus,
     side_effect_free: ProofStatus,
     independent_invocation: ProofStatus,
@@ -344,6 +348,7 @@ impl PrivateAskCapability {
             session_generation: session_generation.into(),
             authentication: ProofStatus::Unverified,
             tool_isolation: ProofStatus::Unverified,
+            read_bounded: ProofStatus::Unverified,
             process_containment: ProofStatus::Unverified,
             side_effect_free: ProofStatus::Unverified,
             independent_invocation: ProofStatus::Unverified,
@@ -362,6 +367,7 @@ impl PrivateAskCapability {
             session_generation: state.session_generation.clone(),
             authentication: ProofStatus::Verified,
             tool_isolation: ProofStatus::Verified,
+            read_bounded: ProofStatus::Verified,
             process_containment: ProofStatus::Verified,
             side_effect_free: ProofStatus::Verified,
             independent_invocation: ProofStatus::Verified,
@@ -386,6 +392,7 @@ pub(crate) enum PrivateAskFailure {
     MissingProfile,
     AuthenticationUnverified,
     ToolIsolationUnverified,
+    ReadIsolationUnverified,
     ProcessContainmentUnverified,
     SideEffectProofUnverified,
     IndependentInvocationUnverified,
@@ -418,6 +425,7 @@ impl std::fmt::Display for PrivateAskFailure {
             Self::MissingProfile => f.write_str("selected runtime profile is unavailable"),
             Self::AuthenticationUnverified => f.write_str("runtime authentication is unverified"),
             Self::ToolIsolationUnverified => f.write_str("runtime tool isolation is unverified"),
+            Self::ReadIsolationUnverified => f.write_str("runtime read isolation is unverified"),
             Self::SessionObservationUnavailable => {
                 f.write_str("the selected agent's running session could not be observed")
             }
@@ -529,6 +537,9 @@ pub(crate) fn admit_private_ask(
     }
     if capability.tool_isolation != ProofStatus::Verified {
         return Err(PrivateAskFailure::ToolIsolationUnverified);
+    }
+    if capability.read_bounded != ProofStatus::Verified {
+        return Err(PrivateAskFailure::ReadIsolationUnverified);
     }
     if capability.process_containment != ProofStatus::Verified {
         return Err(PrivateAskFailure::ProcessContainmentUnverified);

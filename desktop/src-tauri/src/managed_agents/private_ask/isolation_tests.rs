@@ -120,6 +120,14 @@ fn reporting_runtime(directory: &Path, employee_ledger: &Path) -> PathBuf {
     path
 }
 
+/// Mirror of what `from_probe` resolves, so the rebuilt policy compares equal.
+fn runtime_directory_of(executable: &Path) -> PathBuf {
+    executable
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
 fn digest_of(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
@@ -210,12 +218,18 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
             tool_name: "write_file".into(),
             request_observed: true,
             denied_before_effect: response.markdown.contains("employee-ledger=denied"),
+            read_outside_requested: true,
+            read_outside_denied: response.markdown.contains("employee-ledger=denied"),
             sentinel_before: ledger_before.clone(),
             sentinel_after: session.ledger_digest(),
             network_connections_observed: 0,
             surviving_descendants: 0,
         },
-        containment_profile: containment::private_ask_containment_profile(&run_root).unwrap(),
+        containment_profile: containment::private_ask_containment_profile(
+            &run_root,
+            &runtime_directory_of(&selected.executable.resolved_path),
+        )
+        .unwrap(),
         probe_run_root: run_root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
@@ -291,13 +305,18 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
             tool_name: "write_file".into(),
             request_observed: true,
             denied_before_effect: true,
+            read_outside_requested: true,
+            read_outside_denied: true,
             sentinel_before: digest_of("sentinel"),
             sentinel_after: digest_of("sentinel"),
             network_connections_observed: 0,
             surviving_descendants: 0,
         },
-        containment_profile: containment::private_ask_containment_profile(&root)
-            .unwrap_or_default(),
+        containment_profile: containment::private_ask_containment_profile(
+            &root,
+            &runtime_directory_of(&probe_state.executable.resolved_path),
+        )
+        .unwrap_or_default(),
         probe_run_root: root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
