@@ -105,3 +105,38 @@ export function selectedSessionFromLocation(location: {
     threadRootId: threadFromSearch,
   };
 }
+
+/** One live run of one agent in this thread. */
+export type LiveThreadRun = Readonly<{
+  agentPubkey: string;
+  sessionId: string;
+  turnId: string;
+  liveness: string | null;
+}>;
+
+/** Every live run in a thread, in a stable order across all of its agents. */
+export function liveRunsForThread(
+  summaries: readonly {
+    agentPubkey: string;
+    progressLabel?: string | null;
+    runs?: readonly { sessionId?: string | null; turnId?: string | null }[];
+  }[],
+): LiveThreadRun[] {
+  const seen = new Set<string>();
+  const runs: LiveThreadRun[] = [];
+  for (const summary of summaries) {
+    for (const run of summary.runs ?? []) {
+      if (!run.sessionId || !run.turnId) continue;
+      const key = `${summary.agentPubkey}:${run.sessionId}:${run.turnId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      runs.push({
+        agentPubkey: summary.agentPubkey,
+        sessionId: run.sessionId,
+        turnId: run.turnId,
+        liveness: summary.progressLabel ?? null,
+      });
+    }
+  }
+  return runs;
+}

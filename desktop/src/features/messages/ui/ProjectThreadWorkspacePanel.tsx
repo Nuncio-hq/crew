@@ -495,7 +495,7 @@ export function ProjectThreadWorkspacePanel({
             onClick={handleStop}
             type="button"
           >
-            {AGENT_ACTIVITY_CHROME.stop}
+            {AGENT_ACTIVITY_CHROME.stopAllRuns}
           </button>
         ) : null}
 

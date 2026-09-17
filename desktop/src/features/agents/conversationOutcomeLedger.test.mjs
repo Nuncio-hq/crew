@@ -6,6 +6,7 @@ import {
   clearConversationOutcomeLedger,
   getConversationOutcomeEntry,
   recordConversationOutcome,
+  retireConversationOutcomeAgent,
   conversationOutcomeTerminalOrderKey,
 } from "./conversationOutcomeLedger.ts";
 
@@ -285,4 +286,220 @@ test("a sessionless completion frame fails closed", () => {
   });
   assert.equal(entry.outcome, "error");
   assert.equal(entry.agentTriggerPairs?.length ?? 0, 0);
+});
+
+test("a structured owner cancellation is neutral and keeps its run identity", () => {
+  const entry = buildSignedConversationOutcome({
+    agentKey: "agent-a",
+    event: {
+      seq: 3,
+      timestamp: "2026-08-10T00:00:03.000Z",
+      kind: "turn_error",
+      agentIndex: 0,
+      channelId: "channel",
+      conversationId: "conversation",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      payload: { outcome: "cancelled", error: "Run stopped" },
+      replayed: false,
+    },
+    resolvedTurnId: "turn-a",
+    sessionId: "session-a",
+    channelId: "channel",
+    endedAt: 3_000,
+    terminalAt: 3_000,
+    triggeringEventIds: ["trigger-a"],
+  });
+
+  assert.equal(entry.outcome, "cancelled");
+  assert.equal(entry.agentPubkey, "agent-a");
+  assert.equal(entry.sessionId, "session-a");
+  assert.equal(entry.turnId, "turn-a");
+  assert.deepEqual(entry.triggeringEventIds, ["trigger-a"]);
+  assert.deepEqual(entry.cancelledAgentSlots, [
+    {
+      agentPubkey: "agent-a",
+      triggeringEventIds: ["trigger-a"],
+      sessionId: "session-a",
+      turnId: "turn-a",
+    },
+  ]);
+});
+
+test("malformed cancellation data remains a genuine error", () => {
+  const entry = buildSignedConversationOutcome({
+    agentKey: "agent-a",
+    event: {
+      seq: 3,
+      timestamp: "2026-08-10T00:00:03.000Z",
+      kind: "turn_error",
+      agentIndex: 0,
+      channelId: "channel",
+      conversationId: "conversation",
+      sessionId: "session-a",
+      turnId: "turn-a",
+      payload: { error: "Run stopped" },
+      replayed: false,
+    },
+    resolvedTurnId: "turn-a",
+    sessionId: "session-a",
+    channelId: "channel",
+    endedAt: 3_000,
+    terminalAt: 3_000,
+    triggeringEventIds: ["trigger-a"],
+  });
+
+  assert.equal(entry.outcome, "error");
+});
+
+test("a required sibling failure remains after another agent is cancelled", () => {
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "error",
+      agentPubkey: "agent-a",
+      triggeringEventIds: ["trigger-a"],
+      failedEventIds: ["trigger-a"],
+      terminalAt: 1_000,
+      terminalOrderKey: "failure-a",
+    }),
+  );
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "cancelled",
+      agentPubkey: "agent-b",
+      sessionId: "session-b",
+      turnId: "turn-b",
+      triggeringEventIds: ["trigger-b"],
+      terminalAt: 2_000,
+      terminalOrderKey: "cancelled-b",
+    }),
+  );
+
+  const entry = getConversationOutcomeEntry("conversation");
+  assert.equal(entry?.outcome, "error");
+  assert.deepEqual(entry?.failedEventIds, ["trigger-a"]);
+
+  assert.equal(retireConversationOutcomeAgent("conversation", "agent-a"), true);
+  const afterRetirement = getConversationOutcomeEntry("conversation");
+  assert.equal(afterRetirement?.outcome, "cancelled");
+  assert.deepEqual(afterRetirement?.failedEventIds, []);
+  assert.deepEqual(afterRetirement?.cancelledAgentSlots, [
+    {
+      agentPubkey: "agent-b",
+      triggeringEventIds: ["trigger-b"],
+      sessionId: "session-b",
+      turnId: "turn-b",
+    },
+  ]);
+});
+
+test("a same-slot completion clears its cancelled authority slot", () => {
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "cancelled",
+      agentPubkey: "agent-b",
+      sessionId: "session-b",
+      turnId: "turn-b",
+      triggeringEventIds: ["trigger-b"],
+      terminalAt: 1_000,
+      terminalOrderKey: "cancelled-b",
+    }),
+  );
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "completed",
+      agentPubkey: "agent-b",
+      sessionId: "session-b-retry",
+      turnId: "turn-b-retry",
+      triggeringEventIds: ["trigger-b"],
+      agentTriggerPairs: [
+        {
+          agentPubkey: "agent-b",
+          eventId: "trigger-b",
+          sessionId: "session-b-retry",
+          turnId: "turn-b-retry",
+        },
+      ],
+      terminalAt: 2_000,
+      terminalOrderKey: "completed-b-retry",
+    }),
+  );
+
+  const entry = getConversationOutcomeEntry("conversation");
+  assert.equal(entry?.outcome, "completed");
+  assert.deepEqual(entry?.cancelledAgentSlots, []);
+  assert.deepEqual(entry?.agentTriggerPairs, [
+    {
+      agentPubkey: "agent-b",
+      eventId: "trigger-b",
+      sessionId: "session-b-retry",
+      turnId: "turn-b-retry",
+    },
+  ]);
+});
+
+test("retiring the cancelled producer removes only its cancellation evidence", () => {
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "cancelled",
+      agentPubkey: "agent-b",
+      sessionId: "session-b",
+      turnId: "turn-b",
+      triggeringEventIds: ["trigger-b"],
+      terminalAt: 1_000,
+      terminalOrderKey: "cancelled-b",
+    }),
+  );
+
+  assert.equal(retireConversationOutcomeAgent("conversation", "agent-b"), true);
+  assert.equal(getConversationOutcomeEntry("conversation"), null);
+});
+
+test("an unrelated completion cannot promote a remaining cancelled slot", () => {
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "cancelled",
+      agentPubkey: "agent-b",
+      sessionId: "session-b",
+      turnId: "turn-b",
+      triggeringEventIds: ["trigger-b"],
+      terminalAt: 1_000,
+      terminalOrderKey: "cancelled-b",
+    }),
+  );
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "completed",
+      agentPubkey: "agent-a",
+      triggeringEventIds: ["trigger-a"],
+      agentTriggerPairs: [
+        {
+          agentPubkey: "agent-a",
+          eventId: "trigger-a",
+          sessionId: "session-a",
+          turnId: "turn-a",
+        },
+      ],
+      terminalAt: 2_000,
+      terminalOrderKey: "completed-a",
+    }),
+  );
+
+  const entry = getConversationOutcomeEntry("conversation");
+  assert.equal(entry?.outcome, "cancelled");
+  assert.deepEqual(entry?.cancelledAgentSlots, [
+    {
+      agentPubkey: "agent-b",
+      triggeringEventIds: ["trigger-b"],
+      sessionId: "session-b",
+      turnId: "turn-b",
+    },
+  ]);
 });

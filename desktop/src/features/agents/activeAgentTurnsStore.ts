@@ -38,7 +38,6 @@ import {
   stableChannelTurnSummaries,
 } from "@/features/agents/activeAgentTurnsLiveness";
 import {
-  applyObserverFrame,
   createActiveTurn,
   MAX_TERMINAL_TOMBSTONES,
   MAX_TURNS_PER_AGENT,
@@ -48,6 +47,7 @@ import {
   triggeringEventIds,
   type ActiveTurn,
 } from "@/features/agents/activeAgentTurnModel";
+import * as turnFrames from "./activeAgentTurnFrames";
 import { subscribeAgentObserverStore } from "@/features/agents/observerRelayStore";
 import type { AgentObserverStoreUpdate } from "@/features/agents/observerRelayStore";
 import {
@@ -256,26 +256,6 @@ function startTurn(
   invalidateCache(key);
 }
 
-function recordFrame(
-  agentPubkey: string,
-  event: ObserverEvent,
-): { found: boolean; progressChanged: boolean } {
-  if (!event.turnId) return { found: false, progressChanged: false };
-  const key = normalizePubkey(agentPubkey);
-  const agentTurns = activeTurnsByAgent.get(key);
-  if (!agentTurns) return { found: false, progressChanged: false };
-  const turn = agentTurns.get(event.turnId);
-  if (!turn) return { found: false, progressChanged: false };
-  return {
-    found: true,
-    progressChanged: applyObserverFrame(
-      turn,
-      event,
-      eventObservedAt(key, event),
-    ),
-  };
-}
-
 /**
  * A — resurrect a badge that was pruned out from under a still-running turn.
  * A recovered liveness/acp frame for a turn no longer in the live map recreates
@@ -453,6 +433,16 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
   }
   recordEventProcessed(key, event);
 
+  const sessionBackfilled =
+    event.kind === "turn_started"
+      ? false
+      : turnFrames.backfillActiveAgentTurnSession(
+          activeTurnsByAgent,
+          agentPubkey,
+          event,
+          invalidateCache,
+        );
+
   // Refine the clock offset from every fresh event. A tighter offset shifts
   // every live anchor for this agent, so a change must reach the UI even when
   // the event itself surfaces no new turn.
@@ -480,7 +470,12 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
       }
       break;
     case "turn_retrying": {
-      const frame = recordFrame(agentPubkey, event);
+      const frame = turnFrames.recordActiveAgentTurnFrame(
+        activeTurnsByAgent,
+        agentPubkey,
+        event,
+        eventObservedAt,
+      );
       const payload = event.payload as {
         attempt?: unknown;
         maxAttempts?: unknown;
@@ -546,7 +541,12 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
     // substantive-progress clock. If the turn was pruned under a live host,
     // resurrect it unless a terminal tombstone rejects the frame.
     case "turn_liveness": {
-      const frame = recordFrame(agentPubkey, event);
+      const frame = turnFrames.recordActiveAgentTurnFrame(
+        activeTurnsByAgent,
+        agentPubkey,
+        event,
+        eventObservedAt,
+      );
       if (!frame.found && resurrectTurn(agentPubkey, event)) {
         notifyListeners();
         return;
@@ -564,7 +564,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
     }
   }
 
-  if (offsetChanged) {
+  if (offsetChanged || sessionBackfilled) {
     notifyListeners();
   }
 }

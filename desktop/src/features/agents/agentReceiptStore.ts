@@ -454,19 +454,19 @@ export function useLatestOwnedAgentReceiptForActiveTurns(
   ownedAgentPubkeys: ReadonlySet<string>,
   turns: readonly ActiveReceiptAuthority[],
 ): AgentReceiptSummary | null {
-  const getSnapshot = React.useCallback(
-    () =>
-      getLatestOwnedAgentReceiptForActiveTurns(
-        conversationId,
-        ownedAgentPubkeys,
-        turns,
-      ),
-    [conversationId, ownedAgentPubkeys, turns],
-  );
-  return React.useSyncExternalStore(
+  // The projection intentionally returns a fresh object when a receipt is
+  // present (for example, to combine review state across active runs). Keep
+  // useSyncExternalStore's snapshot primitive so an active receipt cannot
+  // trigger an identity loop while the turn is still live.
+  React.useSyncExternalStore(
     subscribeAgentReceipts,
-    getSnapshot,
-    getSnapshot,
+    getAgentReceiptsGeneration,
+    getAgentReceiptsGeneration,
+  );
+  return getLatestOwnedAgentReceiptForActiveTurns(
+    conversationId,
+    ownedAgentPubkeys,
+    turns,
   );
 }
 

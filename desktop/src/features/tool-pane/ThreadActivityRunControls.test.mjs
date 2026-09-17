@@ -34,6 +34,7 @@ function harness() {
   const state = {
     viewer: selection.viewerPubkey,
     relay: selection.relayUrl,
+    root: selection.rootEventId,
     owned: new Set([selection.agentPubkey]),
     turns: [{ ...selection }],
     sends: [],
@@ -80,20 +81,36 @@ function harness() {
       exports,
       require: (id) => {
         if (id in deps) return deps[id];
-        if (id.startsWith("./"))
-          return load(new URL(`${id}.tsx`, import.meta.url));
+        if (id.startsWith("./")) {
+          const base = new URL(`${id}.tsx`, import.meta.url);
+          return load(
+            fs.existsSync(base) ? base : new URL(`${id}.ts`, import.meta.url),
+          );
+        }
         throw Error(id);
       },
       setTimeout,
       clearTimeout,
+      TextEncoder,
       crypto: globalThis.crypto,
       console,
       URL,
     });
     return exports;
   }
+  // The real module: the attribute the drawer looks for is a contract, not a
+  // string this test gets to choose.
+  deps["@/shared/hooks/escapeSurfaces"] = load(
+    new URL("../../shared/hooks/escapeSurfaces.ts", import.meta.url),
+  );
+  deps["@/features/agents/ui/agentActivityChrome"] = load(
+    new URL("../agents/ui/agentActivityChrome.ts", import.meta.url),
+  );
   deps["@/features/agents/lib/cancelTurnOutcome"] = load(
     new URL("../agents/lib/cancelTurnOutcome.ts", import.meta.url),
+  );
+  deps["@/features/agents/lib/steerTurnOutcome"] = load(
+    new URL("../agents/lib/steerTurnOutcome.ts", import.meta.url),
   );
   deps["@/features/agents/activeConversationAgentTurnSummaries"] = {
     useActiveTurnSummariesForConversation: () => [
@@ -117,8 +134,8 @@ function harness() {
   deps["@/features/messages/lib/threadForgeViewContextStore"] = {
     useThreadForgeViewContext: () => ({
       channelId: selection.channelId,
-      rootEventId: selection.rootEventId,
-      messages: [{ id: selection.rootEventId, body: "Original task" }],
+      rootEventId: state.root,
+      messages: [{ id: state.root, body: "Original task" }],
       profiles: {},
     }),
   };
@@ -170,7 +187,13 @@ async function choose(view, fireEvent, waitFor) {
   const picker = view.getByRole("combobox", { name: "Activity live run" });
   await waitFor(() => assert.equal(picker.disabled, false));
   fireEvent.change(picker, {
-    target: { value: JSON.stringify([selection.sessionId, selection.turnId]) },
+    target: {
+      value: JSON.stringify([
+        selection.agentPubkey,
+        selection.sessionId,
+        selection.turnId,
+      ]),
+    },
   });
 }
 test("actual Activity requires explicit run choice and sends exact native scoped Stop", async () => {
@@ -199,6 +222,45 @@ test("actual Activity requires explicit run choice and sends exact native scoped
   assert.match(view.getByRole("status").textContent, /signal accepted/);
   assert.ok(view.getByText("Transcript retained"));
 });
+
+test("actual Activity exposes Steer for the explicitly selected live run", async () => {
+  const { render, act, fireEvent, waitFor } = await import(
+    "@testing-library/react"
+  );
+  const h = harness();
+  const view = render(React.createElement(h.Component, props));
+  await choose(view, fireEvent, waitFor);
+  assert.ok(
+    view.getByRole("textbox", { name: "Steer selected run" }),
+    "the selected live run must expose a steer input",
+  );
+  assert.ok(
+    view.getByRole("button", { name: "Steer selected run" }),
+    "the selected live run must expose a steer action",
+  );
+  await act(async () => {
+    fireEvent.change(
+      view.getByRole("textbox", { name: "Steer selected run" }),
+      {
+        target: { value: "Use the selected run" },
+      },
+    );
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  assert.equal(h.state.sends.length, 1);
+  assert.equal(h.state.sends[0].input.payload.type, "steer_turn");
+  assert.equal(h.state.sends[0].input.payload.sessionId, selection.sessionId);
+  assert.equal(h.state.sends[0].input.payload.turnId, selection.turnId);
+  assert.equal(h.state.sends[0].input.payload.prompt, "Use the selected run");
+  await act(async () =>
+    h.result({
+      type: "steer_turn",
+      status: "appended",
+      sessionId: selection.sessionId,
+    }),
+  );
+  assert.match(view.getByRole("status").textContent, /appended/);
+});
 test("replacing live run preserves old selection and cannot target successor", async () => {
   const { render, fireEvent, waitFor } = await import("@testing-library/react");
   const h = harness();
@@ -209,9 +271,43 @@ test("replacing live run preserves old selection and cannot target successor", a
   assert.equal(view.queryByRole("button", { name: "Stop selected run" }), null);
   assert.equal(
     view.getByRole("combobox", { name: "Activity live run" }).value,
-    JSON.stringify([selection.sessionId, selection.turnId]),
+    JSON.stringify([
+      selection.agentPubkey,
+      selection.sessionId,
+      selection.turnId,
+    ]),
   );
   assert.equal(h.state.sends.length, 0);
+});
+test("changing the thread root retires the selected run before any control", async () => {
+  const { act, render, fireEvent, waitFor } = await import(
+    "@testing-library/react"
+  );
+  const h = harness();
+  const view = render(React.createElement(h.Component, props));
+  await choose(view, fireEvent, waitFor);
+  const oldStop = view.getByRole("button", { name: "Stop selected run" });
+
+  h.state.root = "successor-root";
+  await act(async () =>
+    view.rerender(
+      React.createElement(h.Component, {
+        ...props,
+        threadRootId: "successor-root",
+      }),
+    ),
+  );
+  assert.equal(
+    view.queryByRole("button", { name: "Stop selected run" }),
+    null,
+    "a root change must retire the old selected run",
+  );
+  fireEvent.click(oldStop);
+  assert.equal(
+    h.state.sends.length,
+    0,
+    "a detached control from the old root must not publish",
+  );
 });
 test("native owner mismatch prevents selecting an actionable run", async () => {
   const { render, waitFor } = await import("@testing-library/react");
@@ -229,4 +325,46 @@ test("native owner mismatch prevents selecting an actionable run", async () => {
     true,
   );
   assert.equal(view.queryByRole("button", { name: "Stop selected run" }), null);
+});
+
+test("a draft composed for one run is never carried to the run selected next", async () => {
+  const { render, act, fireEvent, waitFor } = await import(
+    "@testing-library/react"
+  );
+  const h = harness();
+  const second = { ...selection, sessionId: "session-2", turnId: "turn-2" };
+  h.state.turns.push(second);
+  const view = render(React.createElement(h.Component, props));
+  await choose(view, fireEvent, waitFor);
+  const draft = view.getByRole("textbox", { name: "Steer selected run" });
+  await act(async () =>
+    fireEvent.change(draft, {
+      target: { value: "guidance for the first run" },
+    }),
+  );
+  const picker = view.getByRole("combobox", { name: "Activity live run" });
+  await act(async () =>
+    fireEvent.change(picker, {
+      target: {
+        value: JSON.stringify([
+          second.agentPubkey,
+          second.sessionId,
+          second.turnId,
+        ]),
+      },
+    }),
+  );
+  const swapped = view.getByRole("textbox", { name: "Steer selected run" });
+  assert.equal(swapped.value, "", "the successor run must start with no draft");
+  await act(async () => {
+    fireEvent.change(swapped, { target: { value: "guidance for the second" } });
+    view.getByRole("button", { name: "Steer selected run" }).click();
+  });
+  assert.equal(h.state.sends.length, 1);
+  assert.equal(h.state.sends[0].input.payload.turnId, second.turnId);
+  assert.equal(h.state.sends[0].input.payload.sessionId, second.sessionId);
+  assert.equal(
+    h.state.sends[0].input.payload.prompt,
+    "guidance for the second",
+  );
 });

@@ -60,6 +60,7 @@ fn thread_exact_cancel_task(
             agent_index: 0,
             channel_id: Some(conversation),
             routing_channel_id: Some(channel),
+            session_id: TaskSessionIdentity::default(),
             turn_id: turn.into(),
             recoverable_batch: None,
             control_tx: Some(tx),
@@ -258,4 +259,443 @@ async fn thread_exact_cancel_malformed_explicit_turn_never_uses_legacy_fallback(
             .all(|event| event.payload["status"] != "sent"
                 && event.payload["status"] != "cancelled_queued"));
     }
+}
+
+fn thread_exact_steer_task(
+    pool: &mut AgentPool,
+    channel: Uuid,
+    conversation: Uuid,
+    session: &str,
+    turn: &str,
+) -> (
+    tokio::sync::mpsc::Receiver<pool::SteerRequest>,
+    TaskSessionIdentity,
+) {
+    let (steer_tx, steer_rx) = tokio::sync::mpsc::channel(1);
+    let session_identity = TaskSessionIdentity::new(Some(session.into()));
+    let handle = pool.join_set.spawn(std::future::pending());
+    pool.task_map_mut().insert(
+        handle.id(),
+        pool::TaskMeta {
+            agent_index: 0,
+            channel_id: Some(conversation),
+            routing_channel_id: Some(channel),
+            session_id: session_identity.clone(),
+            turn_id: turn.into(),
+            recoverable_batch: None,
+            control_tx: None,
+            steer_tx: Some(steer_tx),
+            successful_steer_deliveries: HashSet::new(),
+        },
+    );
+    (steer_rx, session_identity)
+}
+
+async fn wait_for_steer_result(
+    observer: &observer::ObserverHandle,
+    expected_status: &str,
+) -> serde_json::Value {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(frame) = observer
+                .snapshot()
+                .into_iter()
+                .rev()
+                .find(|frame| frame.kind == "control_result")
+            {
+                assert_eq!(frame.payload["status"], expected_status);
+                return frame.payload;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("steer control result must be emitted")
+}
+
+#[tokio::test]
+async fn thread_exact_steer_crosses_handler_and_pool_with_exact_target() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let session = "selected-session";
+    let turn = "selected-turn";
+    let request_id = Uuid::new_v4();
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, session, turn);
+    let observer = observer::ObserverHandle::in_process();
+
+    handle_steer_turn_control(
+        &serde_json::json!({
+            "type": "steer_turn",
+            "channelId": channel,
+            "conversationId": conversation,
+            "sessionId": session,
+            "turnId": turn,
+            "requestId": request_id,
+            "prompt": "keep the selected run focused"
+        }),
+        &mut pool,
+        Some(&observer),
+    );
+
+    let request = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+        .await
+        .expect("handler must queue the exact steer")
+        .expect("selected task must receive the steer");
+    assert_eq!(
+        request.prompt_blocks,
+        vec!["keep the selected run focused".to_owned()]
+    );
+    assert_eq!(
+        request.strict_target,
+        Some(pool::StrictSteerTarget {
+            session_id: session.into(),
+            turn_id: turn.into(),
+            request_id: request_id.to_string(),
+        })
+    );
+    assert!(request
+        .ack_tx
+        .send(pool::SteerAck::Success {
+            session_id: session.into(),
+        })
+        .is_ok());
+    let result = wait_for_steer_result(&observer, "appended").await;
+    assert_eq!(result["type"], "steer_turn");
+    assert_eq!(result["requestId"], request_id.to_string());
+    assert_eq!(result["sessionId"], session);
+    assert_eq!(result["turnId"], turn);
+}
+
+#[tokio::test]
+async fn thread_exact_steer_reports_unsupported_adapter_without_claiming_delivery() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let session = "selected-session";
+    let turn = "selected-turn";
+    let request_id = Uuid::new_v4();
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, session, turn);
+    let observer = observer::ObserverHandle::in_process();
+
+    handle_steer_turn_control(
+        &serde_json::json!({
+            "type": "steer_turn",
+            "channelId": channel,
+            "conversationId": conversation,
+            "sessionId": session,
+            "turnId": turn,
+            "requestId": request_id,
+            "prompt": "keep the selected run focused"
+        }),
+        &mut pool,
+        Some(&observer),
+    );
+
+    let request = receiver.recv().await.expect("selected task receives steer");
+    assert!(request
+        .ack_tx
+        .send(pool::SteerAck::Err(pool::SteerError::ExpectedRunIdMissing))
+        .is_ok());
+    let result = wait_for_steer_result(&observer, "rejected").await;
+    assert_eq!(result["requestId"], request_id.to_string());
+    assert_eq!(
+        result["error"],
+        "selected adapter does not support strict steering"
+    );
+}
+
+#[tokio::test]
+async fn pool_exact_steer_rejects_stale_session_before_queueing() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, "current-session", "turn");
+    let (ack_tx, _ack_rx) = tokio::sync::oneshot::channel();
+    let request = pool::SteerRequest {
+        prompt_blocks: vec!["stale selection".into()],
+        strict_target: Some(pool::StrictSteerTarget {
+            session_id: "retired-session".into(),
+            turn_id: "turn".into(),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+        ack_tx,
+        dispatched: Default::default(),
+    };
+
+    assert!(matches!(
+        pool.send_exact_steer(channel, conversation, "turn", request),
+        Err(pool::SteerError::StrictTargetMismatch)
+    ));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn pool_exact_steer_tracks_session_replacement_and_rejects_retired_target() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let turn = "rotated-turn";
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, session_identity) =
+        thread_exact_steer_task(&mut pool, channel, conversation, "old-session", turn);
+    session_identity.set("new-session".into());
+
+    let (stale_ack_tx, _stale_ack_rx) = tokio::sync::oneshot::channel();
+    let stale_request = pool::SteerRequest {
+        prompt_blocks: vec!["before rotation".into()],
+        strict_target: Some(pool::StrictSteerTarget {
+            session_id: "old-session".into(),
+            turn_id: turn.into(),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+        ack_tx: stale_ack_tx,
+        dispatched: Default::default(),
+    };
+    assert!(matches!(
+        pool.send_exact_steer(channel, conversation, turn, stale_request),
+        Err(pool::SteerError::StrictTargetMismatch)
+    ));
+    assert!(receiver.try_recv().is_err());
+
+    let (ack_tx, _ack_rx) = tokio::sync::oneshot::channel();
+    let request = pool::SteerRequest {
+        prompt_blocks: vec!["after rotation".into()],
+        strict_target: Some(pool::StrictSteerTarget {
+            session_id: "new-session".into(),
+            turn_id: turn.into(),
+            request_id: Uuid::new_v4().to_string(),
+        }),
+        ack_tx,
+        dispatched: Default::default(),
+    };
+
+    assert!(pool
+        .send_exact_steer(channel, conversation, turn, request)
+        .is_ok());
+    assert!(receiver.recv().await.is_some());
+}
+
+#[tokio::test]
+async fn thread_exact_steer_that_was_never_written_stays_replay_safe() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let request_id = Uuid::new_v4();
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, "session", "turn");
+    let observer = observer::ObserverHandle::in_process();
+
+    handle_steer_turn_control(
+        &serde_json::json!({
+            "type": "steer_turn",
+            "channelId": channel,
+            "conversationId": conversation,
+            "sessionId": "session",
+            "turnId": "turn",
+            "requestId": request_id,
+            "prompt": "keep the selected run focused"
+        }),
+        &mut pool,
+        Some(&observer),
+    );
+
+    // Drop the queued request without ever writing it to the adapter, which
+    // is what closing the selected run's steer receiver does.
+    let request = receiver.recv().await.expect("selected task receives steer");
+    drop(request);
+    let result = wait_for_steer_result(&observer, "stale_target").await;
+    assert_eq!(result["requestId"], request_id.to_string());
+    assert_eq!(
+        result["error"],
+        "the selected run ended before the steer was sent"
+    );
+}
+
+#[tokio::test]
+async fn thread_exact_steer_with_a_lost_answer_after_dispatch_stays_unconfirmed() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let request_id = Uuid::new_v4();
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, "session", "turn");
+    let observer = observer::ObserverHandle::in_process();
+
+    handle_steer_turn_control(
+        &serde_json::json!({
+            "type": "steer_turn",
+            "channelId": channel,
+            "conversationId": conversation,
+            "sessionId": "session",
+            "turnId": "turn",
+            "requestId": request_id,
+            "prompt": "keep the selected run focused"
+        }),
+        &mut pool,
+        Some(&observer),
+    );
+
+    let request = receiver.recv().await.expect("selected task receives steer");
+    request.dispatched.mark_dispatched();
+    drop(request);
+    let result = wait_for_steer_result(&observer, "unconfirmed").await;
+    assert_eq!(result["error"], "strict steer response was lost");
+}
+
+#[tokio::test]
+async fn thread_exact_steer_forwards_the_adapter_rejection_reason() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let request_id = Uuid::new_v4();
+    let mut pool = AgentPool::from_slots(vec![]);
+    let (mut receiver, _) =
+        thread_exact_steer_task(&mut pool, channel, conversation, "session", "turn");
+    let observer = observer::ObserverHandle::in_process();
+
+    handle_steer_turn_control(
+        &serde_json::json!({
+            "type": "steer_turn",
+            "channelId": channel,
+            "conversationId": conversation,
+            "sessionId": "session",
+            "turnId": "turn",
+            "requestId": request_id,
+            "prompt": "keep the selected run focused"
+        }),
+        &mut pool,
+        Some(&observer),
+    );
+
+    let request = receiver.recv().await.expect("selected task receives steer");
+    assert!(request
+        .ack_tx
+        .send(pool::SteerAck::Err(pool::SteerError::StrictOutcome {
+            outcome: "rejected".into(),
+            reason: Some("expectedTurnId must be a UUID".into()),
+        }))
+        .is_ok());
+    let result = wait_for_steer_result(&observer, "rejected").await;
+    assert_eq!(result["error"], "expectedTurnId must be a UUID");
+}
+
+#[test]
+fn malformed_steer_frames_always_answer_with_a_terminal_rejection() {
+    let channel = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let request_id = Uuid::new_v4();
+    let valid = serde_json::json!({
+        "type": "steer_turn",
+        "channelId": channel.to_string(),
+        "conversationId": conversation.to_string(),
+        "sessionId": "session",
+        "turnId": "turn",
+        "requestId": request_id.to_string(),
+        "prompt": "keep going",
+    });
+    let cases: Vec<(&str, serde_json::Value, &str)> = vec![
+        ("channelId", serde_json::json!("not-a-uuid"), "channelId"),
+        ("conversationId", serde_json::json!(null), "conversationId"),
+        ("sessionId", serde_json::json!("   "), "sessionId"),
+        ("turnId", serde_json::json!(""), "turnId"),
+        ("requestId", serde_json::json!(7), "requestId"),
+        ("prompt", serde_json::json!("  "), "prompt"),
+        (
+            "prompt",
+            serde_json::json!("x".repeat(16 * 1024 + 1)),
+            "16 KiB",
+        ),
+    ];
+    for (field, value, expected) in cases {
+        let mut payload = valid.clone();
+        payload[field] = value;
+        let mut pool = AgentPool::from_slots(vec![]);
+        let observer = observer::ObserverHandle::in_process();
+        handle_steer_turn_control(&payload, &mut pool, Some(&observer));
+        let frame = observer
+            .snapshot()
+            .into_iter()
+            .rev()
+            .find(|frame| frame.kind == "control_result")
+            .unwrap_or_else(|| panic!("a malformed {field} frame must still answer"));
+        assert_eq!(frame.payload["status"], "rejected");
+        let error = frame.payload["error"].as_str().unwrap_or_default();
+        assert!(
+            error.contains(expected),
+            "{field}: unexpected reason {error}"
+        );
+        if field == "prompt" {
+            // Every identifier in this case is valid, so the rejection must
+            // echo all of them: the caller correlates on string equality and
+            // a dropped echo strands its control on an unanswerable request.
+            assert_eq!(frame.payload["requestId"], request_id.to_string());
+            assert_eq!(frame.payload["channelId"], channel.to_string());
+            assert_eq!(frame.payload["conversationId"], conversation.to_string());
+            assert_eq!(frame.payload["sessionId"], "session");
+            assert_eq!(frame.payload["turnId"], "turn");
+        }
+    }
+}
+
+#[test]
+fn a_neutral_prompt_completion_is_replay_safe_only_before_the_write() {
+    // The prompt loop only holds a steer after its write succeeded, so a
+    // neutral completion of a dispatched request leaves the outcome unknown.
+    let (status, reason) = classify_steer_ack(Ok(pool::SteerAck::PromptCompletedNeutral), true);
+    assert_eq!(status, "unconfirmed");
+    assert!(reason.is_some(), "an unconfirmed outcome must say why");
+    let (status, _) = classify_steer_ack(Ok(pool::SteerAck::PromptCompletedNeutral), false);
+    assert_eq!(status, "stale_target");
+    // A dispatched request is not downgraded across the board: the adapter's
+    // own terminal outcomes stay terminal.
+    let (status, _) = classify_steer_ack(
+        Ok(pool::SteerAck::Err(pool::SteerError::StrictTargetMismatch)),
+        true,
+    );
+    assert_eq!(status, "stale_target");
+    let (status, _) = classify_steer_ack(
+        Ok(pool::SteerAck::Success {
+            session_id: "session".into(),
+        }),
+        true,
+    );
+    assert_eq!(status, "appended");
+}
+
+#[tokio::test]
+async fn a_dropped_control_sender_is_not_an_owner_stop() {
+    assert!(pool::is_owner_stop(&Ok(ControlSignal::Cancel)));
+    assert!(!pool::is_owner_stop(&Ok(ControlSignal::SwitchModel {
+        model_id: "model".into(),
+        request_id: None,
+    })));
+    // A dropped sender is the only way to observe the receiver's error: the
+    // turn ended abnormally, nobody asked it to stop.
+    let (control_tx, control_rx) = tokio::sync::oneshot::channel::<ControlSignal>();
+    drop(control_tx);
+    assert!(!pool::is_owner_stop(&control_rx.await));
+}
+
+#[test]
+fn adapter_steer_reasons_are_scrubbed_and_bounded_on_a_char_boundary() {
+    use crate::acp::{bound_steer_reason, MAX_STEER_REASON_BYTES};
+    assert_eq!(bound_steer_reason(None), None);
+    assert_eq!(bound_steer_reason(Some("   ")), None);
+    assert_eq!(
+        bound_steer_reason(Some("expectedTurnId must be a UUID")),
+        Some("expectedTurnId must be a UUID".to_owned())
+    );
+    let scrubbed = bound_steer_reason(Some("bad\nvalue\x1bhere")).expect("reason survives");
+    assert!(!scrubbed.chars().any(char::is_control));
+    let long = bound_steer_reason(Some(&"é".repeat(400))).expect("reason survives");
+    assert!(long.len() <= MAX_STEER_REASON_BYTES);
+    assert!(long.chars().all(|c| c == 'é'));
+    let edge = bound_steer_reason(Some(&format!(
+        "{}é",
+        "a".repeat(MAX_STEER_REASON_BYTES - 1)
+    )))
+    .expect("reason survives");
+    assert_eq!(edge.len(), MAX_STEER_REASON_BYTES - 1);
 }

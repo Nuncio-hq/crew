@@ -177,7 +177,13 @@ test("focus and split preserve reading context and interaction ownership", async
   await page.goto("/");
   const rootId = await seedLongThread(page);
 
-  await page.getByTestId("channel-general").click();
+  await page.getByTestId("workspace-menu-trigger").click();
+  await page.getByTestId("workspace-browse-channels").click();
+  await page
+    .getByTestId("browse-channel-general")
+    .getByRole("button")
+    .first()
+    .click();
   await expectChannelHeaderUnobscured(page);
   const summary = page.locator(
     `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
@@ -296,7 +302,13 @@ test("focus drawer close minimizes the thread into the split pane", async ({
   await page.goto("/");
   const rootId = await seedLongThread(page);
 
-  await page.getByTestId("channel-general").click();
+  await page.getByTestId("workspace-menu-trigger").click();
+  await page.getByTestId("workspace-browse-channels").click();
+  await page
+    .getByTestId("browse-channel-general")
+    .getByRole("button")
+    .first()
+    .click();
   const summary = page.locator(
     `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
   );
@@ -352,7 +364,13 @@ test("narrow threads do not offer an unavailable layout switch", async ({
   await installMockBridge(page);
   await page.goto("/");
   const rootId = await seedLongThread(page);
-  await page.getByTestId("channel-general").click();
+  await page.getByTestId("workspace-menu-trigger").click();
+  await page.getByTestId("workspace-browse-channels").click();
+  await page
+    .getByTestId("browse-channel-general")
+    .getByRole("button")
+    .first()
+    .click();
   const summary = page.locator(
     `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
   );

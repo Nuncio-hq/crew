@@ -19,6 +19,7 @@ fn in_flight() -> (
             agent_index: 0,
             channel_id: Some(conversation),
             routing_channel_id: Some(channel),
+            session_id: TaskSessionIdentity::default(),
             turn_id: "finishing-turn".into(),
             recoverable_batch: None,
             control_tx: Some(control_tx),

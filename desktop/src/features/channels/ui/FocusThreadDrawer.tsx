@@ -12,6 +12,7 @@ import {
   AuxiliaryPanelCloseOverrideContext,
 } from "@/shared/layout/auxiliaryPanelContext";
 import { cn } from "@/shared/lib/cn";
+import { escapeIsClaimedByNestedOwner } from "@/shared/hooks/escapeSurfaces";
 
 type FocusThreadDrawerProps = {
   channelId?: string | null;
@@ -221,6 +222,10 @@ export function FocusThreadDrawer({
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+      // Capture phase runs before the key reaches the element, so a nested
+      // control that owns Escape (the run-control steer input) must be asked
+      // here — otherwise dismissing it would always close the whole thread.
+      if (escapeIsClaimedByNestedOwner(event.target)) return;
       const target = event.target;
       if (
         hasActiveEdit &&

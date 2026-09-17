@@ -32,7 +32,11 @@ function useOutcomeLedger() {
     }> = [];
     walkConversationOutcomes((conversationId) => {
       const recent = getRecentOutcomeForConversation(conversationId);
-      if (recent && recent.outcome !== "lost-contact") {
+      if (
+        recent &&
+        recent.outcome !== "lost-contact" &&
+        recent.outcome !== "cancelled"
+      ) {
         outcomes.push({
           conversationId,
           channelId: recent.channelId,

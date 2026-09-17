@@ -211,8 +211,12 @@ async function loadNarrowDrawer(standalone = false) {
       ),
     ]),
   );
+  // The real escape-ownership module: a nested control that marks itself as
+  // the Escape owner must keep the drawer from swallowing the key.
+  const escapeSurfaces = load("../../shared/hooks/escapeSurfaces.ts", {});
   const Drawer = load("../channels/ui/FocusThreadDrawer.tsx", {
     ...common,
+    "@/shared/hooks/escapeSurfaces": escapeSurfaces,
     "motion/react": { motion, useReducedMotion: () => true },
     "@/features/channels/lib/threadFocusLayout": {
       THREAD_FOCUS_DRAWER_TRAVEL_PX: 0,
@@ -393,4 +397,50 @@ test("standalone thread hosts narrow tools without remounting or losing its draf
   assert.ok(view.getByRole("textbox", { name: "Draft" }) === draft);
   assert.equal(draft.value, "Unsaved draft");
   assert.ok(document.activeElement === opener, "focus returns to opener");
+});
+
+/**
+ * The drawer claims Escape in the capture phase, before the key reaches the
+ * element, so a nested control cannot signal ownership with `preventDefault`.
+ * A control that marks itself an Escape owner must keep its own key; anything
+ * else in the drawer still dismisses the thread.
+ */
+test("the drawer yields Escape to a nested control that owns it", async () => {
+  const { render, act } = await import("@testing-library/react");
+  const Drawer = await loadNarrowDrawer();
+  let closes = 0;
+  const view = render(
+    React.createElement(
+      Drawer,
+      {
+        ...props,
+        onClose: () => {
+          closes++;
+        },
+      },
+      React.createElement("textarea", {
+        "aria-label": "Steer this run",
+        "data-escape-owner": "steer-input",
+      }),
+      React.createElement("button", { type: "button" }, "Steer run"),
+    ),
+  );
+  const pressEscape = (node) =>
+    node.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+  await act(async () =>
+    pressEscape(view.getByRole("textbox", { name: "Steer this run" })),
+  );
+  assert.equal(closes, 0, "an Escape owner keeps its own key");
+
+  await act(async () =>
+    pressEscape(view.getByRole("button", { name: "Steer run" })),
+  );
+  assert.equal(closes, 1, "Escape anywhere else still dismisses the thread");
 });

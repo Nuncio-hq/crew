@@ -1684,3 +1684,6 @@ async fn new_session_resets_total_accumulation() {
 
     h.shutdown().await;
 }
+
+#[path = "crew/strict_steer.rs"]
+mod crew_strict_steer;

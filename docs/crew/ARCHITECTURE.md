@@ -265,6 +265,10 @@ latency: baseline/candidate timing and real-data screenshots await #348/#338.
 Validated receipts already match the exact agent, triggering event, session
 and turn when projecting a healthy thread's Ready to review badge. This is
 distinct from observer-driven live control targets and founder acceptance.
+Receipt-backed UI subscriptions observe the store's stable generation before
+deriving aggregate review state. A receipt may arrive while its turn is still
+active; an unchanged store must not produce a new external-store snapshot on
+every read and cause a render loop in the channel's thread summary.
 Error, disconnected and stalled attention retain their existing precedence.
 During harness finalization, a task record can outlive its control receiver.
 Cancel and model-switch report a sent signal only when the receiver accepts
@@ -765,18 +769,18 @@ duplicate answers and fences completion by relay, viewer, channel and ownership
 generation. Publication failure keeps the request available with its error;
 success waits for the existing durable resolution/claim semantics. Native
 `QuestionRuntime` remains the authority for answer-versus-cancel claims. The
-source-stage selected-run Stop UI is described below. Strict Steer remains
-unimplemented: the existing ordinary-message `_session/steering` transport can
-start a new turn and cannot promise rejection of a stale selected run.
+source-stage selected-run Stop and Steer controls are described below. Strict
+Steer uses an additive `_session/steering` contract; it never falls back to
+ordinary steering or starts a successor turn when the selected run is stale.
 
 The #354 first slice implements the presentation in those seams: explicit Tools
 opens Context, Activity reads the existing exact-conversation observer archive/live
 merge, and Agent plans renders the unchanged D-056 projection in its own tab.
 Recap remains visibly Off/unavailable. Historical Activity remains read-only;
-the second slice adds explicitly selected current-run Stop and the scoped
-Need-you publication foundation. Strict Steer and additional workspace
-instruments remain unavailable. A retained plan without retained observer events displays unavailable
-transcript history rather than fabricated activity.
+the second slice adds explicitly selected current-run Stop and Steer plus the
+scoped Need-you publication foundation. A retained plan without retained
+observer events displays unavailable transcript history rather than fabricated
+activity.
 
 Selection is an in-memory LRU of at most 128 canonical relay/viewer/channel/root
 keys. Navigation closes the presentation; explicit return restores only selection.
@@ -803,27 +807,72 @@ by #348/#357 before #354 is complete.
 #354 selected-run Stop extends the existing encrypted observer control frame.
 The source-stage `send_scoped_observer_control` command captures the native
 owner scope and requires the caller's exact token, including identity/workspace
-generations. It uses the shared `OwnerOperationTransport` with captured keys and
-origin, and passes a lazy `assert_current` check that runs after admission.
-It neither adds a journal nor duplicates the transport. Native preparation or
-admission rejection is `not_attempted`; an exact positive relay acknowledgment
+generations. Observer control kind 24200 uses Buzz's existing WebSocket path,
+not the HTTP event-ingest bridge. Its publisher retains the captured WebSocket
+URL and signing keys, uses shared rate-limit admission and NIP-42 authentication,
+and rechecks `assert_current` after connection setup immediately before sending.
+The complete attempt has a ten-second budget. No journal is added. Failure
+before the control event is sent is `not_attempted`; an exact positive relay acknowledgment
 is `accepted`; all uncertain sent outcomes remain `unknown`. Relay acceptance is
 not a harness Stop acknowledgment. The existing owner-authorized harness handler
 still verifies the exact channel/conversation/turn target. A scope change after
 send cannot retroactively turn that attempt into `not_attempted`.
 
+Clean `ControlSignal::Cancel` termination still emits `turn_error` so active-turn
+projections close, but carries `outcome: "cancelled"` with generic `error: "Run stopped"`;
+the desktop renders a stopped status. Missing or malformed terminal outcome data
+continues to render as a genuine error.
+
 
 The source-stage Activity run picker uses existing live observer session/turn
 identities and captures the native owner token before enabling selection.
+A turn may start before its runtime session exists. A later `session_resolved`
+frame fills an empty session identity only for the same active agent, channel,
+conversation and turn; it never replaces an already bound session. The live-run
+projection is invalidated when that identity becomes available.
 No run is selected implicitly. Ending or replacing a selected run retains its
 identity as unavailable rather than targeting its successor. Stop requires the
 same current channel/conversation/session/turn and target ownership at click;
 ordinary ownership refetches or unrelated membership changes preserve pending
 claims. Revocation retires them. Results correlate agent, turn and request ID,
-and stale view completion cannot settle a newer request. Only a confirmed
-`not_attempted` publication unlocks retry; an unknown send remains unconfirmed.
-The transcript remains mounted alongside these controls. This source composition
-has Node proof; native batch, full CI, review and staging acceptance remain gates.
+and stale view completion cannot settle a newer request. Steer carries the same
+captured scope together with the exact session, turn, request UUID and text
+prompt. The native adapter routes it only to the matching task and advertises
+the strict capability before the client selects that transport. `buzz-agent`
+admits at most eight queued requests, caps text at 16 KiB, deduplicates 128
+request IDs, and appends only at its round boundary. A shared terminal claim
+arbitrates bounded expiry against that append, so an expired request cannot be
+appended later. The receiver remains attached across an optional plan
+continuation and is cleared when the task returns to the pool. Strict outcomes
+are `appended`, `stale_target`, `rejected`, `busy`, and `expired`; an uncertain
+publication remains unconfirmed and is never replayed automatically. Every control
+frame is answered: a malformed frame is rejected with a bounded reason rather
+than dropped, and a queued request the adapter never received settles as
+`stale_target` (replay-safe) instead of `unconfirmed`. The boundary is the write
+to the adapter, not the shape of the answer: a prompt that ends while a written
+steer is still pending settles as `unconfirmed`, because the adapter may already
+have applied it. Publication
+feedback unlocks retry only for confirmed `not_attempted`; a correlated adapter
+terminal outcome also releases the claim. A correlated rejection carries the
+adapter's own reason — control-character scrubbed and bounded to 240 bytes —
+into the control result and the Steer feedback line, with generic feedback when
+the adapter supplies none. The client wait is deliberately longer than the
+adapter's own request deadline, and the correlation outlives that wait, so a
+late terminal outcome still downgrades an unconfirmed request to a retryable
+one. Unconfirmed delivery keeps its claim and never enables a blind retry;
+Steer and Stop latch independently, so an unconfirmed Steer never removes Stop.
+
+The live job desk under the thread head is the one thread-level control strip.
+Bound to the same owner-scoped publication seam as the Activity tab, it names
+the working agent and offers Steer and Stop for an exact run when the thread has
+exactly one live run this viewer owns; it points at Activity when several are
+live, because choosing a target for the operator would be guessing. When no run
+identity is known yet — or the live run is not this viewer's to control — the
+desk keeps its agent-scoped controls, whose labels name the agent they act on:
+Steer focuses the composer, Stop stops that agent. The Activity tab keeps the
+full run picker, and the thread-wide control is named "Stop all runs" so the
+three scopes cannot be confused. The transcript remains mounted alongside these controls;
+installed workflow acceptance remains tracked by #354/#357.
 
 ## Installed Wiki runtime authentication (#363)
 
