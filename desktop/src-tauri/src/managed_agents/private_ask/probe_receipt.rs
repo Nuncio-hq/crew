@@ -286,6 +286,8 @@ fn reason_label(reason: RefusalReason) -> &'static str {
         RefusalReason::ForeignHost => "foreign-host",
         RefusalReason::ForeignPort => "foreign-port",
         RefusalReason::TunnelCap => "tunnel-cap",
+        RefusalReason::SniMismatch => "sni-mismatch",
+        RefusalReason::NotTls => "not-tls",
     }
 }
 
@@ -295,6 +297,8 @@ fn reason_from_label(label: &str) -> Option<RefusalReason> {
         "foreign-host" => Some(RefusalReason::ForeignHost),
         "foreign-port" => Some(RefusalReason::ForeignPort),
         "tunnel-cap" => Some(RefusalReason::TunnelCap),
+        "sni-mismatch" => Some(RefusalReason::SniMismatch),
+        "not-tls" => Some(RefusalReason::NotTls),
         _ => None,
     }
 }

@@ -384,3 +384,168 @@ fn a_connection_that_sends_nothing_records_nothing() {
     );
     assert!(observation.accepted().is_empty());
 }
+
+/// The smallest well-formed ClientHello carrying one SNI host-name entry. The
+/// probe program builds the same bytes in Perl; both are read by the same
+/// parser, which is what keeps them from drifting.
+fn client_hello_bytes(host: &str) -> Vec<u8> {
+    let mut entry = vec![0_u8];
+    entry.extend_from_slice(&(host.len() as u16).to_be_bytes());
+    entry.extend_from_slice(host.as_bytes());
+    let mut list = (entry.len() as u16).to_be_bytes().to_vec();
+    list.extend_from_slice(&entry);
+    let mut extension = 0_u16.to_be_bytes().to_vec();
+    extension.extend_from_slice(&(list.len() as u16).to_be_bytes());
+    extension.extend_from_slice(&list);
+
+    let mut body = 0x0303_u16.to_be_bytes().to_vec();
+    body.extend_from_slice(&[0_u8; 32]);
+    body.push(0);
+    body.extend_from_slice(&2_u16.to_be_bytes());
+    body.extend_from_slice(&[0x13, 0x01]);
+    body.push(1);
+    body.push(0);
+    body.extend_from_slice(&(extension.len() as u16).to_be_bytes());
+    body.extend_from_slice(&extension);
+
+    let mut handshake = vec![0x01];
+    handshake.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+    handshake.extend_from_slice(&body);
+
+    let mut record = vec![0x16, 0x03, 0x01];
+    record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+    record.extend_from_slice(&handshake);
+    record
+}
+
+/// The parser reads the outer server name, normalizes it, and refuses anything
+/// it cannot walk without leaving the buffer.
+///
+/// Production line: `client_hello_sni`. Every length in a ClientHello is
+/// attacker-chosen, so a truncation at any of them must return `None` rather
+/// than panic — which is what the truncation sweep below asserts.
+#[test]
+fn a_client_hello_yields_its_normalized_server_name_or_nothing() {
+    let hello = client_hello_bytes("API.Anthropic.Com.");
+    assert_eq!(
+        client_hello_sni(&hello).as_deref(),
+        Some("api.anthropic.com"),
+        "case and a trailing dot are the same host"
+    );
+
+    // Not TLS at all, and a handshake that is not a ClientHello.
+    assert_eq!(client_hello_sni(b"CONNECT api.anthropic.com:443"), None);
+    assert_eq!(client_hello_sni(&[]), None);
+    let mut not_hello = client_hello_bytes("api.anthropic.com");
+    not_hello[5] = 0x02;
+    assert_eq!(client_hello_sni(&not_hello), None);
+
+    // A hostile length at any offset must be refused, never walked off the end.
+    let hello = client_hello_bytes("api.anthropic.com");
+    for cut in 0..hello.len() {
+        assert_eq!(
+            client_hello_sni(&hello[..cut]),
+            None,
+            "a record truncated at {cut} must not parse"
+        );
+    }
+
+    // A host that is not a DNS name at all is not a name this proxy can match.
+    assert_eq!(client_hello_sni(&client_hello_bytes("evil..test")), None);
+    assert_eq!(client_hello_sni(&client_hello_bytes("")), None);
+}
+
+/// A CONNECT to the provider whose handshake asks for somebody else is
+/// refused, and nothing is forwarded.
+///
+/// Production line: the `client_hello_sni` match in `handle_client`. Remove it
+/// and a shared front end that terminates the provider's name serves any site
+/// the child names in its handshake, with the CONNECT line still saying the
+/// provider.
+#[test]
+fn a_handshake_that_fronts_a_foreign_server_is_refused() {
+    use std::io::{Read, Write};
+
+    let proxy = EgressProxy::start(ProviderHost::parse("api.anthropic.com").unwrap())
+        .expect("loopback proxy");
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, proxy.port()));
+
+    let mut client =
+        std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5)).expect("connect");
+    client
+        .write_all(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
+        .expect("write");
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("timeout");
+    let mut status = [0_u8; 39];
+    client.read_exact(&mut status).expect("status line");
+    assert!(String::from_utf8_lossy(&status).starts_with("HTTP/1.1 200"));
+
+    client
+        .write_all(&client_hello_bytes("evil.test"))
+        .expect("fronting handshake");
+    // The proxy closes the tunnel rather than forwarding a byte.
+    let mut forwarded = Vec::new();
+    let _ = client.read_to_end(&mut forwarded);
+    assert!(
+        forwarded.is_empty(),
+        "nothing may come back through a refused tunnel"
+    );
+
+    let observation = proxy.observe(0);
+    assert!(
+        observation
+            .refused()
+            .iter()
+            .any(|refused| refused.reason() == RefusalReason::SniMismatch),
+        "the refusal must be recorded as evidence, with its own reason"
+    );
+}
+
+/// A connection past the concurrency cap is dropped at accept, before a task
+/// exists to hold a descriptor through the head-read timeout.
+///
+/// Production line: the `tasks.len() >= MAX_CONCURRENT_TUNNELS` check in
+/// `accept_loop`. With the cap applied only after the request head is parsed —
+/// where it used to be — every one of these idle clients stays connected for
+/// the full ten-second head timeout and this read does not return.
+#[test]
+fn a_connection_past_the_cap_is_dropped_before_it_can_hold_a_descriptor() {
+    use std::io::Read;
+
+    let proxy = EgressProxy::start(ProviderHost::parse("api.anthropic.com").unwrap())
+        .expect("loopback proxy");
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, proxy.port()));
+
+    // Exactly the cap, all silent: each occupies a task sitting in the
+    // head-read timeout.
+    let idle: Vec<std::net::TcpStream> = (0..MAX_CONCURRENT_TUNNELS)
+        .map(|_| {
+            std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5)).expect("connect")
+        })
+        .collect();
+
+    let mut extra =
+        std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5)).expect("connect");
+    extra
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("timeout");
+    let mut bytes = Vec::new();
+    let started = std::time::Instant::now();
+    let read = extra.read_to_end(&mut bytes);
+    assert!(
+        read.is_ok(),
+        "the extra connection must be closed, not held"
+    );
+    assert!(bytes.is_empty(), "a dropped connection is told nothing");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the cap must be applied at accept, not after the head-read timeout"
+    );
+
+    // Nothing was manufactured into the evidence: these clients asked for
+    // nothing, so there is nothing to refuse.
+    assert!(proxy.observe(0).refused().is_empty());
+    drop(idle);
+}

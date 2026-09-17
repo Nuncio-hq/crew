@@ -130,6 +130,25 @@ if ($control ne '') {
 }
 
 # 4/5. CONNECT through the proxy, to a foreign host and to the provider.
+# The proxy matches the TLS ClientHello's server name against the CONNECT
+# target before it forwards anything, so an accepted leg has to present one.
+# This is the smallest well-formed ClientHello that carries an SNI entry.
+sub client_hello {
+    my ($host) = @_;
+    my $entry     = pack('C n', 0, length($host)) . $host;
+    my $list      = pack('n', length($entry)) . $entry;
+    my $extension = pack('n n', 0, length($list)) . $list;
+    my $body =
+          pack('n', 0x0303)          # legacy version
+        . ("\x00" x 32)              # random
+        . pack('C', 0)               # empty session id
+        . pack('n', 2) . "\x13\x01"  # one cipher suite
+        . pack('C', 1) . "\x00"      # null compression
+        . pack('n', length($extension)) . $extension;
+    my $handshake = pack('C', 1) . substr(pack('N', length($body)), 1) . $body;
+    return pack('C n n', 0x16, 0x0301, length($handshake)) . $handshake;
+}
+
 sub connect_through_proxy {
     my ($target) = @_;
     return 'unreachable' if $proxy eq '' || $target eq '';
@@ -144,9 +163,11 @@ sub connect_through_proxy {
         $reply .= $chunk;
         last if $reply =~ /\r\n/;
     }
+    my $accepted = $reply =~ m{^HTTP/1\.[01] 200};
+    syswrite($socket, client_hello($target)) if $accepted;
     close $socket;
     return 'silent' if $reply eq '';
-    return $reply =~ m{^HTTP/1\.[01] 200} ? 'accepted' : 'refused';
+    return $accepted ? 'accepted' : 'refused';
 }
 
 my $foreign_result  = connect_through_proxy($foreign);

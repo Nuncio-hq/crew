@@ -28,6 +28,16 @@
 //!   by widening the proxy.
 //! * Suffix matching is not used for the host. `api.anthropic.com.evil.test` is
 //!   a different host, and a suffix rule would accept it.
+//! * TLS is never terminated. The proxy reads the client's ClientHello to check
+//!   that the server name it asks for is the CONNECT target it was allowed —
+//!   the fronting move, where the CONNECT line names the provider and the
+//!   handshake asks a shared front end for somebody else's site — and then
+//!   forwards those exact bytes. It holds no key and sees no plaintext.
+//!
+//! NAMED LIMIT: the name checked is the OUTER server name. A client sending an
+//! encrypted ClientHello chooses its own outer name, and this check sees that
+//! one. No runtime a private Ask runs does so today, and the only alternative
+//! is the interception above, which is not on the table.
 
 use super::PrivateAskFailure;
 use std::io;
@@ -122,6 +132,14 @@ pub(crate) enum RefusalReason {
     ForeignPort,
     /// The concurrent-tunnel cap was already reached.
     TunnelCap,
+    /// The client's TLS ClientHello named a server other than the CONNECT
+    /// target. Fronting: the CONNECT line says the provider, the handshake asks
+    /// a content-delivery network for somebody else's site.
+    SniMismatch,
+    /// What followed the CONNECT was not a TLS ClientHello this proxy could
+    /// read. The tunnel is only ever used for one thing, so anything else is
+    /// refused rather than forwarded blind.
+    NotTls,
 }
 
 /// One refused CONNECT, as the proxy saw it.
@@ -541,6 +559,16 @@ async fn accept_loop(listener: tokio::net::TcpListener, state: Arc<ProxyState>) 
         }
         let task_state = Arc::clone(&state);
         tasks.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
+        // The cap belongs HERE, before the task exists. Applying it after the
+        // request head was parsed let an unbounded number of children sit in
+        // the ten-second head-read timeout, each holding a desktop file
+        // descriptor, without ever reaching the check. The connection is closed
+        // rather than recorded: it has not asked for anything yet, and a
+        // manufactured refusal is exactly what the evidence must not contain.
+        if tasks.len() >= MAX_CONCURRENT_TUNNELS as usize {
+            drop(stream);
+            continue;
+        }
         tasks.push(tokio::task::spawn_local(async move {
             handle_client(stream, task_state).await;
         }));
@@ -602,11 +630,47 @@ async fn handle_client(mut stream: tokio::net::TcpStream, state: Arc<ProxyState>
     let _slot = TunnelSlot {
         state: Arc::clone(&state),
     };
-    // Recorded before the dial: the target was allowed, and a provider outage
-    // must not be able to present itself as a refusal.
+    // Recorded here, before the tunnel is opened and before anything is
+    // dialled: this is the record that the proxy ALLOWED this CONNECT target,
+    // and a provider outage — or the name check below — must not be able to
+    // retract it into a refusal. It is also what keeps the record independent
+    // of when the child chose to close its socket.
     if let Ok(mut record) = state.record.lock() {
         record.accept(target.host.clone());
     }
+    if stream
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await
+        .is_err()
+    {
+        return;
+    }
+    // The CONNECT line is the client's claim about where it is going; the TLS
+    // ClientHello is what the server on the far side will actually be asked
+    // for. A shared front end that terminates the provider's name will happily
+    // serve a different site when the handshake asks for one, so the two must
+    // agree before a byte is forwarded. This is a name check, not
+    // interception: the bytes are read, matched and then passed through
+    // unmodified, and no key of either side is touched.
+    //
+    // Reading has to happen after the 200 — the client does not send a
+    // ClientHello until it believes the tunnel is open — so the refusal closes
+    // an established tunnel that carried nothing.
+    let hello = read_client_hello(&mut stream).await;
+    match hello.as_deref().and_then(client_hello_sni) {
+        Some(name) if name == target.host => {}
+        Some(_) => {
+            record_refusal(&state, target.to_string(), RefusalReason::SniMismatch);
+            return;
+        }
+        // Includes an empty read: a client that opened the tunnel and said
+        // nothing has not shown this proxy a handshake it can vouch for.
+        None => {
+            record_refusal(&state, target.to_string(), RefusalReason::NotTls);
+            return;
+        }
+    }
+    let hello = hello.unwrap_or_default();
     let upstream = tokio::net::TcpStream::connect((target.host.as_str(), target.port)).await;
     let upstream = match upstream {
         Ok(upstream) => upstream,
@@ -618,14 +682,148 @@ async fn handle_client(mut stream: tokio::net::TcpStream, state: Arc<ProxyState>
             return;
         }
     };
-    if stream
-        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        .await
-        .is_err()
-    {
+    let mut upstream = upstream;
+    // The handshake this proxy already consumed is the first thing the server
+    // must see; dropping it would break every tunnel it just allowed.
+    if upstream.write_all(&hello).await.is_err() {
         return;
     }
     let _ = tokio::time::timeout(TUNNEL_TIMEOUT, pump(stream, upstream)).await;
+}
+
+/// Bytes read for one TLS ClientHello. A handshake larger than this is not one
+/// this proxy is prepared to vouch for, and the read is bounded so a client
+/// that never finishes cannot grow this process.
+const CLIENT_HELLO_LIMIT: usize = 16 * 1024;
+
+/// Wall-clock bound for the client to produce its ClientHello once the tunnel
+/// is open.
+const CLIENT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Read the client's first TLS record, or give up.
+///
+/// One record is enough: a ClientHello is permitted to span records, but no
+/// client this proxy serves fragments it, and a fragmented one is refused
+/// rather than reassembled — refusing is the fail-closed direction and keeps
+/// this read bounded by construction.
+async fn read_client_hello(stream: &mut tokio::net::TcpStream) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+
+    let read = async {
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 2048];
+        loop {
+            let read = stream.read(&mut chunk).await.ok()?;
+            if read == 0 {
+                // Peer closed. Return what there is; the parser refuses it.
+                return Some(buffer);
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            if buffer.len() >= 5 {
+                let declared = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+                let total = declared.checked_add(5)?;
+                if total > CLIENT_HELLO_LIMIT {
+                    return Some(buffer);
+                }
+                if buffer.len() >= total {
+                    return Some(buffer);
+                }
+            }
+            if buffer.len() >= CLIENT_HELLO_LIMIT {
+                return Some(buffer);
+            }
+        }
+    };
+    tokio::time::timeout(CLIENT_HELLO_TIMEOUT, read)
+        .await
+        .ok()?
+}
+
+/// The normalized server name in a TLS ClientHello, or `None`.
+///
+/// `None` for anything that is not a readable ClientHello carrying exactly one
+/// host-name entry: a truncated record, a different record type, a handshake
+/// that is not a ClientHello, a missing or malformed SNI extension. Every
+/// length is checked against what is actually present, so a crafted record
+/// cannot walk this parser off the end of the buffer.
+///
+/// NAMED LIMIT: this reads the OUTER server name. A client that sends an
+/// encrypted ClientHello presents an outer name of its own choosing and this
+/// check sees that one. No runtime this proxy serves does so today, and the
+/// alternative — terminating TLS — is the interception this deliberately does
+/// not do.
+fn client_hello_sni(bytes: &[u8]) -> Option<String> {
+    /// Read `count` bytes and advance, or fail.
+    fn take<'a>(bytes: &'a [u8], cursor: &mut usize, count: usize) -> Option<&'a [u8]> {
+        let end = cursor.checked_add(count)?;
+        let slice = bytes.get(*cursor..end)?;
+        *cursor = end;
+        Some(slice)
+    }
+    fn take_u8(bytes: &[u8], cursor: &mut usize) -> Option<usize> {
+        Some(take(bytes, cursor, 1)?[0] as usize)
+    }
+    fn take_u16(bytes: &[u8], cursor: &mut usize) -> Option<usize> {
+        let slice = take(bytes, cursor, 2)?;
+        Some(u16::from_be_bytes([slice[0], slice[1]]) as usize)
+    }
+
+    let mut cursor = 0;
+    // TLS record: handshake content type, two version bytes, length.
+    if take_u8(bytes, &mut cursor)? != 0x16 {
+        return None;
+    }
+    take(bytes, &mut cursor, 2)?;
+    let record_length = take_u16(bytes, &mut cursor)?;
+    let record = take(bytes, &mut cursor, record_length)?;
+
+    let mut cursor = 0;
+    // Handshake: ClientHello type, 24-bit length, two version bytes, random.
+    if take_u8(record, &mut cursor)? != 0x01 {
+        return None;
+    }
+    let length = take(record, &mut cursor, 3)?;
+    let body_length =
+        ((length[0] as usize) << 16) | ((length[1] as usize) << 8) | length[2] as usize;
+    let body = take(record, &mut cursor, body_length)?;
+
+    let mut cursor = 0;
+    take(body, &mut cursor, 2)?;
+    take(body, &mut cursor, 32)?;
+    let session_id = take_u8(body, &mut cursor)?;
+    take(body, &mut cursor, session_id)?;
+    let cipher_suites = take_u16(body, &mut cursor)?;
+    take(body, &mut cursor, cipher_suites)?;
+    let compression = take_u8(body, &mut cursor)?;
+    take(body, &mut cursor, compression)?;
+    let extensions_length = take_u16(body, &mut cursor)?;
+    let extensions = take(body, &mut cursor, extensions_length)?;
+
+    let mut cursor = 0;
+    while cursor < extensions.len() {
+        let kind = take_u16(extensions, &mut cursor)?;
+        let length = take_u16(extensions, &mut cursor)?;
+        let data = take(extensions, &mut cursor, length)?;
+        if kind != 0x0000 {
+            continue;
+        }
+        let mut inner = 0;
+        let list_length = take_u16(data, &mut inner)?;
+        let list = take(data, &mut inner, list_length)?;
+        let mut entry = 0;
+        // Only a host-name entry counts. A list that names something else, or
+        // names nothing, is not a name this proxy can match.
+        while entry < list.len() {
+            let name_type = take_u8(list, &mut entry)?;
+            let name_length = take_u16(list, &mut entry)?;
+            let name = take(list, &mut entry, name_length)?;
+            if name_type == 0 {
+                return normalize_host(std::str::from_utf8(name).ok()?);
+            }
+        }
+        return None;
+    }
+    None
 }
 
 /// Releases one tunnel slot on every exit path, including an early return.
