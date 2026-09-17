@@ -2365,6 +2365,10 @@ only requirement the feature exists to meet. The one-shot lineage (#351 recap â†
 `managed_agents/wiki_runtime.rs`) already establishes that a bounded, disposable
 native invocation is an acceptable Crew seam.
 
+The developer-only command surface is a gate, not a feature: `private_ask_run`
+reports the admission refusal and does not yet call `admit_private_ask` or run
+anything, because there is nothing it could be allowed to run.
+
 The privacy claim is enforced, not asserted: relay-bound egress is counted at
 the guard every publish boundary in the desktop already calls, and a complete
 attempt through the production launch path must move that count by zero.
@@ -2389,6 +2393,9 @@ attempt through the production launch path must move that count by zero.
   system paths a process needs to start; that allow-list was verified against a
   perl fixture, not against an installed runtime. Installed acceptance must
   confirm it.
+- The owner-local Ask history is held in the renderer for the life of the window
+  and is not persisted. Durable retention on the `OwnedRecapRun` pattern is
+  deferred until there is an answer worth keeping.
 - Session-isolation evidence certifies only a session that was idle across the
   window: it requires the employee's ledger digest to be unchanged, whereas a
   genuinely busy `buzz-acp` advances its own ledger. The criterion is therefore

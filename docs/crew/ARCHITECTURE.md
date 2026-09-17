@@ -919,9 +919,10 @@ submodules split the responsibilities:
 The lineage difference that matters is the transport: a recap and a Wiki
 generation publish their result, and a private Ask publishes nothing. There is
 no event kind, no command that writes to the relay, and no store that mirrors
-the question or the answer outward. The question, the answer and the owner-local
-history stay on the viewer's machine, following the `OwnedRecapRun` and
-retention pattern.
+the question or the answer outward. The question, the answer and the history stay on
+the viewer's machine. The history is currently renderer state for the life of
+the window only; durable owner-local retention on the `OwnedRecapRun` pattern is
+not implemented yet.
 
 That absence is enforced rather than documented. Every relay-bound egress
 boundary in the desktop calls the key-backup guard in `egress_guard.rs` — the
