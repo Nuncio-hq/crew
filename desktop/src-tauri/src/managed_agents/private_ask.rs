@@ -267,6 +267,29 @@ impl PrivateAskRequest {
     }
 }
 
+/// Refuse a selection whose own session is mid-turn.
+///
+/// The signal is the desktop's own lifecycle for the live harness generation —
+/// what `selection::lifecycle_of` derived from the runtime it holds a handle to
+/// — and deliberately NOT the session ledger digest. The digest cannot
+/// distinguish "this Ask touched the session" from "the employee finished a
+/// turn of its own", and it can only be compared after the answer has been
+/// paid for. This fence is the cheap half: an agent that is working is refused
+/// before any probe child or runtime child is started. The before/after bracket
+/// in `binding::answer` remains the proof of `independent_invocation` for the
+/// runs that get past here.
+///
+/// Called from both `admit_private_ask` and the top of `binding::answer`, from
+/// this one predicate, so the two enforcement points cannot drift: admission is
+/// where every fence is stated, and the binding is where "before any probe"
+/// actually means something.
+pub(super) fn refuse_busy_selection(state: &SelectedAgentState) -> Result<(), PrivateAskFailure> {
+    if state.lifecycle == AgentLifecycle::Busy {
+        return Err(PrivateAskFailure::AgentBusy);
+    }
+    Ok(())
+}
+
 /// The managed-agent state observed immediately before Ask admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SelectedAgentState {
@@ -432,6 +455,11 @@ pub(crate) enum PrivateAskFailure {
     InvalidScope(&'static str),
     InvalidQuestion,
     InvalidGrounding,
+    /// The selected agent's own session is mid-turn. Refused up front, before
+    /// any probe or child, from the desktop's own lifecycle signal — the
+    /// session bracket around an answer can only speak after the model call has
+    /// already been paid for.
+    AgentBusy,
     InputLimit,
     /// The question and persona alone — with no grounding at all — do not fit
     /// the prompt bound. Distinct from [`Self::InputLimit`], which is the
@@ -470,6 +498,7 @@ impl std::fmt::Display for PrivateAskFailure {
             Self::InvalidScope(_) => f.write_str("private Ask scope is invalid"),
             Self::InvalidQuestion => f.write_str("private Ask question is invalid"),
             Self::InvalidGrounding => f.write_str("private Ask grounding is invalid"),
+            Self::AgentBusy => f.write_str("selected agent is busy"),
             Self::InputLimit => f.write_str("private Ask input exceeds its bound"),
             Self::QuestionLimit => {
                 f.write_str("private Ask question exceeds its bound before any source is grounded")
@@ -544,6 +573,7 @@ pub(crate) fn admit_private_ask(
     if !matches!(state.runtime_id.as_str(), "claude" | "hermes") {
         return Err(PrivateAskFailure::MissingRuntime);
     }
+    refuse_busy_selection(&state)?;
     if !is_hex64(&state.config_fingerprint)
         || !is_hex64(&state.acl_fingerprint)
         || !valid_scope_value(&state.session_generation)

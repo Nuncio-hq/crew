@@ -19,6 +19,12 @@
 //! staleness is a re-probe rather than a refusal, and an expired trace can
 //! never certify anything.
 //!
+//! A selection whose own session is mid-turn is refused HERE, before the
+//! receipt is even looked at: `refuse_busy_selection` reads the desktop's own
+//! lifecycle signal, so a busy agent never pays for a probe child or a model
+//! call to be told it is busy. The bracket below is the proof for everything
+//! that gets past that fence.
+//!
 //! Session isolation is deliberately NOT one of the things a receipt has to
 //! carry, because it is not a property of this machine that can be cached: it
 //! is a statement about one contained run beside one live session. It is
@@ -61,6 +67,10 @@ pub(super) struct PrivateAskBinding {
 
 /// Resolve the capability for one selection and answer with it.
 pub(super) fn answer(binding: PrivateAskBinding) -> Result<PrivateAskResponse, PrivateAskFailure> {
+    // First, and before anything is captured or spawned. Admission states the
+    // same rule, but admission happens after the probe; a busy agent must not
+    // pay for a probe child, let alone a model call, to be told it is busy.
+    super::refuse_busy_selection(&binding.state)?;
     let retained = probe_receipt::load(
         &binding.ownership,
         &binding.state.executable,

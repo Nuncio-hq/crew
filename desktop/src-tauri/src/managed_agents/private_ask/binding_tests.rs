@@ -5,6 +5,8 @@
 //! * the happy path — `binding::answer`'s `probe_receipt::load` / `capture` /
 //!   `store` sequence followed by `PrivateAskCapability::from_probe`;
 //! * the re-probe — `probe_receipt::load`'s `PROBE_MAX_AGE` check;
+//! * the busy fence — the `refuse_busy_selection` call at the top of
+//!   `binding::answer`, which must precede every capture and spawn;
 //! * the receipt reuse — the `Some(capability) => capability` arm of
 //!   `binding::answer`, which no longer re-probes for a live session;
 //! * the independence bracket — the `session.capture()` pair around
@@ -218,7 +220,7 @@ fn an_unobservable_session_refuses_rather_than_answering_beside_it() {
 
     let refusal = ask(
         owned_receipt(&fixture),
-        selection(&path, AgentLifecycle::Busy),
+        selection(&path, AgentLifecycle::Idle),
         Some(unobservable),
         2_000,
     )
@@ -227,22 +229,71 @@ fn an_unobservable_session_refuses_rather_than_answering_beside_it() {
     assert_eq!(refusal, PrivateAskFailure::SessionObservationUnavailable);
 }
 
-/// A busy agent is answered when the bracket holds. The old rule refused it
-/// outright unless this very attempt had captured a probe beside the session,
-/// which made every Ask for a working employee pay for a probe run.
+/// An agent whose own session is mid-turn is refused BEFORE anything is
+/// captured or spawned. The bracket around an answer can only speak after the
+/// model call has been paid for, so the cheap signal has to come first.
+///
+/// Production line: the `refuse_busy_selection(&binding.state)` call at the top
+/// of `binding::answer`. Move it below the receipt load and this test still
+/// sees `AgentBusy`, but a probe receipt appears on disk — which is what the
+/// second half asserts, and what makes this bind to the fence's POSITION
+/// rather than merely to its existence.
 #[test]
-fn a_busy_agent_is_answered_when_its_session_is_untouched() {
+fn a_busy_agent_is_refused_before_any_child_is_started() {
+    let fixture = canonical_tempdir();
+    // A runtime that records having been run. Nothing may execute it.
+    let spawn_marker = fixture.path().join("runtime-was-executed");
+    let path = fake_runtime(
+        fixture.path(),
+        "claude",
+        &format!(
+            "#!/usr/bin/perl\nopen(my $out, '>', '{}'); print $out \"spawned\"; close $out;\nprint '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"It returns 42.\\n\\n[^cite]: src/lib.rs\",\"modelUsage\":{{\"claude-fable-5-1\":{{}}}}}}';\n",
+            spawn_marker.display()
+        ),
+    );
+    let session = LiveSession::start(fixture.path());
+    let ownership = owned_receipt(&fixture);
+    let probe_base = ownership
+        .private_ask_probe_base()
+        .expect("probe base")
+        .to_path_buf();
+
+    let refusal = ask(
+        ownership,
+        selection(&path, AgentLifecycle::Busy),
+        Some(session.observation.clone()),
+        2_000,
+    )
+    .unwrap_err();
+
+    assert_eq!(refusal, PrivateAskFailure::AgentBusy);
+    assert!(
+        !spawn_marker.exists(),
+        "no runtime child may be started for a busy agent"
+    );
+    let receipts = std::fs::read_dir(&probe_base)
+        .map(|entries| entries.filter_map(Result::ok).count())
+        .unwrap_or(0);
+    assert_eq!(
+        receipts, 0,
+        "no capability probe may be captured for a busy agent either"
+    );
+}
+
+/// An idle agent answers, and its session bracket is what certifies the run.
+#[test]
+fn an_idle_agent_is_answered_and_its_session_bracket_certifies_the_run() {
     let fixture = canonical_tempdir();
     let path = answering_runtime(fixture.path());
     let session = LiveSession::start(fixture.path());
 
     let response = ask(
         owned_receipt(&fixture),
-        selection(&path, AgentLifecycle::Busy),
+        selection(&path, AgentLifecycle::Idle),
         Some(session.observation.clone()),
         2_000,
     )
-    .expect("a busy agent answers when its session is untouched");
+    .expect("an idle agent answers when its session is untouched");
 
     assert!(response.markdown.starts_with("It returns 42."));
 }

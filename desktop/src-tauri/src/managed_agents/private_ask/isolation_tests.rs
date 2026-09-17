@@ -158,10 +158,15 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     let runtime = reporting_runtime(directory.path(), &session.ledger);
     let mut selected = state(&runtime, "claude", "claude-fable-5-1", None);
     selected.executable = executable(&runtime);
-    selected.lifecycle = AgentLifecycle::Busy;
+    // The employee session beside this run really is live and working; the
+    // lifecycle field is the desktop's own turn signal, and an Ask is only ever
+    // reached with it idle — a mid-turn agent is refused before anything
+    // starts. What this test is about is what the contained run can touch while
+    // that session exists, which is orthogonal to the turn signal.
+    selected.lifecycle = AgentLifecycle::Idle;
     let capability = PrivateAskCapability::verified_for_fixture(&selected);
-    let admission =
-        admit_private_ask(request(), selected.clone(), capability).expect("busy admission");
+    let admission = admit_private_ask(request(), selected.clone(), capability)
+        .expect("admission beside a live session");
     let ownership = owned_receipt(&directory);
     let base = ownership.recap_base().expect("recap base");
     let attempt = PrivateAskAttempt::create(admission, ownership, 1).expect("attempt");

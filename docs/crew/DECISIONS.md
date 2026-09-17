@@ -2503,26 +2503,32 @@ time. Now a fresh, valid receipt restores the containment dimensions and a probe
 is captured only when the receipt is missing, stale, or does not project onto
 this selection. A busy agent is no longer refused before it is observed; the
 `AgentBusy` refusal is gone, because nothing could produce it once the check
-moved to where the observation is.
+moved to where the observation is — and the cheap up-front half is kept where
+it belongs. `refuse_busy_selection` refuses an agent whose own session is
+mid-turn from the desktop's own lifecycle signal (the live harness generation's
+state, what `lifecycle_of` derives), before any probe child or runtime child is
+started. It is deliberately not the ledger digest: the digest can only be
+compared after the answer has been paid for. One predicate, enforced at the top
+of `binding::answer` and again in `admit_private_ask`, so the two points cannot
+drift.
 
 NAMED LIMIT of that move: the answering child is spawned by the desktop, so its
 parentage is true by construction rather than observed, unlike the probe path
 where the child reports its own `getppid`. What is genuinely observed on this
 path is the session's own bytes and owning PID either side of the run.
 
-SECOND NAMED LIMIT, and the one a reader must not miss: **the bracket assumes
-the session is quiescent for the duration of the Ask.** `buzz-acp` rewrites its
-ledger entry on every completed turn (`record_session_turn` bumps the turn count
-and `last_used_at`), and the digest cannot distinguish "the Ask touched the
-ledger" from "the employee finished a turn of its own". So an agent that
-completes a turn while the Ask runs is refused as
-`IndependentInvocationUnverified` *after* the model call, where the old rule
-refused it cheaply and up front. That is the fail-closed direction and it is the
-deliberate trade: the common case — an idle-between-turns employee — stops
-paying for a probe run on every Ask, and the case that now costs an answer is
-the one where the evidence genuinely cannot be given. A later revision should
-narrow the digest to the parts of an entry a private Ask could plausibly
-disturb.
+SECOND NAMED LIMIT: **the bracket assumes the session stays quiescent for the
+duration of the Ask.** The busy fence above rejects an agent that is mid-turn
+*when the Ask starts*, but `buzz-acp` rewrites its ledger entry on every
+completed turn (`record_session_turn` bumps the turn count and `last_used_at`),
+and the digest cannot distinguish "the Ask touched the ledger" from "the
+employee started and finished a turn of its own while it ran". A turn that
+begins after the fence and lands before the bracket closes therefore refuses the
+Ask as `IndependentInvocationUnverified` *after* the model call. That window is
+narrow and the refusal is fail-closed rather than a silent pass; a later
+revision should narrow the digest to the parts of an entry a private Ask could
+plausibly disturb, so a turn the employee took on its own stops reading as
+interference.
 
 **A capability is minted from one real contained run.** The probe launches under
 byte-identical policy text to a production answer, with the proxy serving, and

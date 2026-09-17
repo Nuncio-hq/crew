@@ -232,24 +232,33 @@ fn a_rotated_existing_session_invalidates_the_retained_capability() {
     );
 }
 
-/// Admission is about the capability, not about whether the agent happens to
-/// be busy. Independence is an observation of the employee's live session
-/// either side of the answering run, which has not happened yet at this point,
-/// so a busy agent with an otherwise complete capability is admitted here and
-/// judged by that bracket afterwards.
+/// A busy agent is refused on its own lifecycle signal, with a complete
+/// capability in hand — the refusal is about the session being mid-turn, not
+/// about a missing proof. An idle agent with the identical capability is
+/// admitted, so this cannot pass because of some other fence.
 ///
-/// Production line: the absence of any `independent_invocation` or
-/// `AgentLifecycle::Busy` clause in `admit_private_ask`. Restoring one makes an
-/// Ask beside a live session refuse before it can ever be observed.
+/// Production line: the `refuse_busy_selection(&state)` call in
+/// `admit_private_ask`. Independence is deliberately NOT part of it: that is
+/// observed around the answering run, which has not happened yet here.
 #[test]
-fn a_busy_agent_is_admitted_and_judged_by_the_run_it_is_bracketed_around() {
+fn a_busy_agent_is_refused_on_its_lifecycle_not_on_a_missing_proof() {
     let fixture = canonical_tempdir();
     let path = runtime_installation(fixture.path()).join("runtime");
     let mut selected = state(&path, "claude", "claude-fable-5-1", None);
     selected.lifecycle = AgentLifecycle::Busy;
-    let mut capability = PrivateAskCapability::verified_for_fixture(&selected);
-    capability.independent_invocation = ProofStatus::Unverified;
-    admit_private_ask(request(), selected, capability).expect("a busy agent still admits");
+    // Complete in every dimension, including the one a receipt cannot carry.
+    let capability = PrivateAskCapability::verified_for_fixture(&selected);
+    assert_eq!(
+        admit_private_ask(request(), selected.clone(), capability.clone()).unwrap_err(),
+        PrivateAskFailure::AgentBusy
+    );
+
+    let mut idle = selected;
+    idle.lifecycle = AgentLifecycle::Idle;
+    let mut unverified = capability;
+    unverified.independent_invocation = ProofStatus::Unverified;
+    admit_private_ask(request(), idle, unverified)
+        .expect("an idle agent admits, and independence is not an admission fence");
 }
 
 #[test]
