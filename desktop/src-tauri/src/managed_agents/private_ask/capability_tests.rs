@@ -87,7 +87,7 @@ fn fixture() -> (tempfile::TempDir, SelectedAgentState, PathBuf) {
 /// stops passing, the negative cases below no longer isolate one field each.
 #[cfg(target_os = "macos")]
 #[test]
-fn a_complete_probe_certifies_every_dimension_and_admits_the_request() {
+fn a_complete_probe_certifies_every_provable_dimension_but_egress_still_refuses() {
     let (_directory, selected, run_root) = fixture();
     let capability =
         PrivateAskCapability::from_probe(&selected, healthy_probe(&selected, run_root)).unwrap();
@@ -96,7 +96,15 @@ fn a_complete_probe_certifies_every_dimension_and_admits_the_request() {
     assert_eq!(capability.process_containment, ProofStatus::Verified);
     assert_eq!(capability.side_effect_free, ProofStatus::Verified);
     assert_eq!(capability.independent_invocation, ProofStatus::Verified);
-    admit_private_ask(request(), selected, capability).unwrap();
+    // Every dimension a probe can prove is proved — and the request is still
+    // refused, because nothing today can show the run's egress reached only
+    // the model provider. This is the fail-closed floor: it must stay a
+    // refusal until a desktop-owned proxy makes the claim provable.
+    assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
+    assert_eq!(
+        admit_private_ask(request(), selected, capability).unwrap_err(),
+        PrivateAskFailure::EgressBoundUnverified
+    );
 }
 
 /// A hostile attempt that was never made proves nothing about denial.

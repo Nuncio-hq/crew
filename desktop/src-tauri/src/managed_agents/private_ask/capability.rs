@@ -190,6 +190,18 @@ impl PrivateAskCapability {
             session_generation: probe.session_generation,
             authentication: status(authentication_verified),
             tool_isolation: status(tool_isolation_verified),
+            // NAMED LIMIT, deliberately never Verified by this producer.
+            //
+            // The Seatbelt policy allows `remote ip "*:443"` — any host on 443,
+            // because SBPL cannot resolve a hostname — and the probe's
+            // `network_connections_observed` is measured only against a
+            // loopback listener on an ephemeral port, which the policy already
+            // refuses. That measurement therefore says nothing about the path
+            // that IS open. Until egress is forced through a desktop-owned
+            // proxy that dials only the configured provider, no evidence here
+            // can bound it, so certification is refused rather than granted on
+            // a measurement of the wrong path.
+            egress_bounded: ProofStatus::Unverified,
             read_bounded: status(read_bounded_verified),
             process_containment: status(containment_verified),
             side_effect_free: status(side_effect_free_verified),

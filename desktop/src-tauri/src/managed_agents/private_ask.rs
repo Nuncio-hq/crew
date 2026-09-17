@@ -322,6 +322,10 @@ pub(crate) struct PrivateAskCapability {
     /// `~/.ssh`, no other agent's credentials. Separate from `tool_isolation`,
     /// which is about a hostile *write* or connect.
     read_bounded: ProofStatus,
+    /// The run's network egress could reach the model provider and nothing
+    /// else. Distinct from `tool_isolation`, which only establishes that the
+    /// child failed to reach a listener the probe controlled.
+    egress_bounded: ProofStatus,
     process_containment: ProofStatus,
     side_effect_free: ProofStatus,
     independent_invocation: ProofStatus,
@@ -349,6 +353,7 @@ impl PrivateAskCapability {
             authentication: ProofStatus::Unverified,
             tool_isolation: ProofStatus::Unverified,
             read_bounded: ProofStatus::Unverified,
+            egress_bounded: ProofStatus::Unverified,
             process_containment: ProofStatus::Unverified,
             side_effect_free: ProofStatus::Unverified,
             independent_invocation: ProofStatus::Unverified,
@@ -368,6 +373,7 @@ impl PrivateAskCapability {
             authentication: ProofStatus::Verified,
             tool_isolation: ProofStatus::Verified,
             read_bounded: ProofStatus::Verified,
+            egress_bounded: ProofStatus::Verified,
             process_containment: ProofStatus::Verified,
             side_effect_free: ProofStatus::Verified,
             independent_invocation: ProofStatus::Verified,
@@ -393,6 +399,7 @@ pub(crate) enum PrivateAskFailure {
     AuthenticationUnverified,
     ToolIsolationUnverified,
     ReadIsolationUnverified,
+    EgressBoundUnverified,
     ProcessContainmentUnverified,
     SideEffectProofUnverified,
     IndependentInvocationUnverified,
@@ -426,6 +433,9 @@ impl std::fmt::Display for PrivateAskFailure {
             Self::AuthenticationUnverified => f.write_str("runtime authentication is unverified"),
             Self::ToolIsolationUnverified => f.write_str("runtime tool isolation is unverified"),
             Self::ReadIsolationUnverified => f.write_str("runtime read isolation is unverified"),
+            Self::EgressBoundUnverified => {
+                f.write_str("runtime network egress is not bounded to the model provider")
+            }
             Self::SessionObservationUnavailable => {
                 f.write_str("the selected agent's running session could not be observed")
             }
@@ -549,6 +559,13 @@ pub(crate) fn admit_private_ask(
     }
     if capability.independent_invocation != ProofStatus::Verified {
         return Err(PrivateAskFailure::IndependentInvocationUnverified);
+    }
+    // Last, so a probe that failed a dimension it *could* have proved hears
+    // about that first. Today no producer can verify this one, so a private Ask
+    // is refused here even when every other proof holds — see
+    // `PrivateAskCapability::from_probe`.
+    if capability.egress_bounded != ProofStatus::Verified {
+        return Err(PrivateAskFailure::EgressBoundUnverified);
     }
     Ok(PrivateAskAdmission {
         request,

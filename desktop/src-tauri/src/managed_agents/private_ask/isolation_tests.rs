@@ -254,7 +254,13 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     };
     let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Verified);
-    admit_private_ask(request(), selected, capability).expect("a busy agent with a real proof");
+    // The busy-session fence is satisfied by a real observation: the request no
+    // longer fails as `AgentBusy`. It stops at the egress bound instead, which
+    // nothing can yet prove.
+    assert_eq!(
+        admit_private_ask(request(), selected, capability).unwrap_err(),
+        PrivateAskFailure::EgressBoundUnverified
+    );
 }
 
 /// Without that observation a busy agent is refused, and the refusal names the
