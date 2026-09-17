@@ -932,16 +932,21 @@ submodules split the responsibilities:
 | `prompt.rs` | Persona as delimited authority, question and grounding as data, config fingerprint |
 | `containment.rs` | The Seatbelt policy text for one run root and one runtime directory |
 | `capability.rs` | The only production producer of a positive capability, from a retained probe |
+| `binding.rs` | The sequencing from a resolved selection to an answer: retained-or-fresh probe, projection, admission, attempt |
+| `citations.rs` | The answer-citation fence: every cited path must be one the verified grounding accounts for |
+| `history.rs` | The bounded owner-local record of what was asked and what came back |
 | `session_evidence.rs` | Observation of a running employee session; the only way to obtain isolation evidence |
 | `profile.rs`, `recovery.rs`, `validation.rs` | Hermes profile staging, crash recovery, input fences |
 
 The lineage difference that matters is the transport: a recap and a Wiki
 generation publish their result, and a private Ask publishes nothing. There is
 no event kind, no command that writes to the relay, and no store that mirrors
-the question or the answer outward. The question, the answer and the history stay on
-the viewer's machine. The history is currently renderer state for the life of
-the window only; durable owner-local retention on the `OwnedRecapRun` pattern is
-not implemented yet.
+the question or the answer outward. The question, the answer and the history stay
+on the viewer's machine. The history is durable there and nowhere else: a
+bounded newest-first window capped by count and by age, in an owned 0o700
+directory, written 0o600 through a temporary file and a rename — the owned-run
+retention shape. Refusals are kept beside answers, and only citation paths and
+line ranges are stored, never the source text.
 
 That absence is enforced rather than documented. Every relay-bound egress
 boundary in the desktop calls the key-backup guard in `egress_guard.rs` — the
@@ -965,7 +970,15 @@ ownership digest, so one probe serves later Asks until it expires; loading a
 receipt yields a probe, never a capability, and every admission fence still
 applies. `independent_invocation` is deliberately never restored from a receipt.
 
-The feature is still refused end to end, but the reason has moved: nothing binds
-a developer's question to a selected managed agent and an immutable Wiki
-snapshot, so there is no selection to admit. See D-083 for that binding and for
-the named limits.
+`private_ask/binding.rs` is what turns a resolved selection into an answer, and
+`private_ask/citations.rs` is what bounds that answer: the runtime prints its
+citations in a fixed Markdown footnote form the prompt states, and an answer
+citing a path the verified grounding cannot account for is refused outright.
+Previously the response simply echoed the request's grounding, which said
+nothing about the answer.
+
+What is still missing is the *resolver* in front of the binding: nothing yet
+turns a developer's question into a selected managed agent record, a
+grant-anchored repository scope and a verified snapshot, so the developer
+surface still shows `AgentUnbound`. See D-083 for the producers that exist, the
+one that does not, and the named limits.

@@ -1231,12 +1231,16 @@ production-bound tests do not replace installed Activity acceptance.
 
 ## Private Wiki Ask contract (#365)
 
-The private Ask cannot yet be asked from the developer surface (D-083): nothing
-binds a question to a selected agent and a snapshot. Every *fence* below it is
-live, though, so its tests assert the **reason** a request is refused and never
-merely that it was — the egress proof runs a real loopback proxy rather than
-describing one, and the capability probe is now produced by a real contained run
-rather than assembled by a fixture.
+The private Ask **answers** from a resolved selection: `binding_tests.rs` drives
+a real contained run end to end — capture the probe, retain it, project it,
+admit it, run the one-shot, resolve the answer's own citations. What is still
+missing is the resolver in front of that path, so the developer surface itself
+still shows `AgentUnbound` (D-083).
+
+Every fence below the binding is live, so its tests assert the **reason** a
+request is refused and never merely that it was — the egress proof runs a real
+loopback proxy rather than describing one, and the capability probe is produced
+by a real contained run rather than assembled by a fixture.
 
 ### Targets
 
@@ -1270,6 +1274,10 @@ fails closed.
 | `probe_program_tests.rs` | `parse_marker`'s nonce and completeness checks | Treating a missing, truncated, wrong-nonce or non-UTF-8 marker as success |
 | `probe_run_tests.rs` | `capture_probe` — a real contained run | Building the probe's policy from anything but the selected runtime; certifying a dimension the run escaped; coupling authentication to containment |
 | `probe_receipt_tests.rs` | `probe_receipt::{store, load}` | Honouring a stale, future-dated, foreign-install, foreign-program or different-executable receipt; restoring session isolation from disk |
+| `binding_tests.rs` | `binding::answer` — probe, project, admit, run | Answering under an expired receipt; answering a busy agent with no independence observation; returning an answer that cited outside the snapshot |
+| `citation_tests.rs` + `answer_tests.rs` | `citations::resolve`, called from `PrivateAskAttempt::run` | Restoring `request.grounding.clone()`; matching a cited path by prefix; treating an empty citation line as no citation |
+| `history_tests.rs` | `history::{record, load}` and its count/age bounds | Growing without bound; keeping a future-stamped entry; presenting a damaged file as a partial record |
+| `containment_read_roots_tests.rs` | The read-root fence in `private_ask_containment_profile` | Allowing a runtime directory that contains the run roots; comparing paths as strings rather than component-wise |
 
 The containment tests are paired: an uncontained control run must reach every
 effect — write outside the run root, read a file outside it, open a socket,
@@ -1292,9 +1300,13 @@ there is legitimately readable and the proof would pass by accident.
 The same trap has a wider form, and it cost a round to find: install the fixture
 runtime **outside** the staging base. A fixture that writes its `claude` into the
 directory *containing* `<app-data>/agents` makes the runtime read allowance cover
-the whole staging tree, including the probe's own sentinel — read isolation then
-genuinely fails, and it looks like a policy defect rather than a fixture that no
-real installation resembles.
+the whole staging tree, including the probe's own sentinel.
+
+Production now refuses that layout outright, so the fixtures must match a real
+installation: use `tests::runtime_installation(dir)`, which puts the runtime in
+its own directory beside the run roots. A fixture laid out the other way is
+refused before any policy text exists, and the failure reads as
+`ProcessContainmentUnverified` rather than as a read-isolation defect.
 
 `probe_run_tests.rs` asserts the probe's policy text equals the text a real
 answer would run under, rebuilt from the selected runtime. That equality is the

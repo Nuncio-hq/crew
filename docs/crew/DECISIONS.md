@@ -2390,12 +2390,31 @@ native invocation is an acceptable Crew seam.
 
 The developer-only command surface is a gate, not a feature: `private_ask_run`
 returns whatever the production path returns — an answer or a typed refusal —
-and chooses no reason of its own. It cannot yet answer, because nothing in the
-desktop resolves a developer's question to a selected managed agent and an
-immutable Wiki snapshot; the refusal names that missing binding rather than a
-dimension that is now provable. The third part of that binding — a retained
-capability probe for the agent's exact binary — now exists, and is described
-next.
+and chooses no reason of its own.
+
+**The answering path is now real.** Given a resolved selection — the selected
+agent's effective configuration and persona, its executable identity, a verified
+snapshot and the owned staging tree — the desktop takes the retained capability
+probe for that exact selection or captures a fresh one, projects it, admits it
+against every fence, runs the bounded contained one-shot, and returns the
+answer. What it returns is bounded by the answer's own citations: the runtime
+prints them in a fixed Markdown footnote form stated in the prompt, and every
+cited path must be a path in the verified grounding. An answer citing anything
+else is refused outright and recorded as refused — previously `citations` was a
+copy of the request's grounding, which said nothing about the answer at all. An
+answer that cites nothing is accepted with no citations; not every answer cites,
+and refusing silence would make an honest "the source does not say" look
+hostile.
+
+What is still missing is the *resolver* in front of that path: nothing yet
+resolves a developer's question to a selected managed agent record, the grant
+anchored repository scope and a verified snapshot, so `dev_run` still refuses
+with `AgentUnbound` and the composer shows that refusal. The producers it needs
+all exist — `VerifiedStagingOwnership::load`,
+`runtime_ready_proof_for_captured_scope`, `resolve_effective_config`, the native
+`GrantStore` root and `crew_wiki::snapshot_v1::verify_snapshot` — plus one that
+does not: the path to a selected agent's live ACP session ledger and observer
+sequence, which `independent_invocation` is observed from.
 
 **A capability is minted from one real contained run.** The probe launches under
 byte-identical policy text to a production answer, with the proxy serving, and
@@ -2498,17 +2517,26 @@ attempt through the production launch path must move that count by zero.
 - A receipt carries no session-isolation evidence, so `independent_invocation`
   is never satisfied from a retained trace. Independence is a statement about
   one attempt beside one live session rather than a cacheable property of a
-  machine, and the attempt that needs it must observe it for itself. Nothing
-  captures it around a real answer yet, because there is no answer yet.
-- Nothing refuses a runtime installed in a directory that *contains* the staging
-  base. The policy allows reads under the runtime's own directory, so such a
-  layout would expose every run root through that allowance. No real
-  installation puts a runtime above the app-data tree, and the gap is named here
-  rather than guarded, because the guard belongs beside the other pre-spawn path
-  facts and would need the existing proof fixtures re-homed with it.
-- The owner-local Ask history is held in the renderer for the life of the window
-  and is not persisted. Durable retention on the `OwnedRecapRun` pattern is
-  deferred until there is an answer worth keeping.
+  machine, and the attempt that needs it must observe it for itself. The
+  consequence is stated plainly rather than hidden: an Ask for an agent with a
+  live session captures a fresh probe every time. The receipt still bounds
+  staleness and retains the trace; it does not yet save the probe run.
+- A runtime installed in a directory that *contains* the run roots is now
+  refused before any policy text is built, for the runtime's own directory and
+  for every interpreter read root, since that read allowance would otherwise
+  expose every other attempt's run root. The comparison is component-wise on
+  canonical paths, so a sibling sharing a name prefix is unaffected, and a read
+  root that cannot be resolved is refused rather than assumed unrelated. Only
+  the ancestor direction is refused; a directory inside the run roots discloses
+  no sibling attempt.
+- The owner-local Ask history is persisted on this machine only, on the owned-run
+  retention pattern: a bounded newest-first window capped by count and by age, in
+  a 0o700 directory this uid owns, written 0o600 through a temporary file and a
+  rename. Refusals are kept alongside answers, because a list holding only the
+  answers would omit exactly the attempts a developer needs to see. It stores the
+  citation paths and line ranges, never the source text. A history that cannot be
+  written does not change the answer or the refusal the viewer is given; the
+  screen says the attempt was not kept.
 - Session-isolation evidence certifies only a session that was idle across the
   window: it requires the employee's ledger digest to be unchanged, whereas a
   genuinely busy `buzz-acp` advances its own ledger. The criterion is therefore
