@@ -178,6 +178,32 @@ fn an_observation_bounds_egress_only_with_a_real_refusal_and_no_leak() {
     )
     .bounds_egress());
 
+    // A malformed request is not a destination refusal. Anything that opens a
+    // socket produces one, so accepting it as proof would let a port scan
+    // certify a proxy that was never asked for a foreign host.
+    assert!(!observation(
+        vec!["api.anthropic.com"],
+        vec![("GET / HTTP/1.1", RefusalReason::NotConnect)],
+        0,
+    )
+    .bounds_egress());
+
+    // Neither is a busy proxy.
+    assert!(!observation(
+        vec!["api.anthropic.com"],
+        vec![("api.anthropic.com:443", RefusalReason::TunnelCap)],
+        0,
+    )
+    .bounds_egress());
+
+    // A wrong port is a destination refusal and does count.
+    assert!(observation(
+        vec!["api.anthropic.com"],
+        vec![("api.anthropic.com:80", RefusalReason::ForeignPort)],
+        0,
+    )
+    .bounds_egress());
+
     // A truncated record is not a complete set of destinations.
     let truncated = EgressObservation::from_parts(
         "api.anthropic.com".into(),
@@ -332,4 +358,29 @@ fn the_proxy_stops_when_its_owner_is_dropped() {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("the proxy port is still accepting after its owner was dropped");
+}
+
+/// A connection that sends nothing asks for nothing, and must leave no trace in
+/// the record. Removing the `head.is_empty()` return in `handle_client` lets a
+/// liveness probe — including the proxy's own shutdown self-connect —
+/// manufacture the refusal that `bounds_egress` looks for.
+#[test]
+fn a_connection_that_sends_nothing_records_nothing() {
+    let proxy = EgressProxy::start(ProviderHost::parse("api.anthropic.com").unwrap())
+        .expect("loopback proxy");
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, proxy.port()));
+    for _ in 0..3 {
+        let client = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5))
+            .expect("connect");
+        drop(client);
+    }
+    // Give the accept loop a moment to have handled all three.
+    std::thread::sleep(Duration::from_millis(300));
+    let observation = proxy.observe(0);
+    assert!(
+        observation.refused().is_empty(),
+        "an empty request must record nothing: {:?}",
+        observation.refused()
+    );
+    assert!(observation.accepted().is_empty());
 }

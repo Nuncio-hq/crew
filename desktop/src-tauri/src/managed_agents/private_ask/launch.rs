@@ -400,9 +400,15 @@ pub(super) fn model_key_matches(selected: &str, usage_key: &str) -> bool {
     if selected == usage_key {
         return true;
     }
-    usage_key
-        .strip_prefix(selected)
-        .is_some_and(|rest| rest.starts_with('-'))
+    // Exactly one date suffix, nothing else. A looser "starts with a dash"
+    // rule would accept `claude-fable-5-1-20260101` for a selected
+    // `claude-fable-5` — a different model reported as the one that was asked
+    // for, which is the substitution this check exists to catch.
+    usage_key.strip_prefix(selected).is_some_and(|rest| {
+        rest.len() == 9
+            && rest.starts_with('-')
+            && rest[1..].bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 #[derive(serde::Deserialize)]

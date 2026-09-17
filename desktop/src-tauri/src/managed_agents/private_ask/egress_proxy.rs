@@ -227,7 +227,7 @@ impl EgressObservation {
     /// connection was observed, and the record is complete.
     ///
     /// Two of these clauses are the load-bearing ones and they are opposites.
-    /// Without the non-empty *refusal* requirement, a proxy that accepts
+    /// Without the *refused a destination* requirement, a proxy that accepts
     /// everything and a proxy that was never tested produce identical evidence.
     /// Without the non-empty *accepted* requirement, a policy that blocks every
     /// destination — including the provider — looks exactly like one that is
@@ -237,7 +237,15 @@ impl EgressObservation {
             && self.proxy_port != 0
             && !self.provider_host.is_empty()
             && !self.accepted.is_empty()
-            && !self.refused.is_empty()
+            // A refusal of a *destination*, not merely of a malformed request.
+            // Anything can produce a `NotConnect`, and a tunnel-cap refusal says
+            // the proxy was busy, not that it was scoped.
+            && self.refused.iter().any(|refused| {
+                matches!(
+                    refused.reason,
+                    RefusalReason::ForeignHost | RefusalReason::ForeignPort
+                )
+            })
             && self.direct_connections == 0
             && self
                 .accepted
@@ -511,6 +519,13 @@ async fn handle_client(mut stream: tokio::net::TcpStream, state: Arc<ProxyState>
             // asked for nothing, so there is nothing to record.
             _ => return,
         };
+    // A connection that sent nothing asked for nothing. Recording it would
+    // manufacture a refusal out of a port scan or a liveness probe, and a
+    // manufactured refusal is exactly what `bounds_egress` must not accept as
+    // proof that this proxy was ever tested.
+    if head.is_empty() {
+        return;
+    }
     let target = match parse_connect_target(&head) {
         Ok(target) => target,
         Err(reason) => {
