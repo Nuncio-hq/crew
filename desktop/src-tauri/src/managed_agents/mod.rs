@@ -48,6 +48,8 @@ pub(crate) mod readiness;
 // command seam is registered, but no positive capability exists without a
 // completed bounded probe, native grant projection, and matching scoped
 // retention row.
+#[cfg(test)]
+mod key_delete_test_support;
 #[allow(dead_code)]
 pub(crate) mod private_ask;
 pub(crate) mod private_ask_commands;
@@ -77,6 +79,8 @@ mod session_aging_env;
 mod session_policy;
 pub(crate) mod snapshot_avatar;
 pub(crate) mod spawn_snapshot;
+#[cfg(test)]
+pub(crate) use key_delete_test_support::install_test_agent_key_delete;
 pub(crate) mod storage;
 pub(crate) mod team_catalog;
 pub(crate) mod team_events;

@@ -5,13 +5,12 @@ import {
   retryManagedAgentDeletion,
 } from "@/shared/api/tauriManagedAgentDeletions";
 import {
+  managedAgentDeletionsQueryKey,
   managedAgentsQueryKey,
   relayAgentsQueryKey,
 } from "@/features/agents/hooks";
 
-export const managedAgentDeletionsQueryKey = [
-  "managed-agent-deletions",
-] as const;
+export { managedAgentDeletionsQueryKey };
 
 export function useManagedAgentDeletionsQuery() {
   return useQuery({

@@ -141,6 +141,11 @@ export const acpAuthMethodsQueryKey = ["acp-auth-methods"] as const;
 export const managedAgentPrereqsQueryKey = ["managed-agent-prereqs"] as const;
 export const backendProvidersQueryKey = ["backend-providers"] as const;
 export const gitBashPrerequisiteQueryKey = ["git-bash-prerequisite"] as const;
+// Lives here rather than beside the deletion hooks so the delete mutations can
+// invalidate it without importing that module back into this one.
+export const managedAgentDeletionsQueryKey = [
+  "managed-agent-deletions",
+] as const;
 
 type InvalidateAgentQueriesOptions = {
   refetchChannels?: boolean;
@@ -578,6 +583,13 @@ export function useDeletePersonaMutation() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: personasQueryKey }),
         queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey }),
+        // A deletion that fails leaves a durable cleanup record behind, and
+        // the recovery banner's query neither refetches on focus nor goes
+        // stale for 30s — without this the owner sees the failure message
+        // with no way to act on it until something else refreshes.
+        queryClient.invalidateQueries({
+          queryKey: managedAgentDeletionsQueryKey,
+        }),
       ]);
     },
   });
@@ -685,6 +697,10 @@ export function useDeleteManagedAgentMutation() {
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
       await queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
+      // Same durable-cleanup record as the persona path above.
+      await queryClient.invalidateQueries({
+        queryKey: managedAgentDeletionsQueryKey,
+      });
     },
   });
 }

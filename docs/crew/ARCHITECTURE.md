@@ -235,6 +235,9 @@ relay text and unrelated acknowledgements do not enter it. A failed generation
 may receive a bounded final read in retired diagnostics, but the retired cache
 cannot establish a live process or overwrite a newer generation.
 
+The profile Activity row renders local transport health separately from process
+lifecycle status.
+
 The opt-in native evidence markers are a diagnostic sink only. Registration is
 emitted before an AUTH marker, each marker is bounded and retried a fixed number
 of times, and generation/attempt/AUTH identities deduplicate renewals and stale
@@ -417,6 +420,22 @@ deployed-remote guard and the existing Bestie assignment journal remain active.
 The identity tombstone/archive is retained for historical display and active
 pickers; it does not replace relay-authoritative channel cleanup.
 
+Persona-card Delete reaches the existing `delete_persona` command. Its durable
+parent captures the complete bounded target set before removing any instance;
+each linked child uses the same instance deletion coordinator and cleanup
+obligations. The persona definition is removed only after its children settle.
+Failed stops, key cleanup, or tombstones retain parent/child progress for a
+fresh process to retry. Restart recovery validates persisted process receipts
+before stopping an untracked child; unsafe target receipts or a directory scan
+exceeding 4,096 entries keep deletion pending without terminating a child.
+Recovery initializes its captured retention directory before enqueuing
+tombstones, including before normal retention hydration has run. Nested
+coordinator futures are boxed to avoid exhausting a worker's
+stack. Direct instance deletion retains its persona definition; persona-card
+deletion explicitly removes that definition. Both retain message history,
+runtime installations, worktrees, and role definitions. Hermes profile archival
+remains a separate explicit choice in the existing confirmation.
+
 The Agents directory reuses the existing persona and managed-instance queries. Each query failure exposes its own Retry action, retaining any cached cards while the failed query recovers. Instance Delete confirmation names the agent and is keyed by its public key: replacing the selected instance dismisses the confirmation, including same-name replacements. Renaming the same identity preserves its target. Cancel performs no removal. Relay-only rows use the existing policy-filtered relay query, exclude local instance keys and archived identities, and open the exact public-key profile without local management controls. Unknown local inventory blocks relay-only classification and offers Retry. Directory/profile Start and Restart, and profile Message, capture the community and signer for existing native scope assertions; component lifetime and target checks discard stale completions. Message pending state belongs to its captured scope, so changing scope permits a new operation and a retired completion cannot clear its pending state. These directory controls do not establish successful native process termination or canvas cleanup; those require separate runtime evidence.
 
 Agent plans should reuse `declaredPlanSnapshot.ts` and `declaredPlanProjection.ts`, including ACP `sessionUpdate:plan`, structured todo fallbacks, complete snapshot replacement, explicit empty clears and retired-session filtering. Partition by agent pubkey and conversation; preserve owner-only observer access and last-known/disconnected/unknown states. Do not infer plan completion from process liveness or merge multiple agents' plans into a new authoritative task store. Runtime-matrix unit fixtures prove parser behavior, not live adapter emission. The new tab currently uses authored snapshots only.
@@ -495,11 +514,11 @@ transaction. Only direct predecessors of unresolved successors are pinned;
 older ancestors follow normal retention. The exact relay refusal, fresh
 dependency checks and locked relay CAS establish the outcome. A local check
 before sending cannot revoke work already admitted by the relay. This requires
-journal schema v3: the v1-to-v2 managed-agent claim migration and the
-v2-to-v3 Wiki successor migration are both atomic and idempotent. Older
-binaries fail closed, so recovery preserves the v3 data and uses a verified
-compatible build rather than restoring a stale v1 database. See [the recovery
-runbook](TESTING.md#wiki-journal-v3-recovery) and
+journal schema v4: the v1-to-v2 managed-agent claim migration, the v2-to-v3
+Wiki successor migration, and the v3-to-v4 coordinator/child claim-index
+rebuild are all atomic and idempotent. Older binaries fail closed, so recovery
+preserves the v4 data and uses a verified compatible build rather than
+restoring a stale v1 database. See [the recovery runbook](TESTING.md#wiki-journal-v4-recovery) and
 [D-079](DECISIONS.md#d-079--owner-recovery-and-conditional-publication).
 
 While the Wiki library is mounted, automatic refresh uses the same scoped

@@ -17,8 +17,8 @@ use tauri::AppHandle;
 /// calling this helper, and must release managed-store/process locks first.
 /// Only applied or unchanged completes cleanup; partial/superseded stays durable.
 /// Entry point for the durable managed-agent deletion coordinator.
-pub(crate) async fn save_channel_crew_member_cleanup(
-    app: AppHandle,
+pub(crate) async fn save_channel_crew_member_cleanup<R: tauri::Runtime>(
+    app: AppHandle<R>,
     expected: OwnerScopeToken,
     operation_id: String,
     channel_id: String,

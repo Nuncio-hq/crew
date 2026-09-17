@@ -332,7 +332,204 @@ fn successor_intent_matches(
     Ok(successor)
 }
 
+fn parent_allows_cascade_child(parent: &Operation, child: &Operation) -> bool {
+    child
+        .payload
+        .get("cascade_parent")
+        .and_then(serde_json::Value::as_str)
+        == Some(parent.id.as_str())
+        && parent
+            .payload
+            .get("cascade")
+            .and_then(|value| value.get("targets"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|targets| {
+                targets.iter().any(|target| {
+                    target
+                        .get("operation_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(child.id.as_str())
+                        && target
+                            .get("fence")
+                            .and_then(|fence| fence.get("pubkey"))
+                            .and_then(serde_json::Value::as_str)
+                            == Some(child.resource_key.as_str())
+                        && target.get("persona_id").and_then(serde_json::Value::as_str)
+                            == child
+                                .payload
+                                .get("cascade_persona_id")
+                                .and_then(serde_json::Value::as_str)
+                })
+            })
+}
+
 impl OperationStore {
+    /// Reserve a prepared managed-agent deletion set in one SQLite
+    /// transaction.  Persona cascades use one coordinator row plus one
+    /// child row per exact instance; inserting them independently would leave
+    /// a durable prefix when a later claim or quota check fails.
+    pub(crate) fn create_managed_agent_delete_batch(
+        &mut self,
+        scope: &OperationScope,
+        operations: Vec<NewOperation>,
+        now: i64,
+    ) -> Result<Vec<Operation>, StoreError> {
+        const MAX_BATCH: usize = 16;
+        if operations.is_empty() || operations.len() > MAX_BATCH {
+            return Err(StoreError::Invalid);
+        }
+        validate_scope(scope)?;
+        if now < 0 {
+            return Err(StoreError::Invalid);
+        }
+
+        let limits = self.limits;
+        let mut candidates = Vec::with_capacity(operations.len());
+        let mut ids = std::collections::BTreeSet::new();
+        for new in operations {
+            if new.kind != super::OperationKind::ManagedAgentDelete
+                || new.resource_key.is_empty()
+                || new.resource_key.len() > 512
+                || !ids.insert(new.id.clone())
+            {
+                return Err(StoreError::Invalid);
+            }
+            validate_id(&new.id)?;
+            super::managed_delete_claim::validate_pubkey(&new.resource_key)?;
+            let creation_digest = initial_digest(&new, limits)?;
+            let candidate = Operation {
+                version: 1,
+                scope: scope.clone(),
+                id: new.id,
+                kind: new.kind,
+                resource_key: new.resource_key,
+                revision: 0,
+                created_at: now,
+                updated_at: now,
+                status: OperationStatus::Preparing,
+                reconciled: false,
+                payload: new.payload,
+            };
+            super::validate_managed_agent_delete_record(&candidate)?;
+            candidates.push((candidate, creation_digest));
+        }
+
+        // One resource may appear twice only for the coordinator's first
+        // target: its parent row and that target's child row intentionally
+        // share a global instance claim. Any other duplicate would make the
+        // post-commit claim ambiguous and must be rejected before SQLite can
+        // persist the prepared set.
+        for left in 0..candidates.len() {
+            for right in (left + 1)..candidates.len() {
+                if candidates[left].0.resource_key == candidates[right].0.resource_key
+                    && !parent_allows_cascade_child(&candidates[left].0, &candidates[right].0)
+                    && !parent_allows_cascade_child(&candidates[right].0, &candidates[left].0)
+                {
+                    return Err(StoreError::Invalid);
+                }
+            }
+        }
+
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_error)?;
+
+        // A crash cannot leave a partial batch because all rows commit below.
+        // Existing deterministic rows are accepted only when the whole
+        // prepared set is already present and byte-identical.  A mixed set is
+        // a durable inconsistency and must fail closed instead of filling in
+        // an unknown remainder.
+        let mut existing = Vec::with_capacity(candidates.len());
+        for (candidate, digest) in &candidates {
+            if let Some(operation) = read(&tx, scope, &candidate.id, limits.bytes_per_operation)? {
+                let stored_digest: Option<Vec<u8>> = tx
+                    .query_row(
+                        "SELECT CASE WHEN length(initial_digest)=32 THEN initial_digest END \
+                         FROM operations WHERE owner=?1 AND community=?2 AND id=?3",
+                        params![scope.owner, scope.community, candidate.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error)?;
+                if operation.kind != candidate.kind
+                    || operation.resource_key != candidate.resource_key
+                    || stored_digest.as_deref() != Some(digest.as_slice())
+                {
+                    return Err(StoreError::Conflict);
+                }
+                existing.push(operation);
+            }
+        }
+        if !existing.is_empty() {
+            if existing.len() != candidates.len() {
+                return Err(StoreError::Conflict);
+            }
+            return Ok(existing);
+        }
+
+        // Check every distinct target claim before inserting any row.  The
+        // prepared set may contain a coordinator and a child row for the same
+        // first target, so the claim lookup is deduplicated by resource key.
+        let mut checked_resources = std::collections::BTreeSet::new();
+        for (candidate, _) in &candidates {
+            if !checked_resources.insert(candidate.resource_key.clone()) {
+                continue;
+            }
+            if let Some(existing) = super::managed_delete_claim::claim(
+                &tx,
+                &candidate.resource_key,
+                limits.bytes_per_operation,
+            )? {
+                if existing.scope != *scope {
+                    return Err(StoreError::Busy);
+                }
+                let candidate_operation = Operation {
+                    version: 1,
+                    scope: scope.clone(),
+                    id: candidate.id.clone(),
+                    kind: candidate.kind,
+                    resource_key: candidate.resource_key.clone(),
+                    revision: 0,
+                    created_at: now,
+                    updated_at: now,
+                    status: OperationStatus::Preparing,
+                    reconciled: false,
+                    payload: candidate.payload.clone(),
+                };
+                if parent_allows_cascade_child(&existing, &candidate_operation) {
+                    continue;
+                }
+                return Err(StoreError::Conflict);
+            }
+        }
+        for (candidate, digest) in &candidates {
+            let json = encode(candidate, limits)?;
+            tx.execute(
+                "INSERT INTO operations(owner,community,id,kind,resource_key,revision,created_at,updated_at,status,reconciled,record_json,bytes,initial_digest) VALUES(?1,?2,?3,?4,?5,0,?6,?6,?7,0,?8,?9,?10)",
+                params![
+                    scope.owner,
+                    scope.community,
+                    candidate.id,
+                    kind_key(candidate.kind),
+                    candidate.resource_key,
+                    now,
+                    serde_json::to_string(&candidate.status).map_err(|_| StoreError::Invalid)?,
+                    json,
+                    json.len() as i64,
+                    digest,
+                ],
+            )
+            .map_err(sql_error)?;
+        }
+        trim(&tx, &scope.owner, now, limits)?;
+        check_quota(&tx, &scope.owner, limits)?;
+        tx.commit().map_err(sql_error)?;
+        Ok(candidates
+            .into_iter()
+            .map(|(candidate, _)| candidate)
+            .collect())
+    }
+
     /// Reserve before external effects. Existing IDs cannot acquire new intent.
     pub fn create(
         &mut self,

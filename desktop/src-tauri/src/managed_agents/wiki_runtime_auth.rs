@@ -516,6 +516,13 @@ mod tests {
         (fixture, executable)
     }
 
+    /// Timeout for the cases that are NOT about the deadline. It has to be
+    /// generous: a short bound turns ordinary machine load into a deadline
+    /// failure and hides the outcome these tests actually assert. The deadline
+    /// itself has its own test with its own short bound.
+    #[cfg(unix)]
+    const NON_DEADLINE_TIMEOUT: Duration = Duration::from_secs(60);
+
     #[cfg(unix)]
     fn fake_claude_policy(timeout: Duration, stdout: u64) -> BoundedPolicy {
         BoundedPolicy {
@@ -552,7 +559,7 @@ mod tests {
         let token = read_claude_credentials_with_command(
             Command::new(executable),
             &AtomicBool::new(false),
-            fake_claude_policy(Duration::from_secs(2), CLAUDE_CREDENTIALS_LIMIT as u64),
+            fake_claude_policy(NON_DEADLINE_TIMEOUT, CLAUDE_CREDENTIALS_LIMIT as u64),
         )
         .expect("synthetic credentials");
         assert_eq!(token, "synthetic-access-token");
@@ -585,7 +592,7 @@ mod tests {
         let error = read_claude_credentials_with_command(
             Command::new(executable),
             &cancelled,
-            fake_claude_policy(Duration::from_secs(2), 1024),
+            fake_claude_policy(NON_DEADLINE_TIMEOUT, 1024),
         )
         .expect_err("cancelled credential helper must fail");
         assert_eq!(
@@ -603,7 +610,7 @@ mod tests {
         let error = read_claude_credentials_with_command(
             Command::new(executable),
             &AtomicBool::new(false),
-            fake_claude_policy(Duration::from_secs(2), 1024),
+            fake_claude_policy(NON_DEADLINE_TIMEOUT, 1024),
         )
         .expect_err("failed keychain helper must fail");
         assert_eq!(error, WikiRuntimeFailure::AuthenticationUnavailable);
@@ -619,7 +626,7 @@ mod tests {
         let error = read_claude_credentials_with_command(
             Command::new(executable),
             &AtomicBool::new(false),
-            fake_claude_policy(Duration::from_secs(2), 1024),
+            fake_claude_policy(NON_DEADLINE_TIMEOUT, 1024),
         )
         .expect_err("oversized credential output must fail");
         assert_eq!(error, WikiRuntimeFailure::AuthenticationLimit);

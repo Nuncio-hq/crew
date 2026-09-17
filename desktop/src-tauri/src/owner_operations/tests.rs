@@ -801,5 +801,54 @@ fn durable_core_constraint_errors_distinguish_conflict_from_corruption() {
     );
 }
 
+fn managed_delete_request(pubkey: &str) -> NewOperation {
+    NewOperation {
+        id: Uuid::new_v4().to_string(),
+        kind: OperationKind::ManagedAgentDelete,
+        resource_key: pubkey.into(),
+        payload: json!({
+            "version": 1,
+            "fence": {
+                "pubkey": pubkey,
+                "name": "agent",
+                "created_at": "created",
+                "relay_url": "wss://relay.example",
+                "backend_agent_id": null
+            },
+            "channels": [],
+            "local_removed": false,
+            "key_removed": false,
+            "tombstone_enqueued": false,
+            "failures": 0,
+            "last_error": null
+        }),
+    }
+}
+
+#[test]
+fn persona_cascade_claim_failure_rolls_back_the_prepared_target_set() {
+    // Regression: a coordinator reserves every managed-delete child in one
+    // durable admission. A sequential create path would leave the first row
+    // behind when a later target exceeded the pending quota.
+    let (_dir, mut store) = fixture(Limits {
+        pending_per_owner: 1,
+        ..Limits::default()
+    });
+    let owner = scope('a', "https://one.example");
+    let result = store.create_managed_agent_delete_batch(
+        &owner,
+        vec![
+            managed_delete_request(&"b".repeat(64)),
+            managed_delete_request(&"c".repeat(64)),
+        ],
+        100,
+    );
+    assert!(matches!(result, Err(StoreError::Quota)));
+    assert!(
+        store.list(&owner, None, 100).unwrap().is_empty(),
+        "a rejected cascade must not strand an earlier target claim"
+    );
+}
+
 #[path = "wiki_successor_tests.rs"]
 mod wiki_successor_tests;

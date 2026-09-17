@@ -285,3 +285,27 @@ test("resolvePanelProfile prefers persona clay-bee over runtime bitmap", () => {
 
   assert.equal(profile?.avatarUrl, "data:image/png;base64,fizz");
 });
+
+test("Hermes profile edits preserve omission and unrelated instances, and allow explicit clear", () => {
+  const bound = agent({
+    hermesProfile: "retained-profile",
+    name: "Fizz Prime",
+    systemPrompt: "New prompt",
+    model: "new-model",
+    envVars: { NEW_KEY: "2" },
+  });
+  assert.equal(personaManagedAgentUpdate(bound, persona()), null);
+  assert.deepEqual(
+    personaManagedAgentUpdate(bound, persona(), { hermesProfile: null }),
+    {
+      pubkey: bound.pubkey,
+      hermesProfile: null,
+    },
+  );
+  assert.equal(
+    personaManagedAgentUpdate(bound, persona({ id: "other-persona" }), {
+      hermesProfile: "another-profile",
+    }),
+    null,
+  );
+});

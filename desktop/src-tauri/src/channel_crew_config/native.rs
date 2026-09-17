@@ -47,14 +47,14 @@ fn changed_members(old: &str, new: &str) -> Result<Vec<String>, String> {
     Ok(changed.into_iter().collect())
 }
 
-pub(super) struct NativeBackend {
-    pub app: AppHandle,
+pub(super) struct NativeBackend<R: tauri::Runtime = tauri::Wry> {
+    pub app: AppHandle<R>,
     pub captured: CapturedOwnerScope,
     pub(super) dispatch: Mutex<Option<super::guard::DispatchStamp>>,
 }
 
-impl NativeBackend {
-    pub async fn new(app: AppHandle, expected: &OwnerScopeToken) -> Result<Self, String> {
+impl<R: tauri::Runtime> NativeBackend<R> {
+    pub async fn new(app: AppHandle<R>, expected: &OwnerScopeToken) -> Result<Self, String> {
         let captured = capture(app.clone()).await?;
         if &captured.token != expected {
             return Err(crate::app_state::owner_scope::OWNER_SCOPE_STALE.into());
@@ -178,7 +178,7 @@ fn validated_head(events: Vec<Event>, channel: &str) -> Result<Option<Event>, St
     Ok(Some(event))
 }
 
-impl Backend for NativeBackend {
+impl<R: tauri::Runtime> Backend for NativeBackend<R> {
     fn now(&self) -> Result<i64, String> {
         now()
     }

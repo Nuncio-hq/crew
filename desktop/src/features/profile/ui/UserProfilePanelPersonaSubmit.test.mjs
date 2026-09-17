@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateLinkedAgentRuntimeEdit } from "./UserProfilePanelPersonaSubmit.ts";
+import {
+  submitProfilePersonaDialog,
+  validateLinkedAgentRuntimeEdit,
+} from "./UserProfilePanelPersonaSubmit.ts";
 
 function agent(overrides = {}) {
   return {
@@ -35,6 +38,7 @@ function agent(overrides = {}) {
     backendAgentId: null,
     respondTo: "owner-only",
     respondToAllowlist: [],
+    hermesProfile: null,
     ...overrides,
   };
 }
@@ -134,4 +138,40 @@ test("validateLinkedAgentRuntimeEdit allows unchanged or unlinked runtime prefer
     }),
     null,
   );
+});
+
+test("profile-panel definition save forwards an explicit Hermes binding", async () => {
+  const updates = [];
+  let done = false;
+
+  await submitProfilePersonaDialog({
+    createManagedAgentForPersona: async () => {
+      throw new Error("unexpected create");
+    },
+    createPersona: async () => persona(),
+    input: updateInput({ runtime: "hermes" }),
+    managedAgent: agent({ agentCommand: "hermes-acp" }),
+    onDone: () => {
+      done = true;
+    },
+    options: { hermesProfile: "crew353-keep-20260915" },
+    previousPersona: persona({ runtime: "hermes" }),
+    runtimes: [],
+    updateManagedAgent: async (input) => {
+      updates.push(input);
+      return {
+        agent: agent({ hermesProfile: input.hermesProfile }),
+        profileSyncError: null,
+      };
+    },
+    updatePersona: async () => persona({ runtime: "hermes" }),
+  });
+
+  assert.deepEqual(updates, [
+    {
+      pubkey: "deadbeef".repeat(8),
+      hermesProfile: "crew353-keep-20260915",
+    },
+  ]);
+  assert.equal(done, true);
 });
