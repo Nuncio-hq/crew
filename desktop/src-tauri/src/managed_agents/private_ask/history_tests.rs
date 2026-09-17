@@ -198,6 +198,12 @@ fn two_attempts_finishing_together_both_survive() {
     let fixture = canonical_tempdir();
     let ownership = owned_receipt(&fixture);
 
+    // The owned directory is created once, up front. Creating it is not what is
+    // under test, and the surrounding suite mutates process-global path state,
+    // so racing that creation here would make this test flaky about something
+    // else.
+    record(&ownership, entry("seed", 900), 1_000).expect("seed");
+
     // `private_ask_run` is async and a renderer can invoke it twice, so the
     // read-modify-write in `record` really can interleave. Without the lock one
     // of these two entries is silently lost: both threads read the same list
@@ -221,9 +227,8 @@ fn two_attempts_finishing_together_both_survive() {
         .iter()
         .map(|entry| entry.attempt_id.as_str())
         .collect();
-    assert_eq!(
-        ids,
-        ["concurrent-0", "concurrent-1"].into_iter().collect(),
-        "neither attempt is lost to the other's write"
+    assert!(
+        ids.contains("concurrent-0") && ids.contains("concurrent-1"),
+        "neither attempt is lost to the other's write: {ids:?}"
     );
 }
