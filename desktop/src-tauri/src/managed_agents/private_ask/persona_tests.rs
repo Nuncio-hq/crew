@@ -4,6 +4,7 @@
 //! gate. A child of that module, so the shared fixtures stay in one place.
 
 use super::*;
+#[cfg(target_os = "macos")]
 use std::os::unix::fs::PermissionsExt;
 
 /// The selected agent answers in its own voice: its persona reaches the prompt
