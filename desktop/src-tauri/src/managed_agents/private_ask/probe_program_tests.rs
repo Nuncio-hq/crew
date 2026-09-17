@@ -8,7 +8,7 @@ use super::*;
 
 fn marker_line(nonce: &str) -> String {
     format!(
-        "{PROBE_MARKER}{{\"nonce\":\"{nonce}\",\"writeOutsideDenied\":true,\
+        "{PROBE_MARKER}{{\"nonce\":\"{nonce}\",\"parentPid\":4321,\"writeOutsideDenied\":true,\
          \"readOutsideDenied\":true,\"directConnectDenied\":true,\
          \"foreignConnect\":\"refused\",\"providerConnect\":\"accepted\",\
          \"dnsDenied\":true,\"forkDenied\":true}}\n"
@@ -18,6 +18,9 @@ fn marker_line(nonce: &str) -> String {
 #[test]
 fn a_complete_marker_with_this_runs_nonce_parses() {
     let parsed = parse_marker(marker_line("nonce-a").as_bytes(), "nonce-a").expect("marker");
+    // The lineage is read from the child's own report, so it must survive the
+    // parse rather than being filled in by the desktop.
+    assert_eq!(parsed.parent_pid, 4321);
     assert!(parsed.write_outside_denied);
     assert!(parsed.read_outside_denied);
     assert!(parsed.direct_connect_denied);
@@ -100,4 +103,14 @@ fn the_probe_program_runs_under_the_shipped_interpreter() {
     // The design depends on this interpreter being inside the policy's fixed
     // read allow-list. If it moves, the zero-policy-delta argument moves too.
     assert!(std::path::Path::new(PROBE_INTERPRETER).exists());
+}
+
+#[test]
+fn a_marker_with_no_parent_is_not_a_lineage() {
+    // An absent or zero parent cannot answer "who started this child", and a
+    // default would let `independent_invocation` be projected from nothing.
+    let line = marker_line("nonce-a").replace("\"parentPid\":4321,", "");
+    assert_eq!(parse_marker(line.as_bytes(), "nonce-a"), None);
+    let zero = marker_line("nonce-a").replace("\"parentPid\":4321", "\"parentPid\":0");
+    assert_eq!(parse_marker(zero.as_bytes(), "nonce-a"), None);
 }

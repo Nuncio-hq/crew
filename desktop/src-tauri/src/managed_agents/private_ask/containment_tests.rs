@@ -390,7 +390,8 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
         session_isolation: None,
         probe_program_digest: super::probe_program::probe_program_digest(),
     };
-    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("probe projection");
+    let capability = PrivateAskCapability::from_probe(&selected, probe, captured_now())
+        .expect("probe projection");
     assert_eq!(capability.tool_isolation, ProofStatus::Verified);
     assert_eq!(capability.process_containment, ProofStatus::Verified);
     assert_eq!(capability.side_effect_free, ProofStatus::Verified);

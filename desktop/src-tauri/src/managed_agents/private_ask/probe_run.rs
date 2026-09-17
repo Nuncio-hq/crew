@@ -27,6 +27,7 @@ use super::probe_program::{self, ProbeMarker};
 use super::recovery::{
     finish_after_process, finish_before_spawn, leave_process_pending, leave_process_pending_state,
 };
+use super::session_evidence::SessionObservation;
 use super::{PrivateAskFailure, SelectedAgentState};
 use crate::managed_agents::discovery::bounded_command::{
     output_with_policy_and_spawn_hook, BoundedFailure, BoundedPolicy, OutputBudget,
@@ -117,9 +118,14 @@ impl Drop for ControlListener {
 pub(super) struct ProbeContext<'a> {
     pub(super) state: &'a SelectedAgentState,
     pub(super) ownership: &'a VerifiedStagingOwnership,
-    /// Captured around the probe run by the caller, so `independent_invocation`
-    /// is projected from two real observations of a real session.
-    pub(super) session_isolation: Option<SessionIsolationEvidence>,
+    /// The live employee session to bracket, when the selected agent has one.
+    ///
+    /// The bracketing happens HERE rather than in the caller because the
+    /// lineage half of the evidence is the probe child's own reported parent,
+    /// which only this module sees. A caller that supplied finished evidence
+    /// would have to answer that question from its own PID, and a run that had
+    /// been reparented would still look independent.
+    pub(super) session: Option<SessionObservation>,
     pub(super) now: u64,
 }
 
@@ -185,6 +191,14 @@ fn capture_inside(
     let sentinel_before = before_spawn!(digest_file(&sentinel));
     let external_state_before =
         before_spawn!(external_state_digest(staging_base, run_root, &sentinel));
+
+    // Read before anything is spawned: an "after" that has nothing to compare
+    // with is not evidence of an unchanged session.
+    let session_before = before_spawn!(context
+        .session
+        .as_ref()
+        .map(SessionObservation::capture)
+        .transpose());
 
     let control = before_spawn!(ControlListener::start());
 
@@ -346,7 +360,11 @@ fn capture_inside(
         staging_base: staging_base.to_path_buf(),
         external_state_before,
         external_state_after,
-        session_isolation: context.session_isolation.clone(),
+        session_isolation: after_process!(session_isolation(
+            context.session.as_ref(),
+            session_before,
+            marker.parent_pid,
+        )),
         probe_program_digest: probe_program::probe_program_digest(),
     };
 
@@ -357,6 +375,24 @@ fn capture_inside(
     after_process!(run.mark_finished().map_err(PrivateAskFailure::State));
     run.cleanup().map_err(PrivateAskFailure::State)?;
     Ok(probe)
+}
+
+/// Pair the two session readings with the child's own reported lineage.
+///
+/// `None` when no session was named — a selection with no live session leaves
+/// `independent_invocation` unverified, which is what refuses a busy agent.
+/// A session that was readable before and is not now is an error rather than a
+/// missing dimension: it changed under the run.
+fn session_isolation(
+    session: Option<&SessionObservation>,
+    before: Option<super::session_evidence::SessionSnapshot>,
+    child_parent_pid: u32,
+) -> Result<Option<SessionIsolationEvidence>, PrivateAskFailure> {
+    let (Some(session), Some(before)) = (session, before) else {
+        return Ok(None);
+    };
+    let after = session.capture()?;
+    SessionIsolationEvidence::observe(before, after, child_parent_pid, std::process::id()).map(Some)
 }
 
 /// Project the probe's attempts and this process's measurements onto the

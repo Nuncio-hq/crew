@@ -21,6 +21,26 @@ use std::path::Path;
 /// silently stop covering the bytes a run could have changed.
 const SESSION_ARTEFACT_LIMIT: u64 = 8 * 1024 * 1024;
 
+/// Where one live employee session's own state can be read.
+///
+/// The managed-agent layer owns this knowledge — only it knows which session
+/// belongs to the selected agent — so it travels as data rather than being
+/// rediscovered by whoever needs an observation.
+#[derive(Debug, Clone)]
+pub(crate) struct SessionObservation {
+    pub(crate) ledger: std::path::PathBuf,
+    pub(crate) observer_sequence: std::path::PathBuf,
+    /// Taken from the handle that owns the child, never from a PID probe.
+    pub(crate) acp_pid: Option<u32>,
+}
+
+impl SessionObservation {
+    /// Read this session's observable state right now.
+    pub(crate) fn capture(&self) -> Result<SessionSnapshot, PrivateAskFailure> {
+        SessionSnapshot::capture(&self.ledger, &self.observer_sequence, self.acp_pid)
+    }
+}
+
 /// One observation of a running employee session, taken from its own bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionSnapshot {

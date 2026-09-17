@@ -7,6 +7,7 @@ use super::recap_state::RecapStateFailure;
 use std::time::Duration;
 
 mod attempt;
+mod binding;
 mod capability;
 mod citations;
 mod containment;

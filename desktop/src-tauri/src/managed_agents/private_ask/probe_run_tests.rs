@@ -6,7 +6,7 @@
 
 #![cfg(all(unix, target_os = "macos"))]
 
-use super::super::tests::{canonical_tempdir, state};
+use super::super::tests::{canonical_tempdir, captured_now, state};
 use super::super::{PrivateAskCapability, ProofStatus};
 use super::*;
 use crate::managed_agents::recap_ownership::VerifiedStagingOwnership;
@@ -53,7 +53,7 @@ fn the_probe_runs_under_the_policy_text_a_real_answer_would_run_under() {
     let probe = capture_probe(ProbeContext {
         state: &selected,
         ownership: &ownership,
-        session_isolation: None,
+        session: None,
         now: now(),
     })
     .expect("probe");
@@ -81,7 +81,7 @@ fn a_real_probe_observes_a_contained_envelope() {
     let probe = capture_probe(ProbeContext {
         state: &selected,
         ownership: &ownership,
-        session_isolation: None,
+        session: None,
         now: now(),
     })
     .expect("probe");
@@ -120,13 +120,13 @@ fn a_trace_from_a_foreign_probe_program_cannot_certify() {
     let mut probe = capture_probe(ProbeContext {
         state: &selected,
         ownership: &ownership,
-        session_isolation: None,
+        session: None,
         now: now(),
     })
     .expect("probe");
     probe.probe_program_digest = "0".repeat(64);
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap_err(),
         super::super::capability::PrivateAskProbeRejection::ForeignProbeProgram
     );
 }
@@ -145,13 +145,14 @@ fn a_probe_that_observed_an_escape_refuses_certification() {
     let mut probe = capture_probe(ProbeContext {
         state: &selected,
         ownership: &ownership,
-        session_isolation: None,
+        session: None,
         now: now(),
     })
     .expect("probe");
     // One escape: a descendant outlived the bounded owner.
     probe.tool_probe.surviving_descendants = 1;
-    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).expect("projection");
     assert_eq!(capability.process_containment, ProofStatus::Unverified);
 }
 
@@ -168,11 +169,12 @@ fn a_probe_without_session_observations_cannot_verify_independent_invocation() {
     let probe = capture_probe(ProbeContext {
         state: &selected,
         ownership: &ownership,
-        session_isolation: None,
+        session: None,
         now: now(),
     })
     .expect("probe");
-    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
 }
 
@@ -202,7 +204,7 @@ fn authentication_moves_independently_of_containment_in_both_directions() {
         capture_probe(ProbeContext {
             state: &selected,
             ownership: &ownership,
-            session_isolation: None,
+            session: None,
             now: now(),
         })
         .expect("probe")
@@ -211,7 +213,8 @@ fn authentication_moves_independently_of_containment_in_both_directions() {
     super::super::credential::set_test_secret_store_empty(false);
     let available = capture();
     assert!(available.auth.auth_available());
-    let capability = PrivateAskCapability::from_probe(&selected, available).expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&selected, available, captured_now()).expect("projection");
     assert_eq!(capability.authentication, ProofStatus::Verified);
     assert_eq!(capability.process_containment, ProofStatus::Verified);
 
@@ -220,7 +223,8 @@ fn authentication_moves_independently_of_containment_in_both_directions() {
     let absent = capture();
     super::super::credential::set_test_secret_store_empty(false);
     assert!(!absent.auth.auth_available());
-    let capability = PrivateAskCapability::from_probe(&selected, absent).expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&selected, absent, captured_now()).expect("projection");
     assert_eq!(capability.authentication, ProofStatus::Unverified);
     assert_eq!(
         capability.process_containment,

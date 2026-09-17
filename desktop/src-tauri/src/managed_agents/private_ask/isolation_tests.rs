@@ -279,7 +279,8 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
             .expect("session lineage"),
         ),
     };
-    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Verified);
     // The busy-session fence is satisfied by a real observation, so the request
     // no longer fails as `AgentBusy` — and with the proxy's own record carried
@@ -364,9 +365,12 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
         external_state_after: digest_of("checkout"),
         session_isolation: Some(isolation),
     };
-    let capability =
-        PrivateAskCapability::from_probe(&probe_state, build(restarted.clone(), run_root.clone()))
-            .expect("projection");
+    let capability = PrivateAskCapability::from_probe(
+        &probe_state,
+        build(restarted.clone(), run_root.clone()),
+        captured_now(),
+    )
+    .expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
 
     // So is a child adopted by something other than the desktop process.
@@ -380,7 +384,8 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
         std::process::id() + 1,
         std::process::id(),
     );
-    let capability = PrivateAskCapability::from_probe(&probe_state, build(adopted, run_root))
-        .expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&probe_state, build(adopted, run_root), captured_now())
+            .expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
 }

@@ -176,8 +176,9 @@ if ($lock ne '') {
 }
 
 printf(
-    "CREW-PRIVATE-ASK-PROBE-V1 {\"nonce\":\"%s\",\"writeOutsideDenied\":%s,\"readOutsideDenied\":%s,\"directConnectDenied\":%s,\"foreignConnect\":\"%s\",\"providerConnect\":\"%s\",\"dnsDenied\":%s,\"forkDenied\":%s}\n",
+    "CREW-PRIVATE-ASK-PROBE-V1 {\"nonce\":\"%s\",\"parentPid\":%d,\"writeOutsideDenied\":%s,\"readOutsideDenied\":%s,\"directConnectDenied\":%s,\"foreignConnect\":\"%s\",\"providerConnect\":\"%s\",\"dnsDenied\":%s,\"forkDenied\":%s}\n",
     $nonce,
+    getppid(),
     jbool($write_denied),
     jbool($read_denied),
     jbool($direct_denied),
@@ -223,6 +224,11 @@ pub(super) fn write_probe_program(run_root: &Path) -> Result<PathBuf, super::Pri
 /// an effect: effects are measured by the desktop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProbeMarker {
+    /// The child's own view of who started it. Read from the child rather than
+    /// from `std::process::id()` on this side: a run that had been reparented
+    /// onto the employee's harness would still look independent if the desktop
+    /// answered that question for it.
+    pub(super) parent_pid: u32,
     pub(super) write_outside_denied: bool,
     pub(super) read_outside_denied: bool,
     pub(super) direct_connect_denied: bool,
@@ -254,7 +260,14 @@ pub(super) fn parse_marker(stdout: &[u8], expected_nonce: &str) -> Option<ProbeM
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned)
     };
+    let parent_pid = u32::try_from(value.get("parentPid")?.as_u64()?).ok()?;
+    // PID zero is not a parent. Refusing it here keeps an absent lineage out of
+    // the evidence rather than letting it read as a value.
+    if parent_pid == 0 {
+        return None;
+    }
     Some(ProbeMarker {
+        parent_pid,
         write_outside_denied: flag("writeOutsideDenied")?,
         read_outside_denied: flag("readOutsideDenied")?,
         direct_connect_denied: flag("directConnectDenied")?,

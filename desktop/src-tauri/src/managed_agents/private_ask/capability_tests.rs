@@ -114,8 +114,12 @@ fn fixture() -> (tempfile::TempDir, SelectedAgentState, PathBuf) {
 #[test]
 fn a_complete_probe_certifies_every_provable_dimension_but_egress_still_refuses() {
     let (_directory, selected, run_root) = fixture();
-    let capability =
-        PrivateAskCapability::from_probe(&selected, healthy_probe(&selected, run_root)).unwrap();
+    let capability = PrivateAskCapability::from_probe(
+        &selected,
+        healthy_probe(&selected, run_root),
+        captured_now(),
+    )
+    .unwrap();
     assert_eq!(capability.authentication, ProofStatus::Verified);
     assert_eq!(capability.tool_isolation, ProofStatus::Verified);
     assert_eq!(capability.process_containment, ProofStatus::Verified);
@@ -150,7 +154,7 @@ fn a_probe_whose_proxy_record_does_not_bound_egress_is_still_refused() {
         false,
         0,
     );
-    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap();
     assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected.clone(), capability).unwrap_err(),
@@ -169,7 +173,7 @@ fn a_probe_whose_proxy_record_does_not_bound_egress_is_still_refused() {
         false,
         0,
     );
-    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap();
     assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
 }
 
@@ -182,28 +186,28 @@ fn a_stale_nonceless_or_misplaced_trace_is_rejected_structurally() {
     let mut probe = healthy_probe(&selected, run_root.clone());
     probe.captured_at = captured_now() - super::capability::PROBE_MAX_AGE - 1;
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap_err(),
         super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
     );
 
     let mut probe = healthy_probe(&selected, run_root.clone());
     probe.captured_at = captured_now() + 3600;
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap_err(),
         super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
     );
 
     let mut probe = healthy_probe(&selected, run_root.clone());
     probe.run_nonce = String::new();
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap_err(),
         super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
     );
 
     let mut probe = healthy_probe(&selected, run_root);
     probe.staging_base = std::path::PathBuf::from("/elsewhere");
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, probe).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap_err(),
         super::capability::PrivateAskProbeRejection::StaleOrMisplacedProbe
     );
 }
@@ -216,7 +220,7 @@ fn a_probe_that_never_attempted_a_tool_cannot_certify_tool_isolation() {
     let (_directory, selected, run_root) = fixture();
     let mut probe = healthy_probe(&selected, run_root);
     probe.tool_probe.request_observed = false;
-    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap();
     assert_eq!(capability.tool_isolation, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),
@@ -232,7 +236,7 @@ fn a_probe_whose_sentinel_changed_cannot_certify_tool_isolation() {
     let (_directory, selected, run_root) = fixture();
     let mut probe = healthy_probe(&selected, run_root);
     probe.tool_probe.sentinel_after = digest_of("tampered");
-    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap();
     assert_eq!(capability.tool_isolation, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),
@@ -249,12 +253,12 @@ fn observed_egress_or_a_surviving_descendant_cannot_certify_containment() {
 
     let mut egress = healthy_probe(&selected, run_root.clone());
     egress.tool_probe.network_connections_observed = 1;
-    let capability = PrivateAskCapability::from_probe(&selected, egress).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, egress, captured_now()).unwrap();
     assert_eq!(capability.tool_isolation, ProofStatus::Unverified);
 
     let mut escaped = healthy_probe(&selected, run_root);
     escaped.tool_probe.surviving_descendants = 1;
-    let capability = PrivateAskCapability::from_probe(&selected, escaped).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, escaped, captured_now()).unwrap();
     assert_eq!(capability.process_containment, ProofStatus::Unverified);
     assert_eq!(capability.tool_isolation, ProofStatus::Unverified);
     assert_eq!(
@@ -272,7 +276,7 @@ fn a_trace_captured_under_the_weaker_recap_policy_cannot_certify_containment() {
     let (_directory, selected, run_root) = fixture();
     let mut probe = healthy_probe(&selected, run_root);
     probe.containment_profile = "(version 1)(allow default)(deny process-fork)".into();
-    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap();
     assert_eq!(capability.process_containment, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),
@@ -288,7 +292,7 @@ fn changed_external_state_cannot_certify_a_side_effect_free_run() {
     let (_directory, selected, run_root) = fixture();
     let mut probe = healthy_probe(&selected, run_root);
     probe.external_state_after = digest_of("checkout-modified");
-    let capability = PrivateAskCapability::from_probe(&selected, probe).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, probe, captured_now()).unwrap();
     assert_eq!(capability.side_effect_free, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),
@@ -305,12 +309,13 @@ fn recap_evidence_and_a_missing_session_snapshot_do_not_carry_over() {
 
     let mut replayed = healthy_probe(&selected, run_root.clone());
     replayed.tool_probe.probe_id = super::super::recap_capability::RECAP_TOOL_PROBE_ID.to_string();
-    let capability = PrivateAskCapability::from_probe(&selected, replayed).unwrap();
+    let capability = PrivateAskCapability::from_probe(&selected, replayed, captured_now()).unwrap();
     assert_eq!(capability.tool_isolation, ProofStatus::Unverified);
 
     let mut unsnapshotted = healthy_probe(&selected, run_root);
     unsnapshotted.session_isolation = None;
-    let capability = PrivateAskCapability::from_probe(&selected, unsnapshotted).unwrap();
+    let capability =
+        PrivateAskCapability::from_probe(&selected, unsnapshotted, captured_now()).unwrap();
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),
@@ -327,7 +332,7 @@ fn a_probe_for_another_selection_is_rejected_rather_than_projected() {
     let mut other_runtime = healthy_probe(&selected, run_root.clone());
     other_runtime.runtime_id = "hermes".into();
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, other_runtime).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, other_runtime, captured_now()).unwrap_err(),
         PrivateAskProbeRejection::RuntimeMismatch
     );
 
@@ -335,14 +340,14 @@ fn a_probe_for_another_selection_is_rejected_rather_than_projected() {
     other_executable.executable = executable(&directory.path().join("other-runtime"));
     other_executable.executable.platform = selected.executable.platform.clone();
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, other_executable).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, other_executable, captured_now()).unwrap_err(),
         PrivateAskProbeRejection::ExecutableMismatch
     );
 
     let mut other_persona = healthy_probe(&selected, run_root);
     other_persona.persona = "You are a different employee.".into();
     assert_eq!(
-        PrivateAskCapability::from_probe(&selected, other_persona).unwrap_err(),
+        PrivateAskCapability::from_probe(&selected, other_persona, captured_now()).unwrap_err(),
         PrivateAskProbeRejection::SelectionMismatch
     );
 }
@@ -371,7 +376,8 @@ fn a_probe_that_read_outside_its_run_root_cannot_certify_read_isolation() {
     std::fs::create_dir(&run_root).unwrap();
     let mut probe = healthy_probe(&selected, run_root);
     probe.tool_probe.read_outside_requested = false;
-    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).expect("projection");
     assert_eq!(capability.read_bounded, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected.clone(), capability).unwrap_err(),
@@ -383,7 +389,8 @@ fn a_probe_that_read_outside_its_run_root_cannot_certify_read_isolation() {
     std::fs::create_dir(&run_root).unwrap();
     let mut probe = healthy_probe(&selected, run_root);
     probe.tool_probe.read_outside_denied = false;
-    let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
+    let capability =
+        PrivateAskCapability::from_probe(&selected, probe, captured_now()).expect("projection");
     assert_eq!(capability.read_bounded, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),

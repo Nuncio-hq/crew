@@ -4,7 +4,7 @@
 
 use super::super::capability::PROBE_MAX_AGE;
 use super::super::probe_run::{capture_probe, ProbeContext};
-use super::super::tests::{canonical_tempdir, state};
+use super::super::tests::{canonical_tempdir, captured_now, state};
 use super::super::{PrivateAskCapability, ProofStatus, SelectedAgentState};
 use super::*;
 use crate::managed_agents::recap_ownership::VerifiedStagingOwnership;
@@ -45,7 +45,7 @@ fn capture(fixture: &Fixture, captured_at: u64) -> PrivateAskProbe {
     capture_probe(ProbeContext {
         state: &fixture.selected,
         ownership: &fixture.ownership,
-        session_isolation: None,
+        session: None,
         now: captured_at,
     })
     .expect("probe")
@@ -86,8 +86,10 @@ fn a_stored_receipt_is_read_back_as_the_same_evidence() {
     )
     .expect("receipt");
 
-    let from_fresh = PrivateAskCapability::from_probe(&fixture.selected, probe).expect("fresh");
-    let from_receipt = PrivateAskCapability::from_probe(&fixture.selected, loaded).expect("loaded");
+    let from_fresh =
+        PrivateAskCapability::from_probe(&fixture.selected, probe, captured_now()).expect("fresh");
+    let from_receipt = PrivateAskCapability::from_probe(&fixture.selected, loaded, captured_now())
+        .expect("loaded");
     // Every dimension a receipt CAN carry is identical. Independence is the one
     // it deliberately cannot, so it is not compared here.
     assert_eq!(
@@ -123,7 +125,8 @@ fn a_receipt_never_restores_session_isolation() {
         now(),
     )
     .expect("receipt");
-    let capability = PrivateAskCapability::from_probe(&fixture.selected, loaded).expect("loaded");
+    let capability = PrivateAskCapability::from_probe(&fixture.selected, loaded, captured_now())
+        .expect("loaded");
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
 }
 

@@ -166,15 +166,30 @@ pub(crate) enum PrivateAskProbeRejection {
 }
 
 impl PrivateAskCapability {
+    /// Whether this projection can speak to running beside a live session.
+    ///
+    /// Exposed because the binding must decide whether to capture its own probe
+    /// rather than answer under a dimension a retained trace deliberately never
+    /// carries.
+    pub(crate) fn certifies_independent_invocation(&self) -> bool {
+        self.independent_invocation == ProofStatus::Verified
+    }
+
     /// Consume one retained probe and project it onto the selected agent.
     ///
     /// The returned capability is only as strong as the evidence: each
     /// dimension is `Verified` when its own named fields hold and `Unverified`
     /// otherwise. A structural mismatch is an error, because such a trace is
     /// not evidence about this selection in either direction.
+    ///
+    /// `now` is this machine's clock, supplied rather than read here so a test
+    /// can place a trace inside or outside the freshness window without waiting
+    /// a day — and so one attempt judges the receipt it loaded and the trace it
+    /// captured against the same instant.
     pub(crate) fn from_probe(
         state: &SelectedAgentState,
         probe: PrivateAskProbe,
+        now: u64,
     ) -> Result<Self, PrivateAskProbeRejection> {
         if probe.runtime_id != state.runtime_id
             || !matches!(probe.runtime_id.as_str(), "claude" | "hermes")
@@ -212,7 +227,7 @@ impl PrivateAskCapability {
         if !is_hex64(&probe.acl_fingerprint) || !valid_scope_value(&probe.session_generation) {
             return Err(PrivateAskProbeRejection::InvalidState);
         }
-        if !fresh_and_placed(&probe) {
+        if !fresh_and_placed(&probe, now) {
             return Err(PrivateAskProbeRejection::StaleOrMisplacedProbe);
         }
         if probe.probe_program_digest != super::probe_program::probe_program_digest() {
@@ -304,12 +319,10 @@ pub(crate) const PROBE_MAX_AGE: u64 = 24 * 60 * 60;
 /// age, and an ageless trace is exactly the thing being refused. A trace stamped
 /// in the future is refused for the same reason — it is not a reading of this
 /// machine's clock.
-fn fresh_and_placed(probe: &PrivateAskProbe) -> bool {
-    let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
-        return false;
-    };
-    let now = now.as_secs();
-    if probe.captured_at == 0 || probe.captured_at > now || now - probe.captured_at > PROBE_MAX_AGE
+fn fresh_and_placed(probe: &PrivateAskProbe, now: u64) -> bool {
+    if probe.captured_at == 0
+        || probe.captured_at > now
+        || now.saturating_sub(probe.captured_at) > PROBE_MAX_AGE
     {
         return false;
     }
