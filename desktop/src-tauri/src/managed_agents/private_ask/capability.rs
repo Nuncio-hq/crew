@@ -9,6 +9,7 @@
 //! mint a capability the admission fences did not also accept.
 
 use super::prompt::config_fingerprint;
+pub(crate) use super::session_evidence::SessionIsolationEvidence;
 use super::validation::{is_hex64, valid_model, valid_profile, valid_scope_value};
 use super::{PrivateAskCapability, ProofStatus, SelectedAgentState};
 use crate::managed_agents::recap_capability::{same_executable_proof, RecapExecutableIdentity};
@@ -52,26 +53,6 @@ pub(crate) struct PrivateAskAuthEvidence {
     pub(crate) service: String,
     pub(crate) reference: String,
     pub(crate) auth_available: bool,
-}
-
-/// Before/after snapshot of the employee's own running session, captured
-/// around a private Ask that ran while that session was busy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SessionIsolationEvidence {
-    /// Digest of the harness session ledger before and after the private run.
-    pub(crate) ledger_digest_before: String,
-    pub(crate) ledger_digest_after: String,
-    /// Observer event sequence for the employee session, before and after.
-    pub(crate) observer_sequence_before: u64,
-    pub(crate) observer_sequence_after: u64,
-    /// PID of the running harness process, before and after.
-    pub(crate) acp_pid_before: Option<u32>,
-    pub(crate) acp_pid_after: Option<u32>,
-    /// Parent of the private Ask child. It must be the desktop process: a child
-    /// reparented onto the employee's harness would not be an independent
-    /// invocation.
-    pub(crate) child_parent_pid: u32,
-    pub(crate) desktop_pid: u32,
 }
 
 /// One complete retained probe for a private Ask capability decision.
@@ -176,7 +157,7 @@ impl PrivateAskCapability {
         let independent_verified = probe
             .session_isolation
             .as_ref()
-            .is_some_and(verified_session_isolation);
+            .is_some_and(SessionIsolationEvidence::is_verified);
 
         Ok(Self {
             runtime_id: probe.runtime_id,
@@ -219,16 +200,6 @@ fn valid_tool_probe_evidence(evidence: &PrivateAskToolProbe) -> bool {
         && is_sha256(&evidence.sentinel_before)
         && evidence.sentinel_before == evidence.sentinel_after
         && evidence.network_connections_observed == 0
-}
-
-fn verified_session_isolation(isolation: &SessionIsolationEvidence) -> bool {
-    is_sha256(&isolation.ledger_digest_before)
-        && isolation.ledger_digest_before == isolation.ledger_digest_after
-        && isolation.observer_sequence_before == isolation.observer_sequence_after
-        && isolation.acp_pid_before.is_some()
-        && isolation.acp_pid_before == isolation.acp_pid_after
-        && isolation.desktop_pid != 0
-        && isolation.child_parent_pid == isolation.desktop_pid
 }
 
 fn valid_bounded_label(value: &str) -> bool {

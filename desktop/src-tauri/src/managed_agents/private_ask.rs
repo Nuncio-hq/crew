@@ -19,6 +19,7 @@ mod launch;
 mod profile;
 mod prompt;
 mod recovery;
+mod session_evidence;
 mod validation;
 use launch::PrivateAskLaunchPlan;
 use prompt::{build_prompt, config_fingerprint};
@@ -388,6 +389,9 @@ pub(crate) enum PrivateAskFailure {
     ProcessContainmentUnverified,
     SideEffectProofUnverified,
     IndependentInvocationUnverified,
+    /// A running session's own state could not be read, so nothing can be
+    /// claimed about whether a private Ask left it alone.
+    SessionObservationUnavailable,
     InvalidState,
     ProfileUnavailable,
     Process(BoundedFailure),
@@ -414,6 +418,9 @@ impl std::fmt::Display for PrivateAskFailure {
             Self::MissingProfile => f.write_str("selected runtime profile is unavailable"),
             Self::AuthenticationUnverified => f.write_str("runtime authentication is unverified"),
             Self::ToolIsolationUnverified => f.write_str("runtime tool isolation is unverified"),
+            Self::SessionObservationUnavailable => {
+                f.write_str("the selected agent's running session could not be observed")
+            }
             Self::ProcessContainmentUnverified => {
                 f.write_str("runtime process containment is unverified")
             }
@@ -738,3 +745,7 @@ mod fail_closed_tests;
 #[cfg(test)]
 #[path = "private_ask/isolation_tests.rs"]
 mod isolation_tests;
+
+#[cfg(test)]
+#[path = "private_ask/privacy_tests.rs"]
+mod privacy_tests;

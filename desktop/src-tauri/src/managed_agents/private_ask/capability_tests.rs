@@ -47,16 +47,16 @@ fn healthy_probe(state: &SelectedAgentState, run_root: PathBuf) -> PrivateAskPro
         probe_run_root: run_root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
-        session_isolation: Some(SessionIsolationEvidence {
-            ledger_digest_before: digest_of("ledger"),
-            ledger_digest_after: digest_of("ledger"),
-            observer_sequence_before: 42,
-            observer_sequence_after: 42,
-            acp_pid_before: Some(4321),
-            acp_pid_after: Some(4321),
-            child_parent_pid: 99,
-            desktop_pid: 99,
-        }),
+        session_isolation: Some(SessionIsolationEvidence::from_parts(
+            digest_of("ledger"),
+            digest_of("ledger"),
+            42,
+            42,
+            Some(4321),
+            Some(4321),
+            99,
+            99,
+        )),
     }
 }
 

@@ -12,6 +12,7 @@ use super::capability::{
     PrivateAskAuthEvidence, PrivateAskProbe, PrivateAskToolProbe, SessionIsolationEvidence,
     PRIVATE_ASK_TOOL_PROBE_ID,
 };
+use super::session_evidence::SessionSnapshot;
 use super::tests::{canonical_tempdir, executable, owned_receipt, request, state, FIXTURE_PERSONA};
 use super::*;
 use sha2::{Digest, Sha256};
@@ -136,6 +137,12 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     let ledger_before = session.ledger_digest();
     let observer_before = session.observer_sequence();
     let acp_pid_before = session.pid();
+    let snapshot_before = SessionSnapshot::capture(
+        &session.ledger,
+        &session.observer_sequence,
+        Some(acp_pid_before),
+    )
+    .expect("observe the busy session before the Ask");
 
     let runtime = reporting_runtime(directory.path(), &session.ledger);
     let mut selected = state(&runtime, "claude", "claude-fable-5-1", None);
@@ -212,16 +219,24 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
         probe_run_root: run_root,
         external_state_before: digest_of("checkout"),
         external_state_after: digest_of("checkout"),
-        session_isolation: Some(SessionIsolationEvidence {
-            ledger_digest_before: ledger_before,
-            ledger_digest_after: session.ledger_digest(),
-            observer_sequence_before: observer_before,
-            observer_sequence_after: session.observer_sequence(),
-            acp_pid_before: Some(acp_pid_before),
-            acp_pid_after: Some(session.pid()),
-            child_parent_pid: std::process::id(),
-            desktop_pid: std::process::id(),
-        }),
+        // Minted by the production producer from the session's own bytes, not
+        // assembled here: `SessionIsolationEvidence`'s fields are private to
+        // `session_evidence`, so this test cannot describe a session it did
+        // not actually observe.
+        session_isolation: Some(
+            SessionIsolationEvidence::observe(
+                snapshot_before,
+                SessionSnapshot::capture(
+                    &session.ledger,
+                    &session.observer_sequence,
+                    Some(session.pid()),
+                )
+                .expect("observe the busy session after the Ask"),
+                std::process::id(),
+                std::process::id(),
+            )
+            .expect("session lineage"),
+        ),
     };
     let capability = PrivateAskCapability::from_probe(&selected, probe).expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Verified);
@@ -245,16 +260,16 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
     );
 
     // A session snapshot whose PID moved is not an independent invocation.
-    let mut restarted = SessionIsolationEvidence {
-        ledger_digest_before: digest_of("ledger"),
-        ledger_digest_after: digest_of("ledger"),
-        observer_sequence_before: 1,
-        observer_sequence_after: 1,
-        acp_pid_before: Some(11),
-        acp_pid_after: Some(12),
-        child_parent_pid: std::process::id(),
-        desktop_pid: std::process::id(),
-    };
+    let restarted = SessionIsolationEvidence::from_parts(
+        digest_of("ledger"),
+        digest_of("ledger"),
+        1,
+        1,
+        Some(11),
+        Some(12),
+        std::process::id(),
+        std::process::id(),
+    );
     let run_root = directory.path().join("probe-root");
     std::fs::create_dir(&run_root).unwrap();
     let probe_state = state(&path, "claude", "claude-fable-5-1", None);
@@ -294,9 +309,17 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
 
     // So is a child adopted by something other than the desktop process.
-    restarted.acp_pid_after = restarted.acp_pid_before;
-    restarted.child_parent_pid = std::process::id() + 1;
-    let capability = PrivateAskCapability::from_probe(&probe_state, build(restarted, run_root))
+    let adopted = SessionIsolationEvidence::from_parts(
+        digest_of("ledger"),
+        digest_of("ledger"),
+        1,
+        1,
+        Some(11),
+        Some(11),
+        std::process::id() + 1,
+        std::process::id(),
+    );
+    let capability = PrivateAskCapability::from_probe(&probe_state, build(adopted, run_root))
         .expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
 }
