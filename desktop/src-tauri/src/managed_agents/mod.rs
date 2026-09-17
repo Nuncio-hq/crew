@@ -49,6 +49,8 @@ pub(crate) mod readiness;
 // completed bounded probe, native grant projection, and matching scoped
 // retention row.
 #[allow(dead_code)]
+pub(crate) mod private_ask;
+#[allow(dead_code)]
 pub(crate) mod recap_adapter;
 #[allow(dead_code)]
 pub(crate) mod recap_capability;
