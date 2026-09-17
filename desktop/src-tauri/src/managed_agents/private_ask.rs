@@ -735,3 +735,7 @@ mod containment_tests;
 #[cfg(test)]
 #[path = "private_ask/capability_tests.rs"]
 mod capability_tests;
+
+#[cfg(test)]
+#[path = "private_ask/isolation_tests.rs"]
+mod isolation_tests;
