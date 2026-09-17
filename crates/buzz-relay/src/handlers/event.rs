@@ -3747,7 +3747,13 @@ mod tests {
                     // on it; an epoch-0 stamp lands in the open `past`
                     // partition, so this insert needs no partition to be added.
                     .bind(0_f64)
-                    .bind(9_i32)
+                    // Deliberately NOT kind 9: `contact_guard_original_v1`
+                    // refuses an ordinary hard delete of a kind-9 original, and
+                    // this row has to be removable by this test before the
+                    // shared fixture drops the community it references. The
+                    // detector only needs a stored row whose content the query
+                    // can match, so the kind is free.
+                    .bind(1_i32)
                     .bind(serde_json::json!([]))
                     .bind(format!("answer mentioning {DETECTOR_CANARY}"))
                     .bind(vec![0u8; 64])
@@ -3797,6 +3803,20 @@ mod tests {
                     backfilled, 0,
                     "a backfill must not surface a private Ask either"
                 );
+
+                // This test owns the only stored row in its community, so it
+                // removes that row itself: the shared fixture deletes the
+                // community, and the events foreign key would otherwise make
+                // this test's teardown fail inside every other test that
+                // shares the fixture.
+                crate::test_support::bounded(
+                    "delete detector canary event",
+                    sqlx::query("DELETE FROM events WHERE community_id = $1")
+                        .bind(community_uuid)
+                        .execute(&body_pool),
+                )
+                .await
+                .expect("delete detector canary event");
 
                 drop(state);
                 audit_shutdown

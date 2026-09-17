@@ -47,75 +47,12 @@ async fn cleanup_community(pool: &sqlx::PgPool, community_id: Uuid) -> Result<()
             .execute(pool)
             .await
             .map_err(|error| format!("delete relay membership rows: {error}"))?;
-        // Events reference the community, so they must go before it. This
-        // belongs in the shared fixture rather than in each test: the foreign
-        // key makes it mandatory for *any* test that stores an event, and a
-        // fixture that leaves it to the caller turns a normal assertion into a
-        // teardown panic that names the wrong thing. The delete spans every
-        // partition of `events`, which is partitioned on `created_at`.
-        //
-        // Kind-9 originals are guarded: `contact_guard_original_v1` refuses an
-        // ordinary hard delete and only yields to the community's own fenced
-        // deletion path. The guard is NOT disabled or worked around — the
-        // fixture takes that sanctioned path, which is also what a real
-        // community deletion does: fence the community, then delete inside the
-        // same transaction that carries the executor and fence generation.
-        // Deleting only the unguarded kinds would leave the guarded rows behind
-        // and the community row could then never be removed at all.
-        let mut connection = pool
-            .acquire()
-            .await
-            .map_err(|error| format!("acquire cleanup connection: {error}"))?;
-        sqlx::query("BEGIN")
-            .execute(&mut *connection)
-            .await
-            .map_err(|error| format!("begin cleanup transaction: {error}"))?;
-        // Transaction-local (`true`), so the authorization cannot outlive this
-        // teardown and leak onto another test sharing the pool.
-        sqlx::query(
-            "SELECT set_config('buzz.deletion_executor_community', $1, true), \
-                    set_config('buzz.deletion_fence_generation', '1', true)",
-        )
-        .bind(community_id.to_string())
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| format!("authorize community teardown: {error}"))?;
-        sqlx::query(
-            "UPDATE communities SET deletion_state = 'fenced', \
-                    deletion_fence_generation = 1, archived_at = now() WHERE id = $1",
-        )
-        .bind(community_id)
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| format!("fence community for teardown: {error}"))?;
-        let deleted = sqlx::query("DELETE FROM events WHERE community_id = $1")
+        sqlx::query("DELETE FROM communities WHERE id = $1")
             .bind(community_id)
-            .execute(&mut *connection)
+            .execute(pool)
             .await
-            .map_err(|error| format!("delete community event rows: {error}"));
-        let deleted = match deleted {
-            Ok(_) => sqlx::query("DELETE FROM communities WHERE id = $1")
-                .bind(community_id)
-                .execute(&mut *connection)
-                .await
-                .map(|_| ())
-                .map_err(|error| format!("delete community row: {error}")),
-            Err(error) => Err(error),
-        };
-        // A failed teardown must not leave a half-deleted community behind for
-        // the next test to trip over, and the error is reported rather than
-        // swallowed.
-        let statement = if deleted.is_ok() {
-            "COMMIT"
-        } else {
-            "ROLLBACK"
-        };
-        let closed = sqlx::query(statement)
-            .execute(&mut *connection)
-            .await
-            .map(|_| ())
-            .map_err(|error| format!("close cleanup transaction: {error}"));
-        deleted.and(closed)
+            .map_err(|error| format!("delete community row: {error}"))?;
+        Ok(())
     })
     .await
     .map_err(|_| format!("cleanup exceeded {DEPENDENCY_TIMEOUT:?}"))?
