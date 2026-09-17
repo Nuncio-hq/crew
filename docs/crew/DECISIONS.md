@@ -2510,6 +2510,20 @@ parentage is true by construction rather than observed, unlike the probe path
 where the child reports its own `getppid`. What is genuinely observed on this
 path is the session's own bytes and owning PID either side of the run.
 
+SECOND NAMED LIMIT, and the one a reader must not miss: **the bracket assumes
+the session is quiescent for the duration of the Ask.** `buzz-acp` rewrites its
+ledger entry on every completed turn (`record_session_turn` bumps the turn count
+and `last_used_at`), and the digest cannot distinguish "the Ask touched the
+ledger" from "the employee finished a turn of its own". So an agent that
+completes a turn while the Ask runs is refused as
+`IndependentInvocationUnverified` *after* the model call, where the old rule
+refused it cheaply and up front. That is the fail-closed direction and it is the
+deliberate trade: the common case — an idle-between-turns employee — stops
+paying for a probe run on every Ask, and the case that now costs an answer is
+the one where the evidence genuinely cannot be given. A later revision should
+narrow the digest to the parts of an entry a private Ask could plausibly
+disturb.
+
 **A capability is minted from one real contained run.** The probe launches under
 byte-identical policy text to a production answer, with the proxy serving, and
 every dimension is measured from the desktop's side: a sentinel file it owns and
@@ -2641,6 +2655,10 @@ attempt through the production launch path must move that count by zero.
   encrypted ClientHello chooses its own outer name and this check sees that one.
   No runtime a private Ask runs does so today, and the only alternative is
   terminating TLS, which this boundary deliberately does not do.
+- The proxy's concurrency cap is applied at accept, so a runtime that opens more
+  than four simultaneous connections (API plus telemetry, say) has the extra
+  ones closed silently rather than answered with 429. Installed acceptance is
+  what would surface that against a real runtime.
 - The probe's IPv6 leg is only evidence on a machine that has IPv6: without it
   there is no second control listener to reach, and the leg reports denied
   because there was nothing there. The IPv4 control remains the load-bearing

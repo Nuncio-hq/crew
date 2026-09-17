@@ -194,6 +194,10 @@ fn history_path(ownership: &VerifiedStagingOwnership) -> Result<PathBuf, Private
 /// Ask must not be blocked by a log, and a partial parse must never be
 /// presented as the complete record.
 ///
+/// Reading never renames anything. Quarantining belongs to [`record`], which
+/// holds the write lock: a viewer opening the history pane at the moment an
+/// attempt finishes would otherwise rename the freshly written file aside.
+///
 /// Entries past [`HISTORY_MAX_AGE`] are dropped on read as well as on write, so
 /// a machine that has not asked anything in months does not surface a stale
 /// window the next time it is opened.
@@ -201,25 +205,40 @@ pub(crate) fn load(ownership: &VerifiedStagingOwnership, now: u64) -> Vec<Privat
     let Ok(path) = history_path(ownership) else {
         return Vec::new();
     };
-    let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-        return Vec::new();
+    match read_document(&path) {
+        Ok(entries) => retained(entries, now),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// A history file this reader cannot turn into a record.
+///
+/// Distinguished from "absent" because only one of the two is worth keeping:
+/// there is nothing to preserve about a file that is not there.
+struct UnusableHistory;
+
+/// Parse the history file, or say which kind of nothing it was.
+///
+/// `Ok(vec![])` for no file at all. `Err(UnusableHistory)` for bytes that exist
+/// and cannot be read as a history: oversized, unparseable, another schema, or
+/// a symlink standing in for the file.
+fn read_document(path: &Path) -> Result<Vec<PrivateAskHistoryEntry>, UnusableHistory> {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return Ok(Vec::new());
     };
     if !metadata.is_file() || metadata.len() > HISTORY_LIMIT_BYTES {
-        quarantine(&path);
-        return Vec::new();
+        return Err(UnusableHistory);
     }
-    let Ok(bytes) = std::fs::read(&path) else {
-        return Vec::new();
+    let Ok(bytes) = std::fs::read(path) else {
+        return Err(UnusableHistory);
     };
     let Ok(document) = serde_json::from_slice::<HistoryDocument>(&bytes) else {
-        quarantine(&path);
-        return Vec::new();
+        return Err(UnusableHistory);
     };
     if document.schema != HISTORY_SCHEMA || document.version != HISTORY_VERSION {
-        quarantine(&path);
-        return Vec::new();
+        return Err(UnusableHistory);
     }
-    retained(document.entries, now)
+    Ok(document.entries)
 }
 
 /// Record one finished attempt and return the pruned history.
@@ -237,7 +256,16 @@ pub(crate) fn record(
     let _guard = RECORD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut entries = load(ownership, now);
+    // Under the lock, and immediately before the write that would otherwise
+    // replace it: a file this reader cannot use is moved aside rather than
+    // overwritten, because it is the only copy of what this viewer asked.
+    let mut entries = match read_document(&path) {
+        Ok(entries) => retained(entries, now),
+        Err(UnusableHistory) => {
+            quarantine(&path);
+            Vec::new()
+        }
+    };
     // An attempt id is unique per run, but a retry that reused one must replace
     // rather than duplicate: two rows with one id is a history that cannot be
     // read back.

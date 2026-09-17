@@ -304,9 +304,15 @@ fn a_long_multibyte_question_is_shortened_at_a_character_boundary() {
 
 /// An unreadable history is moved aside rather than silently replaced.
 ///
-/// Production line: the `quarantine(&path)` calls in `load`. Without them the
+/// Production line: the `quarantine(&path)` call in `record`. Without it the
 /// only copy of what this viewer asked is overwritten by the next attempt, and
 /// nothing on the machine says it ever existed.
+///
+/// It lives in `record`, under the write lock, and deliberately NOT in `load`:
+/// a viewer opening the history pane while an attempt finishes would otherwise
+/// rename the freshly written file aside. So the assertion below is that a
+/// read leaves the damaged bytes exactly where they are, and the next write is
+/// what preserves them.
 #[test]
 fn an_unusable_history_is_kept_under_a_name_that_says_so() {
     let fixture = canonical_tempdir();
@@ -315,8 +321,16 @@ fn an_unusable_history_is_kept_under_a_name_that_says_so() {
     let path = history_file(&ownership);
     std::fs::write(&path, b"not json at all").expect("damage the history");
 
+    // A read presents nothing and changes nothing.
     assert!(load(&owned_receipt(&fixture), 1_100).is_empty());
+    assert_eq!(
+        std::fs::read(&path).expect("damaged bytes"),
+        b"not json at all",
+        "reading must not rename the file out from under a concurrent write"
+    );
 
+    // The next attempt is what moves it aside, then writes a fresh history.
+    record(&ownership, entry("second", 1_200), 1_200).expect("record after quarantine");
     let quarantined = path
         .parent()
         .expect("history directory")
@@ -326,14 +340,10 @@ fn an_unusable_history_is_kept_under_a_name_that_says_so() {
         b"not json at all",
         "the bytes that could not be read must still be on disk"
     );
-    assert!(
-        !path.exists(),
-        "the unusable file must not stay in place to be read again every time"
-    );
-
-    // The next attempt writes a fresh history beside the quarantine.
-    record(&ownership, entry("second", 1_200), 1_200).expect("record after quarantine");
     let entries = load(&owned_receipt(&fixture), 1_300);
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].attempt_id, "second");
+    assert_eq!(
+        entries[0].attempt_id, "second",
+        "the fresh history must not be the file that was renamed away"
+    );
 }

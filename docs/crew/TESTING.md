@@ -1400,6 +1400,9 @@ must capture:
   secrets redacted; the exact Seatbelt policy text, including the
   `(allow network-outbound (remote ip "localhost:<port>"))` line and the absence
   of any mDNSResponder allowance.
+- Confirmation that no connection was dropped at the proxy's accept-time
+  concurrency cap during a real answer — a runtime opening more than four
+  simultaneous connections gets the extra ones closed silently.
 - The proxy's observation for the run: the port it bound, every accepted target
   (all of which must equal the configured provider host), every refused target
   with its reason, and the dial-failure count.
@@ -1419,6 +1422,11 @@ must capture:
   harness PID, before and after the Ask — these are what the desktop itself
   brackets the answering run with, so the runbook reading must agree with the
   Ask's own verdict.
+- An Ask issued while the employee is **mid-turn**, to see the deliberate
+  consequence of bracketing the answer: `buzz-acp` rewrites its ledger entry on
+  every completed turn, so a turn that lands during the Ask refuses it as
+  `runtime invocation independence is unverified` after the model call. Record
+  the ledger digest either side so the refusal is attributable.
 - A **second** Ask on the same selection, to confirm it answers without a new
   probe child: the receipt's `captured_at` must not move, and no
   `sandbox-exec`/`perl` probe process should appear.
