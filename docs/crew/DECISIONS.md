@@ -2342,3 +2342,59 @@ name their session and turn, and they must differ. A receipt that cannot be
 placed against a run keeps the `stopped` reading, because presenting cancelled
 work as reviewable is the worse error. The conversation outcome ledger's own
 precedence is unchanged — this decision governs presentation only.
+
+## D-083 — A private Wiki Ask runs as a local one-shot, never as a relay event
+
+- **Status:** Accepted, not user-enabled
+- **Date:** 2026-09-17
+- **Issue:** #365
+
+A viewer asking a named employee a question about a repository must be able to
+ask it privately. Crew answers by invoking the selected agent's own runtime CLI
+directly from the desktop as a bounded one-shot: `env_clear()`, an isolated
+`HOME`/`CLAUDE_CONFIG_DIR`/`HERMES_HOME`, a disposable run root as working
+directory, and a Seatbelt policy wrapped around the launch. No Nostr event of
+any kind is published, no session ledger entry is written, no worktree lease is
+taken and no channel subscription is created. The child holds no Nostr key.
+
+**Rejected alternative: a second `buzz-acp` process.** It would reuse the
+existing agent kernel, but an ACP session reaches the agent over the relay, so
+the viewer's private question would be published as a relay event and visible
+to the relay operator and to anyone the event's scope admits. That defeats the
+only requirement the feature exists to meet. The one-shot lineage (#351 recap →
+`managed_agents/wiki_runtime.rs`) already establishes that a bounded, disposable
+native invocation is an acceptable Crew seam.
+
+The privacy claim is enforced, not asserted: relay-bound egress is counted at
+the guard every publish boundary in the desktop already calls, and a complete
+attempt through the production launch path must move that count by zero.
+
+**Named limits.** These are the reasons the feature is not user-enabled.
+
+- The model provider sees the prompt. This is inherent to route 2 — the question
+  and the grounded source excerpts travel to the provider's API. Route 2 removes
+  the *relay operator* from the trust set, not the provider.
+- Network egress is not yet bounded to that provider. Seatbelt cannot resolve
+  hostnames, so the policy allows any host on port 443, and the hostile-runtime
+  probe only ever measured connections against a loopback listener the policy
+  already refuses — a measurement of the closed path, not the open one. The
+  capability therefore carries an `egress_bounded` dimension that no producer
+  can currently satisfy, so every request is refused. Closing it requires the
+  child's only route out to be a desktop-owned proxy that dials nothing but the
+  configured provider.
+- Because no provider credential can reach the child while egress is unbounded,
+  authentication staging for a real `claude` run is blocked behind that proxy.
+- The read set a real `claude` or `hermes` needs is not established. Reads are
+  denied outside the run root, the runtime executable's own directory and the
+  system paths a process needs to start; that allow-list was verified against a
+  perl fixture, not against an installed runtime. Installed acceptance must
+  confirm it.
+- Session-isolation evidence certifies only a session that was idle across the
+  window: it requires the employee's ledger digest to be unchanged, whereas a
+  genuinely busy `buzz-acp` advances its own ledger. The criterion is therefore
+  fail-closed — it refuses a busy session rather than passing one — and a
+  later revision should restate it as "no Ask-attributable entry appears".
+
+Every dimension above fails closed: an unverified property refuses the request
+and names its own reason. Discovery is not certification, and a flag is not a
+denial.

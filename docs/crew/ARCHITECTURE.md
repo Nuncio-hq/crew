@@ -895,3 +895,45 @@ strict MCP config, and an empty tool list; Codex retains read-only sandboxing
 and explicit shell feature disables. These flags are launch controls, not proof
 of Codex snapshot-only or complete tool isolation; installed generation and
 credential renewal remain acceptance requirements.
+
+## Private Wiki Ask lineage (#365)
+
+A private Ask is the third member of the desktop's native one-shot family, after
+the #351 installed-runtime recap and the #363 installed Wiki runtime. It shares
+their shape — discover an installed runtime, certify it against a retained
+probe, then run it once in a disposable root under a Seatbelt policy — and adds
+the fences a viewer's private question needs.
+
+`desktop/src-tauri/src/managed_agents/private_ask.rs` owns the adapter; its
+submodules split the responsibilities:
+
+| Module | Responsibility |
+|--------|----------------|
+| `launch.rs` | The fixed native plan: argv, isolated environment, run root, policy wrapper |
+| `prompt.rs` | Persona as delimited authority, question and grounding as data, config fingerprint |
+| `containment.rs` | The Seatbelt policy text for one run root and one runtime directory |
+| `capability.rs` | The only production producer of a positive capability, from a retained probe |
+| `session_evidence.rs` | Observation of a running employee session; the only way to obtain isolation evidence |
+| `profile.rs`, `recovery.rs`, `validation.rs` | Hermes profile staging, crash recovery, input fences |
+
+The lineage difference that matters is the transport: a recap and a Wiki
+generation publish their result, and a private Ask publishes nothing. There is
+no event kind, no command that writes to the relay, and no store that mirrors
+the question or the answer outward. The question, the answer and the owner-local
+history stay on the viewer's machine, following the `OwnedRecapRun` and
+retention pattern.
+
+That absence is enforced rather than documented. Every relay-bound egress
+boundary in the desktop calls the key-backup guard in `egress_guard.rs` — the
+`EVENTS_INVENTORY` scan fails the build if a new one does not — so the guard is
+a complete census of relay traffic from the desktop's own identity. The private
+Ask proof brackets a whole attempt through the production launch path and
+requires that census to move by zero.
+
+Certification is separate from discovery. `PrivateAskCapability` carries one
+`ProofStatus` per property — authentication, tool isolation, read bound, egress
+bound, process containment, side-effect freedom, independent invocation — and
+`admit_private_ask` refuses on the first that is not `Verified`, naming it. A
+discovered runtime is always unverified. The egress bound has no satisfying
+producer today, so the feature is refused end to end; see D-083 for why, and for
+the other named limits.

@@ -1223,3 +1223,78 @@ claims. `buzz-acp`'s registered strict transport tests cover capability-gated
 wire selection, exact request/turn echo validation, terminal outcomes, and the
 no-fallback path. Run the focused native filters before the full CI gate; these
 production-bound tests do not replace installed Activity acceptance.
+
+## Private Wiki Ask contract (#365)
+
+The private Ask is refused end to end today (D-083). Its tests exist to keep
+each refusal honest and each proof falsifiable, so they assert the *reason* a
+request is refused, not merely that it was.
+
+### Targets
+
+```bash
+# Narrow: the whole adapter, including the macOS real-process proofs.
+cargo test --manifest-path desktop/src-tauri/Cargo.toml -p buzz-desktop private_ask
+
+# The repository recipe, which also re-runs the relay-side wiki contract.
+just private-ask-contract
+```
+
+`private_ask/containment_tests.rs` and `private_ask/isolation_tests.rs` are
+`#![cfg(all(unix, target_os = "macos"))]`: they spawn real processes under
+`sandbox-exec`, so they run on the macOS CI lane only. `fail_closed_tests.rs`
+carries the assertion every platform must still make — a run root that cannot be
+confined, and a platform without this boundary at all, refuse a profile rather
+than returning "no profile needed" — so a Linux lane still proves the adapter
+fails closed.
+
+### What each proof binds to
+
+| Proof | Binds to | Falsified by |
+|-------|----------|--------------|
+| `privacy_tests.rs` | The relay egress census in `egress_guard.rs` | Routing any part of an Ask through a publish boundary; deleting the counter |
+| `containment_tests.rs` | `PrivateAskLaunchPlan::command`'s `sandbox-exec` wrapper and the policy's allow-lists | Removing the wrapper; widening `file-read*`; the control run proves the fixture is genuinely hostile |
+| `session_evidence_tests.rs` | `SessionSnapshot::capture` reading the session's own bytes | Accepting an unreadable artefact as an empty digest |
+| `capability_tests.rs` | `PrivateAskCapability::from_probe` | Certifying a dimension whose named evidence does not hold |
+
+The containment tests are paired: an uncontained control run must reach every
+effect — write outside the run root, read a file outside it, open a socket, fork
+a `setsid` descendant — before the contained run's denials mean anything. A
+proof whose fixture cannot misbehave proves nothing.
+
+Keep the read-isolation bait out of the runtime executable's directory. The
+policy allows that directory so the binary can load itself, so a secret parked
+there is legitimately readable and the proof would pass by accident.
+
+### Staging evidence list
+
+The macOS CI lane cannot establish that a *real* runtime behaves. An installed
+acceptance run on the Hermes profile `crew-hpc-acceptance`, with two identities,
+must capture:
+
+- Runtime binary path, version, effective model and profile; the argv with
+  secrets redacted; the exact Seatbelt policy text.
+- Sentinel digests before and after, and the descendant PID table.
+- Identity B's REQ/EOSE transcripts across the whole Ask, plus the backfill, and
+  the SQL canary count.
+- The employee session's ledger digest, observer sequence and harness PID,
+  before and after.
+- Base and head SHAs.
+
+### Two-identity relay canary
+
+`crates/buzz-relay` holds the relay-side half: identity B keeps a wide live REQ
+open across identity A's Ask, then backfills with `since`, and the events table
+is queried for the canary. The test is built so that "nothing arrived" cannot
+pass vacuously — a control event B *must* receive proves the subscription is
+live and wide, and a positive-control canary that the SQL query *must* find
+proves the detector works.
+
+It needs the isolated PostgreSQL lane:
+
+```bash
+just test          # or: ./scripts/run-tests.sh integration
+```
+
+That lane requires the `docker compose` services (Postgres and Redis) to be
+running; without them it cannot run at all and must not be reported as passing.
