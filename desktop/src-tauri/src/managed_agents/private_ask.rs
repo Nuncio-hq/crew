@@ -939,6 +939,10 @@ mod isolation_tests;
 #[path = "private_ask/privacy_tests.rs"]
 mod privacy_tests;
 
+#[cfg(test)]
+#[path = "private_ask/prompt_model_tests.rs"]
+mod prompt_model_tests;
+
 /// Confirm the certified executable is still the file that will be run.
 ///
 /// The two refusals are kept apart because they mean different things to the
