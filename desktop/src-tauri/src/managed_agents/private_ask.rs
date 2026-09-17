@@ -15,6 +15,7 @@ use std::time::Duration;
 
 mod capability;
 mod containment;
+pub(crate) mod dev_gate;
 mod launch;
 mod profile;
 mod prompt;
