@@ -90,24 +90,31 @@ fn cleanup_restores_manifest_after_partial_recursive_remove() {
     let expected = run.manifest.clone();
     let owner_path = path.join(MANIFEST);
     let owner_inode = std::fs::metadata(&owner_path).unwrap().ino();
-    let payload = path.join("z-payload");
+    let payload = path.join("payload");
     std::fs::create_dir(&payload).unwrap();
-    std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::write(payload.join("file"), b"payload").unwrap();
-    std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o500)).unwrap();
 
-    assert_eq!(run.cleanup(), Err(RecapStateFailure::Io));
+    // The partial removal is injected rather than provoked with a read-only
+    // directory. `remove_dir_all` walks a directory in readdir order, which is
+    // lexical enough on APFS to make an unremovable `z-`prefixed child fail
+    // *after* the manifest, but arbitrary on the hashed directories Linux CI
+    // runs on — there the walk could fail before the manifest was touched and
+    // the run would never exercise the restore path at all. The remover here
+    // reproduces the exact state that path exists for, on every filesystem.
+    let result = run.cleanup_with_remover(|path| {
+        std::fs::remove_file(path.join(MANIFEST)).unwrap();
+        Err(std::io::Error::other("partial cleanup"))
+    });
+
+    assert_eq!(result, Err(RecapStateFailure::Io));
     assert!(path.exists());
     assert_ne!(
         std::fs::metadata(&owner_path).unwrap().ino(),
         owner_inode,
-        "remove_dir_all must have removed the manifest before the payload failure"
+        "the restored manifest must be a newly written file, not the original"
     );
     assert_eq!(read_manifest(&path).unwrap(), expected);
     assert!(payload.join("file").exists());
-
-    std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o700)).unwrap();
-    std::fs::remove_dir_all(path).unwrap();
 }
 
 #[test]

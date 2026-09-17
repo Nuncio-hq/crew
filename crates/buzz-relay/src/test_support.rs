@@ -47,6 +47,17 @@ async fn cleanup_community(pool: &sqlx::PgPool, community_id: Uuid) -> Result<()
             .execute(pool)
             .await
             .map_err(|error| format!("delete relay membership rows: {error}"))?;
+        // Events reference the community, so they must go before it. This
+        // belongs in the shared fixture rather than in each test: the foreign
+        // key makes it mandatory for *any* test that stores an event, and a
+        // fixture that leaves it to the caller turns a normal assertion into a
+        // teardown panic that names the wrong thing. The delete spans every
+        // partition of `events`, which is partitioned on `created_at`.
+        sqlx::query("DELETE FROM events WHERE community_id = $1")
+            .bind(community_id)
+            .execute(pool)
+            .await
+            .map_err(|error| format!("delete community event rows: {error}"))?;
         sqlx::query("DELETE FROM communities WHERE id = $1")
             .bind(community_id)
             .execute(pool)

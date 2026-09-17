@@ -1,6 +1,8 @@
 #![cfg(unix)]
 
 use super::*;
+// Only the Seatbelt-gated process proofs inspect raw argv/env values.
+#[cfg(target_os = "macos")]
 use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::PathBuf;
@@ -290,6 +292,9 @@ fn malformed_grounding_and_oversized_prompt_fail_closed() {
     );
 }
 
+// Needs the real Seatbelt boundary: `private_ask_containment_profile`
+// refuses on every other platform, which `fail_closed_tests` asserts.
+#[cfg(target_os = "macos")]
 #[test]
 fn native_plans_are_closed_over_runtime_and_do_not_forward_relay_credentials() {
     let fixture = canonical_tempdir();
@@ -436,7 +441,9 @@ fn hermes_launch_requires_profile_staging_and_cleans_the_prepared_run() {
         .any(|entry| entry.is_ok()));
 }
 
-#[cfg(unix)]
+// Needs the real Seatbelt boundary: `private_ask_containment_profile`
+// refuses on every other platform, which `fail_closed_tests` asserts.
+#[cfg(target_os = "macos")]
 #[test]
 fn claude_fake_process_uses_stdin_and_returns_only_valid_model_result() {
     let fixture = canonical_tempdir();
@@ -462,7 +469,9 @@ fn claude_fake_process_uses_stdin_and_returns_only_valid_model_result() {
         .any(|entry| entry.is_ok()));
 }
 
-#[cfg(unix)]
+// Needs the real Seatbelt boundary: `private_ask_containment_profile`
+// refuses on every other platform, which `fail_closed_tests` asserts.
+#[cfg(target_os = "macos")]
 #[test]
 fn hermes_fake_process_requires_usage_model_and_rejects_mismatch() {
     let fixture = canonical_tempdir();
@@ -493,7 +502,9 @@ fn hermes_fake_process_requires_usage_model_and_rejects_mismatch() {
     assert_eq!(response.markdown, "Hermes scoped answer");
 }
 
-#[cfg(unix)]
+// Needs the real Seatbelt boundary: `private_ask_containment_profile`
+// refuses on every other platform, which `fail_closed_tests` asserts.
+#[cfg(target_os = "macos")]
 #[test]
 fn hostile_output_is_bounded_and_never_becomes_a_success() {
     let fixture = canonical_tempdir();
@@ -517,6 +528,9 @@ fn hostile_output_is_bounded_and_never_becomes_a_success() {
     );
 }
 
+// Needs the real Seatbelt boundary: `private_ask_containment_profile`
+// refuses on every other platform, which `fail_closed_tests` asserts.
+#[cfg(target_os = "macos")]
 #[test]
 fn precancelled_attempt_never_spawns_a_runtime() {
     let fixture = canonical_tempdir();
@@ -838,7 +852,9 @@ fn persona_comes_from_the_agents_own_effective_configuration() {
 /// from its own working directory and reports whether the recorded PID is its
 /// own; removing the `mark_process_started` spawn hook in `run()` leaves it
 /// null and fails this.
-#[cfg(unix)]
+// Needs the real Seatbelt boundary: `private_ask_containment_profile`
+// refuses on every other platform, which `fail_closed_tests` asserts.
+#[cfg(target_os = "macos")]
 #[test]
 fn the_owned_child_pid_is_recorded_before_any_output_is_read() {
     let fixture = canonical_tempdir();
@@ -922,6 +938,9 @@ fn ordinary_authored_prose_in_a_persona_is_not_treated_as_hostile() {
 /// be refused rather than proceed under a proof that no longer describes it.
 /// Removing the `same_executable_now` call from `PrivateAskAttempt::run` fails
 /// this.
+// Needs the real Seatbelt boundary: `private_ask_containment_profile`
+// refuses on every other platform, which `fail_closed_tests` asserts.
+#[cfg(target_os = "macos")]
 #[test]
 fn an_executable_swapped_after_admission_is_refused_before_it_can_run() {
     let fixture = canonical_tempdir();
