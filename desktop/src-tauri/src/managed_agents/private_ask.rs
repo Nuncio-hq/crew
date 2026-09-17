@@ -8,6 +8,7 @@ use std::time::Duration;
 
 mod attempt;
 mod capability;
+mod citations;
 mod containment;
 mod credential;
 pub(crate) mod dev_gate;
@@ -594,6 +595,10 @@ pub(crate) fn admit_private_ask(
 #[cfg(test)]
 #[path = "private_ask/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "private_ask/answer_tests.rs"]
+mod answer_tests;
 
 #[cfg(test)]
 #[path = "private_ask/containment_tests.rs"]

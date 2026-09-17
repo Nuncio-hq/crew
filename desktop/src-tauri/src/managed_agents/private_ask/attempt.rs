@@ -8,7 +8,7 @@
 //! the surface's size ceiling.
 
 use super::{
-    build_prompt, credential, egress_proxy, finish_after_process, finish_before_spawn,
+    build_prompt, citations, credential, egress_proxy, finish_after_process, finish_before_spawn,
     leave_process_pending, leave_process_pending_state, profile, provider, runtime_paths,
     valid_profile, GroundedSource, PrivateAskAdmission, PrivateAskFailure, PrivateAskLaunchPlan,
     PRIVATE_ASK_INPUT_LIMIT, PRIVATE_ASK_OUTPUT_LIMIT, PRIVATE_ASK_STDERR_LIMIT,
@@ -352,11 +352,24 @@ impl PrivateAskAttempt {
         // listener of its own, so the direct-connection count is zero here by
         // construction; a probe capture supplies its own.
         let egress = proxy.observe(0);
+        // The answer's own citations, resolved against the verified snapshot.
+        // Copying the request's grounding here would make `citations` a
+        // restatement of the input and say nothing about what the runtime
+        // actually used — or reached.
+        let citations = match citations::resolve(&markdown, &self.admission.request.grounding) {
+            Ok(citations) => citations,
+            Err(failure) => {
+                // The run root is still closed out: a refused answer is a
+                // finished attempt, not an abandoned one.
+                run.cleanup().map_err(PrivateAskFailure::State)?;
+                return Err(failure);
+            }
+        };
         let response = PrivateAskResponse {
             attempt_id: self.attempt_id,
             session_generation: self.admission.state.session_generation.clone(),
             markdown,
-            citations: self.admission.request.grounding.clone(),
+            citations,
             egress,
         };
         run.cleanup().map_err(PrivateAskFailure::State)?;

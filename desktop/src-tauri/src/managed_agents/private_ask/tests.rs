@@ -466,7 +466,7 @@ fn claude_fake_process_uses_stdin_and_returns_only_valid_model_result() {
     let path = fake_runtime(
         fixture.path(),
         "claude",
-        "#!/usr/bin/perl\nlocal $/; my $in = <STDIN>; die \"no prompt\" unless defined $in; print '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Scoped answer\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
+        "#!/usr/bin/perl\nlocal $/; my $in = <STDIN>; die \"no prompt\" unless defined $in; print '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Scoped answer\\n\\n[^cite]: src/lib.rs\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
     );
     let mut selected = state(&path, "claude", "claude-fable-5-1", None);
     selected.executable = executable(&path);
@@ -476,8 +476,10 @@ fn claude_fake_process_uses_stdin_and_returns_only_valid_model_result() {
     let base = ownership.recap_base().unwrap();
     let attempt = PrivateAskAttempt::create(admission, ownership, 1).unwrap();
     let response = attempt.run().unwrap();
-    assert_eq!(response.markdown, "Scoped answer");
-    assert_eq!(response.citations.len(), 1);
+    assert_eq!(response.markdown, "Scoped answer\n\n[^cite]: src/lib.rs");
+    // The citation is the one the ANSWER printed, resolved against the
+    // grounding — not a copy of the request.
+    assert_eq!(response.citations, vec![grounding()]);
     assert!(!base
         .join("recap-runs")
         .read_dir()
@@ -963,7 +965,7 @@ fn an_executable_swapped_after_admission_is_refused_before_it_can_run() {
     let path = fake_runtime(
         fixture.path(),
         "claude",
-        "#!/usr/bin/perl\nlocal $/; my $in = <STDIN>; print '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Scoped answer\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
+        "#!/usr/bin/perl\nlocal $/; my $in = <STDIN>; print '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Scoped answer\\n\\n[^cite]: src/lib.rs\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
     );
     let mut selected = state(&path, "claude", "claude-fable-5-1", None);
     selected.executable = executable(&path);
