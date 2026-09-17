@@ -588,6 +588,10 @@ pub(crate) struct PrivateAskResponse {
     pub session_generation: String,
     pub markdown: String,
     pub citations: Vec<GroundedSource>,
+    /// What this run's own egress proxy observed. It travels with the answer
+    /// because it is the evidence a capability decision is made from: a probe
+    /// capture reads it here rather than reconstructing what it thinks happened.
+    pub egress: egress_proxy::EgressObservation,
 }
 
 pub(crate) struct PrivateAskAttempt {
@@ -866,11 +870,18 @@ impl PrivateAskAttempt {
                 Ok(markdown) => markdown,
                 Err(failure) => return Err(finish_after_process(run, failure)),
             };
+        // Stop the proxy and take its record before the run root is cleaned:
+        // after this point nothing may reach the network on this attempt's
+        // behalf, and the record is final. A production run has no off-provider
+        // listener of its own, so the direct-connection count is zero here by
+        // construction; a probe capture supplies its own.
+        let egress = proxy.observe(0);
         let response = PrivateAskResponse {
             attempt_id: self.attempt_id,
             session_generation: self.admission.state.session_generation.clone(),
             markdown,
             citations: self.admission.request.grounding.clone(),
+            egress,
         };
         run.cleanup().map_err(PrivateAskFailure::State)?;
         Ok(response)

@@ -13,8 +13,7 @@ use super::capability::{
     PrivateAskAuthEvidence, PrivateAskProbe, PrivateAskToolProbe, PRIVATE_ASK_TOOL_PROBE_ID,
 };
 use super::tests::{
-    bounded_egress, canonical_tempdir, captured_now, executable, owned_receipt, request, state,
-    FIXTURE_PERSONA, PROBE_PROXY_PORT,
+    canonical_tempdir, captured_now, executable, owned_receipt, request, state, FIXTURE_PERSONA,
 };
 use super::*;
 use sha2::{Digest, Sha256};
@@ -212,6 +211,10 @@ fn the_hostile_fixture_reaches_every_effect_when_it_is_not_contained() {
         "an uncontained fixture must read the file outside its run root: {trace}"
     );
     assert!(trace.contains("effect:connect"), "trace: {trace}");
+    assert!(
+        trace.contains("effect:dns"),
+        "an uncontained fixture must be able to resolve a name: {trace}"
+    );
     assert!(trace.contains("effect:fork"), "trace: {trace}");
     assert_ne!(
         fixture.sentinel_digest(),
@@ -271,7 +274,39 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
         "a contained run must not read a file outside its run root: {}",
         trace.markdown
     );
+    // The proxy is the only egress, and it refused the one destination that was
+    // not the provider. Removing the host check in `egress_proxy::handle_client`
+    // turns this into `effect:proxy-connect`.
+    assert!(
+        trace.markdown.contains("denied:proxy-connect"),
+        "the proxy must refuse a destination that is not the provider: {}",
+        trace.markdown
+    );
+    // No resolver is reachable. Restoring the mDNSResponder allowance to
+    // `private_ask_containment_profile` turns this into `effect:dns`.
+    assert!(
+        trace.markdown.contains("denied:dns"),
+        "a contained run must not resolve a name: {}",
+        trace.markdown
+    );
     assert!(!trace.markdown.contains("effect:"));
+
+    // The refusal is in the proxy's own record, not only in the child's report.
+    // A record with an empty refusal list cannot certify egress at all.
+    assert!(
+        trace.egress.accepted().is_empty(),
+        "nothing may have been accepted: {:?}",
+        trace.egress.accepted()
+    );
+    assert!(
+        trace
+            .egress
+            .refused()
+            .iter()
+            .any(|refused| refused.reason() == super::egress_proxy::RefusalReason::ForeignHost),
+        "the proxy must have recorded the foreign CONNECT: {:?}",
+        trace.egress.refused()
+    );
 
     assert_eq!(
         sentinel_after, sentinel_before,
@@ -328,14 +363,21 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
             &run_root,
             &probe_runtime_directory(&fixture.executable),
             &super::launch::extra_read_roots(&fixture.executable),
-            PROBE_PROXY_PORT,
+            // The port this run's own proxy actually bound. Rebuilding the
+            // policy from anything else would compare two different policies.
+            trace.egress.proxy_port(),
         )
         .unwrap(),
         staging_base: run_root
             .parent()
             .expect("probe root has a parent")
             .to_path_buf(),
-        egress: bounded_egress(),
+        // The real record from the run above, carrying the fixture listener's
+        // own count of connections that bypassed the proxy.
+        egress: trace
+            .egress
+            .clone()
+            .with_observed_direct_connections(fixture.accepted_connections()),
         captured_at: captured_now(),
         run_nonce: "fixture-run-nonce".into(),
         probe_run_root: run_root,
@@ -348,6 +390,10 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
     assert_eq!(capability.process_containment, ProofStatus::Verified);
     assert_eq!(capability.side_effect_free, ProofStatus::Verified);
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
+    // A hostile run never reached the provider, so its own proxy record cannot
+    // bound egress either: an accepted-empty record is exactly the "blocked
+    // everything" case that must not read as "correctly scoped".
+    assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),
         PrivateAskFailure::IndependentInvocationUnverified,

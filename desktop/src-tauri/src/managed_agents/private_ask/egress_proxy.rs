@@ -245,6 +245,17 @@ impl EgressObservation {
                 .all(|target| target == &self.provider_host)
     }
 
+    /// Attach the count of connections a probe's own off-provider listener
+    /// accepted directly from the contained child.
+    ///
+    /// A production run has no such listener, so its observation carries zero
+    /// by construction and that clause certifies nothing on its own. It becomes
+    /// evidence only in a probe capture, where a listener really was watching.
+    pub(crate) fn with_observed_direct_connections(mut self, count: u32) -> Self {
+        self.direct_connections = count;
+        self
+    }
+
     /// Assemble an observation without running a proxy. Test-only on purpose.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]

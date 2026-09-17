@@ -105,3 +105,103 @@ fn a_refused_private_ask_performs_no_relay_egress() {
         "a failing private Ask must not report, log or mirror its failure to the relay"
     );
 }
+
+/// A runtime that reports exactly where a provider credential is visible from
+/// inside the sandbox: its own argv, its environment, and every byte of every
+/// file in its run root. It never echoes the value, so a failing assertion
+/// prints a location rather than a secret.
+const CREDENTIAL_REPORTING_RUNTIME: &str = r#"#!/usr/bin/perl
+use strict; use warnings; use File::Find;
+local $/; my $prompt = <STDIN>;
+my $canary = '__CANARY__';
+my $argv = join(' ', @ARGV);
+my $in_argv = (index($argv, $canary) >= 0) ? 'argv-leak' : 'argv-clean';
+my $in_env = (defined $ENV{'CLAUDE_CODE_OAUTH_TOKEN'} && $ENV{'CLAUDE_CODE_OAUTH_TOKEN'} eq $canary) ? 'env-present' : 'env-absent';
+my $in_prompt = (defined $prompt && index($prompt, $canary) >= 0) ? 'prompt-leak' : 'prompt-clean';
+my $on_disk = 'disk-clean';
+find(sub {
+    return unless -f $_;
+    open(my $handle, '<', $_) or return;
+    local $/; my $bytes = <$handle>; close $handle;
+    $on_disk = 'disk-leak' if defined $bytes && index($bytes, $canary) >= 0;
+}, '.');
+print '{"type":"result","subtype":"success","is_error":false,"result":"'
+    . "$in_argv $in_env $in_prompt $on_disk"
+    . '","modelUsage":{"claude-fable-5-1":{}}}';
+"#;
+
+/// A staged credential reaches the child's environment and nothing else.
+///
+/// The canary is the one the test build injects in `stage_credential`; the
+/// `env-present` assertion is what keeps the other three honest, because a run
+/// that never received a credential would pass them trivially.
+///
+/// Removing the `command.env(name, value)` line from `PrivateAskAttempt::run`
+/// fails the `env-present` assertion; moving the credential onto argv fails
+/// `argv-clean`; writing it into the run root fails `disk-clean`.
+#[test]
+fn a_staged_credential_reaches_only_the_child_environment() {
+    let fixture = canonical_tempdir();
+    let script = CREDENTIAL_REPORTING_RUNTIME
+        .replace("__CANARY__", PrivateAskAttempt::TEST_CREDENTIAL_CANARY);
+    let path = fake_runtime(fixture.path(), "claude", &script);
+    let mut selected = state(&path, "claude", "claude-fable-5-1", None);
+    selected.executable = executable(&path);
+    let capability = PrivateAskCapability::verified_for_fixture(&selected);
+    let admission = admit_private_ask(request(), selected, capability).expect("admission");
+    let ownership = owned_receipt(&fixture);
+    let base = ownership.recap_base().expect("recap base");
+    let attempt = PrivateAskAttempt::create(admission, ownership, 1).expect("attempt");
+
+    let outcome = attempt.run();
+    let response = match outcome {
+        Ok(response) => response,
+        // A host without the containment boundary refuses before spawn; there
+        // is then no child to have leaked anything, and nothing to assert.
+        Err(PrivateAskFailure::ProcessContainmentUnverified) => return,
+        Err(failure) => panic!("unexpected refusal: {failure:?}"),
+    };
+
+    assert!(
+        response.markdown.contains("env-present"),
+        "the child must actually have received the credential, else this test \
+         proves nothing: {}",
+        response.markdown
+    );
+    assert!(
+        response.markdown.contains("argv-clean"),
+        "credential on argv"
+    );
+    assert!(
+        response.markdown.contains("prompt-clean"),
+        "credential in the prompt"
+    );
+    assert!(
+        response.markdown.contains("disk-clean"),
+        "credential written into the run root"
+    );
+    // Nor does it survive in the answer, or anywhere under the staging base
+    // after the finished generation is cleaned.
+    assert!(!response
+        .markdown
+        .contains(PrivateAskAttempt::TEST_CREDENTIAL_CANARY));
+    assert!(!base
+        .join("recap-runs")
+        .read_dir()
+        .expect("runs directory")
+        .any(|entry| entry.is_ok()));
+}
+
+/// A refusal on the credential path names no secret and carries no detail from
+/// the platform secret store.
+#[test]
+fn a_credential_refusal_renders_no_secret() {
+    for failure in [
+        PrivateAskFailure::AuthenticationUnverified,
+        PrivateAskFailure::EgressBoundUnverified,
+    ] {
+        let rendered = format!("{failure} {failure:?}");
+        assert!(!rendered.contains(PrivateAskAttempt::TEST_CREDENTIAL_CANARY));
+        assert!(!rendered.to_lowercase().contains("token"));
+    }
+}

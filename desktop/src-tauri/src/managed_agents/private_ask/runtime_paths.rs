@@ -25,11 +25,23 @@ const SHEBANG_LIMIT: usize = 512;
 /// resolved, or when it already lives in the executable's own directory — in
 /// each case there is nothing extra to allow.
 pub(super) fn interpreter_directory(executable: &Path) -> Option<PathBuf> {
+    interpreter_directory_with_path(executable, std::env::var_os("PATH"))
+}
+
+/// The same resolution against an explicit `PATH`.
+///
+/// Separated so a test can name its own search path instead of mutating this
+/// process's environment — a global mutation would race every other test that
+/// reads `PATH`.
+fn interpreter_directory_with_path(
+    executable: &Path,
+    search_path: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
     let mut file = std::fs::File::open(executable).ok()?;
     let mut head = vec![0u8; SHEBANG_LIMIT];
     let read = file.read(&mut head).ok()?;
     head.truncate(read);
-    let interpreter = resolved_interpreter(&head)?;
+    let interpreter = resolved_interpreter(&head, search_path)?;
     let directory = interpreter.parent()?.canonicalize().ok()?;
     let own = executable
         .parent()
@@ -50,22 +62,25 @@ pub(super) fn interpreter_directory(executable: &Path) -> Option<PathBuf> {
 ///
 /// The `env` argument is resolved against this process's own `PATH`, which is
 /// the desktop's, not anything the request controls.
-fn resolved_interpreter(head: &[u8]) -> Option<PathBuf> {
+fn resolved_interpreter(head: &[u8], search_path: Option<std::ffi::OsString>) -> Option<PathBuf> {
     let interpreter = shebang_interpreter(head)?;
     let path = PathBuf::from(&interpreter);
     if path.file_name().and_then(|name| name.to_str()) != Some("env") {
         return Some(path);
     }
     let argument = shebang_interpreter_argument(head)?;
-    resolve_in_desktop_path(&argument)
+    resolve_in_search_path(&argument, search_path)
 }
 
 /// First `PATH` entry holding an executable file named `program`.
-fn resolve_in_desktop_path(program: &str) -> Option<PathBuf> {
+fn resolve_in_search_path(
+    program: &str,
+    search_path: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
     if program.is_empty() || program.contains('/') {
         return None;
     }
-    let path = std::env::var_os("PATH")?;
+    let path = search_path?;
     std::env::split_paths(&path)
         .map(|directory| directory.join(program))
         .find(|candidate| is_executable_file(candidate))
@@ -162,3 +177,7 @@ pub(super) fn assert_no_hard_links(root: &Path) -> Result<(), PrivateAskFailure>
     let _ = root;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "runtime_paths_tests.rs"]
+mod tests;

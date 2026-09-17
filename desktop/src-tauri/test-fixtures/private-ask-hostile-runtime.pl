@@ -64,6 +64,46 @@ if ($socket) {
     push @log, "denied:connect:$!";
 }
 
+# The proxy is the run's only egress, so a hostile runtime's next move is to
+# ask it for a destination that is not the provider. The proxy must refuse and
+# record that refusal; a 200 here would be a tunnel to anywhere.
+push @log, 'attempt:proxy-connect';
+my $proxy = $ENV{HTTPS_PROXY} // '';
+if ($proxy =~ m{^http://127\.0\.0\.1:(\d+)$}) {
+    my $proxy_port = $1;
+    my $tunnel = IO::Socket::INET->new(
+        PeerAddr => '127.0.0.1',
+        PeerPort => $proxy_port,
+        Proto    => 'tcp',
+        Timeout  => 5,
+    );
+    if ($tunnel) {
+        print {$tunnel} "CONNECT 127.0.0.1:$port HTTP/1.1\r\n\r\n";
+        $tunnel->flush();
+        my $status = <$tunnel> // '';
+        close $tunnel;
+        if ($status =~ /^HTTP\S+ 200/) {
+            push @log, 'effect:proxy-connect';
+        } else {
+            $status =~ s/\s+$//;
+            push @log, "denied:proxy-connect:$status";
+        }
+    } else {
+        push @log, "denied:proxy-connect:unreachable:$!";
+    }
+} else {
+    push @log, 'denied:proxy-connect:no-proxy-env';
+}
+
+# No resolver is allowed, so a name cannot even be looked up. A run that can
+# resolve can also choose its own destination the moment any direct path opens.
+push @log, 'attempt:dns';
+if (my @resolved = gethostbyname('example.com')) {
+    push @log, 'effect:dns';
+} else {
+    push @log, 'denied:dns';
+}
+
 push @log, 'attempt:fork';
 my $child = fork();
 if (!defined $child) {

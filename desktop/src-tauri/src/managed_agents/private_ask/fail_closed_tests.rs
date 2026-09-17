@@ -40,6 +40,23 @@ fn a_run_root_that_cannot_be_confined_refuses_a_containment_profile() {
     );
 }
 
+/// A port of zero is not a bound listener, and SBPL would accept the literal
+/// `localhost:0` without complaint. Removing the `proxy_port == 0` refusal in
+/// `private_ask_containment_profile` lets a run start under a policy whose only
+/// egress allowance points at nothing.
+#[test]
+fn a_policy_is_never_built_for_an_unbound_proxy_port() {
+    assert_eq!(
+        private_ask_containment_profile(
+            Path::new("/tmp/well-formed-root"),
+            Path::new("/usr/bin"),
+            &[],
+            0
+        ),
+        Err(PrivateAskFailure::ProcessContainmentUnverified)
+    );
+}
+
 /// Off macOS there is no effect-denying boundary, so even a well-formed run root
 /// must refuse. Removing the `Err` arm for other platforms fails this.
 #[cfg(not(target_os = "macos"))]
