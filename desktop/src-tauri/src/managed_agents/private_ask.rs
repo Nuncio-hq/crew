@@ -683,6 +683,22 @@ impl PrivateAskAttempt {
             Ok(prompt) => prompt,
             Err(failure) => return Err(finish_before_spawn(run, failure)),
         };
+        // A withdrawn request does no further work. Checking here keeps
+        // cancellation the reported outcome rather than whatever the next
+        // fence happens to notice about a run nobody still wants.
+        if self.cancel.load(Ordering::SeqCst) {
+            return Err(finish_before_spawn(
+                run,
+                PrivateAskFailure::Process(BoundedFailure::Cancelled),
+            ));
+        }
+        // Re-hash the executable immediately before building the command.
+        // The capability was certified against specific bytes, and an upgrade
+        // or a shim swapped in between admission and launch would otherwise run
+        // under a proof that no longer describes it.
+        if let Err(failure) = same_executable_now(&self.admission.capability.executable) {
+            return Err(finish_before_spawn(run, failure));
+        }
         let mut command = plan.command();
         if plan.prompt_on_stdin {
             let input = match run.input(prompt.as_bytes()) {
@@ -778,3 +794,22 @@ mod isolation_tests;
 #[cfg(test)]
 #[path = "private_ask/privacy_tests.rs"]
 mod privacy_tests;
+
+/// Confirm the certified executable is still the file that will be run.
+///
+/// The two refusals are kept apart because they mean different things to the
+/// viewer: a runtime that has gone missing is an installation problem, while a
+/// runtime whose bytes changed under its own proof is a changed selection and
+/// must be re-certified.
+fn same_executable_now(certified: &RecapExecutableIdentity) -> Result<(), PrivateAskFailure> {
+    use crate::managed_agents::recap_capability::RecapFailure;
+    let observed = crate::managed_agents::recap_capability::verify_executable(certified).map_err(
+        |failure| match failure {
+            RecapFailure::MissingExecutable => PrivateAskFailure::MissingRuntime,
+            _ => PrivateAskFailure::SelectionChanged,
+        },
+    )?;
+    same_executable_proof(&observed, certified)
+        .then_some(())
+        .ok_or(PrivateAskFailure::SelectionChanged)
+}

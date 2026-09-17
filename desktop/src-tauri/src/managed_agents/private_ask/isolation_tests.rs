@@ -128,6 +128,15 @@ fn runtime_directory_of(executable: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// The parent PID the contained child reported for itself.
+fn observed_parent_pid(trace: &str) -> u32 {
+    trace
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("parent="))
+        .and_then(|value| value.parse().ok())
+        .expect("the runtime must report its own parent")
+}
+
 fn digest_of(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
@@ -246,7 +255,11 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
                     Some(session.pid()),
                 )
                 .expect("observe the busy session after the Ask"),
-                std::process::id(),
+                // Read the child's parent from what the child itself reported,
+                // not from this process's own PID. Asserting the trace and then
+                // certifying a value taken from elsewhere would let the
+                // certification pass even if the child had been adopted.
+                observed_parent_pid(&response.markdown),
                 std::process::id(),
             )
             .expect("session lineage"),

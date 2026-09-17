@@ -21,11 +21,24 @@ pub(super) fn scope() -> PrivateAskScope {
     }
 }
 
+/// A certified identity for a fixture runtime.
+///
+/// The fingerprint is the real digest of the file when one exists, because the
+/// adapter re-hashes the executable immediately before launch: a placeholder
+/// digest would make every fixture look like a binary that changed under its
+/// own proof. A path with no file keeps a placeholder — such a run is refused
+/// for the absent executable, which is what those tests assert.
 pub(super) fn executable(path: &Path) -> RecapExecutableIdentity {
+    let fingerprint = std::fs::read(path)
+        .map(|bytes| {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(&bytes))
+        })
+        .unwrap_or_else(|_| "d".repeat(64));
     RecapExecutableIdentity {
         resolved_path: path.to_owned(),
         version: "fixture-1".into(),
-        fingerprint: "d".repeat(64),
+        fingerprint,
         platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
     }
 }
@@ -841,4 +854,40 @@ fn ordinary_authored_prose_in_a_persona_is_not_treated_as_hostile() {
     assert!(build_prompt(&admitted.request, &admitted.state.persona)
         .unwrap()
         .contains("\tcargo test"));
+}
+
+/// A capability certifies specific bytes. If the executable is replaced between
+/// admission and launch — an upgrade, or a shim dropped over it — the run must
+/// be refused rather than proceed under a proof that no longer describes it.
+/// Removing the `same_executable_now` call from `PrivateAskAttempt::run` fails
+/// this.
+#[test]
+fn an_executable_swapped_after_admission_is_refused_before_it_can_run() {
+    let fixture = canonical_tempdir();
+    let path = fake_runtime(
+        fixture.path(),
+        "claude",
+        "#!/usr/bin/perl\nlocal $/; my $in = <STDIN>; print '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Scoped answer\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
+    );
+    let mut selected = state(&path, "claude", "claude-fable-5-1", None);
+    selected.executable = executable(&path);
+    let capability = PrivateAskCapability::verified_for_fixture(&selected);
+    let admission = admit_private_ask(request(), selected, capability).unwrap();
+    let ownership = owned_receipt(&fixture);
+    let attempt = PrivateAskAttempt::create(admission, ownership, 1).unwrap();
+
+    // The swap happens after the capability was minted and after the attempt
+    // was created — exactly the window the re-hash exists to close.
+    std::fs::write(
+        &path,
+        "#!/usr/bin/perl\nprint '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"swapped\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(
+        attempt.run().unwrap_err(),
+        PrivateAskFailure::SelectionChanged,
+        "a replaced executable must not run under the old proof"
+    );
 }
