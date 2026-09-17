@@ -2391,10 +2391,52 @@ native invocation is an acceptable Crew seam.
 The developer-only command surface is a gate, not a feature: `private_ask_run`
 returns whatever the production path returns — an answer or a typed refusal —
 and chooses no reason of its own. It cannot yet answer, because nothing in the
-desktop resolves a developer's question to a selected managed agent, an
-immutable Wiki snapshot and the retained capability probe for that agent's exact
-binary; the refusal names that missing binding rather than a dimension that is
-now provable.
+desktop resolves a developer's question to a selected managed agent and an
+immutable Wiki snapshot; the refusal names that missing binding rather than a
+dimension that is now provable. The third part of that binding — a retained
+capability probe for the agent's exact binary — now exists, and is described
+next.
+
+**A capability is minted from one real contained run.** The probe launches under
+byte-identical policy text to a production answer, with the proxy serving, and
+every dimension is measured from the desktop's side: a sentinel file it owns and
+digests either side of the run, a control listener it owns whose accept count is
+the direct-connection figure, the proxy's own record, and a surviving descendant
+detected by taking a lock such a descendant would still hold — which needs no
+PID, so a recycled one cannot answer for a process that already exited. Only the
+*attempts* are self-reported, because only the probe can see the return value of
+its own syscall.
+
+What runs is a small probe program Crew ships, not the selected runtime. Every
+dimension the projection can mint is a property of the envelope — the Seatbelt
+text plus the loopback proxy — and the kernel denies an effect regardless of who
+attempts it; asking the runtime to attempt the hostile acts would make the
+subject under test its own witness, and would need a model call and a provider
+credential before either is certified. This costs no policy delta: the read
+allow-list already carries `/usr` and `/bin` for every runtime, so the shipped
+interpreter starts under the policy built for the selected binary. A widened
+policy would no longer match the profile the projection rebuilds, and would
+certify nothing. The trace records both the runtime the policy was derived from
+and the digest of the probe program that actually ran, and a trace from a probe
+program this release does not ship is refused rather than reinterpreted.
+
+The trace is retained as a receipt in an owned, uid-validated directory, written
+0o600 through a temporary file and a rename, and bound to this install's
+ownership digest the same way the runtime-ready grant is. It is deliberately not
+kept under the disposable-run base, which startup recovery sweeps. Expiry
+against `PROBE_MAX_AGE` forces a fresh probe, a receipt keyed to a different
+executable fingerprint is missed rather than inherited, and the evidence types
+carry no `Deserialize` — the receipt module owns plain data-transfer structs and
+rebuilds through named constructors, so a file on disk cannot become whatever
+capability a caller cares to describe. Loading a receipt yields a probe, not a
+capability: every fence that applies to a trace captured moments ago applies
+unchanged to one read from disk.
+
+Authentication is its own dimension with its own evidence, taken from the
+outcome of the same credential staging a launch performs — already gated on the
+proxy serving. It is deliberately not folded into the containment verdict: doing
+so was tried and reverted, because it reported a broken sandbox as an
+authentication failure and sent the reader to the wrong problem.
 
 **Egress is bounded by a desktop-owned loopback proxy.** Seatbelt matches
 addresses, not names, so a policy broad enough to keep HTTPS working is broad
@@ -2449,6 +2491,21 @@ attempt through the production launch path must move that count by zero.
 - The probe's staging base is carried by the trace rather than re-derived, since
   a capability does not retain its probe. It rejects a trace captured in an
   unrelated directory; it does not by itself prove the base was the owned one.
+- The probe proves that the *envelope* denies an effect. It does not prove the
+  selected runtime has no in-process capability the envelope permits. That is
+  the Seatbelt model rather than a gap this boundary introduces, but installed
+  acceptance is what confirms a real runtime behaves inside it.
+- A receipt carries no session-isolation evidence, so `independent_invocation`
+  is never satisfied from a retained trace. Independence is a statement about
+  one attempt beside one live session rather than a cacheable property of a
+  machine, and the attempt that needs it must observe it for itself. Nothing
+  captures it around a real answer yet, because there is no answer yet.
+- Nothing refuses a runtime installed in a directory that *contains* the staging
+  base. The policy allows reads under the runtime's own directory, so such a
+  layout would expose every run root through that allowance. No real
+  installation puts a runtime above the app-data tree, and the gap is named here
+  rather than guarded, because the guard belongs beside the other pre-spawn path
+  facts and would need the existing proof fixtures re-homed with it.
 - The owner-local Ask history is held in the renderer for the life of the window
   and is not persisted. Durable retention on the `OwnedRecapRun` pattern is
   deferred until there is an answer worth keeping.

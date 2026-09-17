@@ -1232,10 +1232,11 @@ production-bound tests do not replace installed Activity acceptance.
 ## Private Wiki Ask contract (#365)
 
 The private Ask cannot yet be asked from the developer surface (D-083): nothing
-binds a question to a selected agent, a snapshot and a retained probe. Every
-*fence* below it is live, though, so its tests assert the **reason** a request is
-refused and never merely that it was — and the egress proof now runs a real
-loopback proxy rather than describing one.
+binds a question to a selected agent and a snapshot. Every *fence* below it is
+live, though, so its tests assert the **reason** a request is refused and never
+merely that it was — the egress proof runs a real loopback proxy rather than
+describing one, and the capability probe is now produced by a real contained run
+rather than assembled by a fixture.
 
 ### Targets
 
@@ -1266,6 +1267,9 @@ fails closed.
 | `egress_proxy_tests.rs` | The CONNECT parser and `EgressObservation::bounds_egress` | Accepting a non-CONNECT request, an IP-literal or foreign target; certifying a record with no refusal or no accepted provider connection |
 | `credential_tests.rs` + `privacy_tests.rs` | `stage_private_ask_credential`'s proxy gate and the environment-only handoff | Staging a token without a live proxy; putting it on argv, in the prompt, or in the run root |
 | `runtime_paths_tests.rs` | Shebang interpreter resolution and the `nlink > 1` fence | Stopping at `/usr/bin/env`; letting a hard link into the run root through |
+| `probe_program_tests.rs` | `parse_marker`'s nonce and completeness checks | Treating a missing, truncated, wrong-nonce or non-UTF-8 marker as success |
+| `probe_run_tests.rs` | `capture_probe` — a real contained run | Building the probe's policy from anything but the selected runtime; certifying a dimension the run escaped; coupling authentication to containment |
+| `probe_receipt_tests.rs` | `probe_receipt::{store, load}` | Honouring a stale, future-dated, foreign-install, foreign-program or different-executable receipt; restoring session isolation from disk |
 
 The containment tests are paired: an uncontained control run must reach every
 effect — write outside the run root, read a file outside it, open a socket,
@@ -1284,6 +1288,27 @@ read as one that is correctly scoped.
 Keep the read-isolation bait out of the runtime executable's directory. The
 policy allows that directory so the binary can load itself, so a secret parked
 there is legitimately readable and the proof would pass by accident.
+
+The same trap has a wider form, and it cost a round to find: install the fixture
+runtime **outside** the staging base. A fixture that writes its `claude` into the
+directory *containing* `<app-data>/agents` makes the runtime read allowance cover
+the whole staging tree, including the probe's own sentinel — read isolation then
+genuinely fails, and it looks like a policy defect rather than a fixture that no
+real installation resembles.
+
+`probe_run_tests.rs` asserts the probe's policy text equals the text a real
+answer would run under, rebuilt from the selected runtime. That equality is the
+whole basis for running a shipped probe program instead of the runtime: if the
+two ever diverge, `from_probe` rebuilds a profile that no longer matches and the
+trace silently stops certifying, so it is asserted directly rather than inferred
+from a passing projection.
+
+A unit test must never read the developer's keychain. The real credential reader
+shells out to `security find-generic-password`, so `observe_auth_evidence` has a
+`cfg(test)` canary seam mirroring `PrivateAskAttempt::stage_credential`. The
+proxy gate is not replaced, so both directions stay real and deterministic:
+credential present certifies authentication, credential absent does not, and
+containment stays verified across both.
 
 ### Staging evidence list
 

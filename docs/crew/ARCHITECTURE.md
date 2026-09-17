@@ -954,6 +954,18 @@ Certification is separate from discovery. `PrivateAskCapability` carries one
 `ProofStatus` per property — authentication, tool isolation, read bound, egress
 bound, process containment, side-effect freedom, independent invocation — and
 `admit_private_ask` refuses on the first that is not `Verified`, naming it. A
-discovered runtime is always unverified. The egress bound has no satisfying
-producer today, so the feature is refused end to end; see D-083 for why, and for
-the other named limits.
+discovered runtime is always unverified.
+
+`private_ask/probe_run.rs` is the sole producer. It launches a probe program
+Crew ships under byte-identical policy text to a production answer, with the
+attempt proxy serving, and measures every effect from the desktop's own side
+rather than accepting the child's report of itself. `private_ask/probe_receipt.rs`
+retains that trace in an owned, uid-validated directory bound to this install's
+ownership digest, so one probe serves later Asks until it expires; loading a
+receipt yields a probe, never a capability, and every admission fence still
+applies. `independent_invocation` is deliberately never restored from a receipt.
+
+The feature is still refused end to end, but the reason has moved: nothing binds
+a developer's question to a selected managed agent and an immutable Wiki
+snapshot, so there is no selection to admit. See D-083 for that binding and for
+the named limits.
