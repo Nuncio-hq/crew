@@ -213,6 +213,7 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     let run_root = directory.path().join("probe-root");
     std::fs::create_dir(&run_root).unwrap();
     let probe = PrivateAskProbe {
+        probe_program_digest: super::probe_program::probe_program_digest(),
         runtime_id: "claude".into(),
         executable: selected.executable.clone(),
         effective_model: selected.effective_model.clone(),
@@ -220,11 +221,11 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
         persona: FIXTURE_PERSONA.into(),
         acl_fingerprint: selected.acl_fingerprint.clone(),
         session_generation: selected.session_generation.clone(),
-        auth: PrivateAskAuthEvidence {
-            service: "buzz-desktop-demo.staging-test".into(),
-            reference: "keychain-reference".into(),
-            auth_available: true,
-        },
+        auth: PrivateAskAuthEvidence::observed(
+            "buzz-desktop-demo.staging-test".into(),
+            "keychain-reference".into(),
+            true,
+        ),
         tool_probe: PrivateAskToolProbe {
             probe_id: PRIVATE_ASK_TOOL_PROBE_ID.into(),
             tool_name: "write_file".into(),
@@ -318,6 +319,7 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
     std::fs::create_dir(&run_root).unwrap();
     let probe_state = state(&path, "claude", "claude-fable-5-1", None);
     let build = |isolation: SessionIsolationEvidence, root: PathBuf| PrivateAskProbe {
+        probe_program_digest: super::probe_program::probe_program_digest(),
         runtime_id: "claude".into(),
         executable: probe_state.executable.clone(),
         effective_model: probe_state.effective_model.clone(),
@@ -325,11 +327,11 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
         persona: FIXTURE_PERSONA.into(),
         acl_fingerprint: probe_state.acl_fingerprint.clone(),
         session_generation: probe_state.session_generation.clone(),
-        auth: PrivateAskAuthEvidence {
-            service: "buzz-desktop-demo.staging-test".into(),
-            reference: "keychain-reference".into(),
-            auth_available: true,
-        },
+        auth: PrivateAskAuthEvidence::observed(
+            "buzz-desktop-demo.staging-test".into(),
+            "keychain-reference".into(),
+            true,
+        ),
         tool_probe: PrivateAskToolProbe {
             probe_id: PRIVATE_ASK_TOOL_PROBE_ID.into(),
             tool_name: "write_file".into(),

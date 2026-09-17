@@ -19,6 +19,9 @@ mod credential;
 pub(crate) mod dev_gate;
 mod egress_proxy;
 mod launch;
+mod probe_program;
+#[cfg(target_os = "macos")]
+mod probe_run;
 mod profile;
 mod prompt;
 mod provider;

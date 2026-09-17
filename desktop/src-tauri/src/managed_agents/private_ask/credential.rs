@@ -121,6 +121,53 @@ fn map_auth_failure(failure: WikiRuntimeFailure) -> PrivateAskFailure {
     PrivateAskFailure::AuthenticationUnverified
 }
 
+/// Observe whether this runtime can actually authenticate, as its own evidence.
+///
+/// This is deliberately a separate dimension from containment. An earlier round
+/// folded it into `PrivateAskCapability::from_probe`'s containment verdict and
+/// that was reverted: it made a broken sandbox report itself as an
+/// authentication failure, which sends a developer to the wrong problem.
+///
+/// The observation is the *outcome of the real staging path*, not a flag and
+/// not the presence of a file: the same `stage_private_ask_credential` a launch
+/// uses is driven here, subject to the same proxy gate, and its result is what
+/// is recorded. `Ok(None)` — hermes, which owns its authentication inside its
+/// staged profile — is availability, not absence; it is deliberately distinct
+/// from a refusal.
+///
+/// Nothing derived from the secret reaches the evidence. `reference` names the
+/// binding (runtime plus the environment entry it is handed through) so two
+/// different authentication contracts are distinguishable, and carries no part
+/// of the token.
+pub(super) fn observe_auth_evidence(
+    runtime_id: &str,
+    state_dir: &std::path::Path,
+    proxy: &EgressProxy,
+    cancelled: &AtomicBool,
+) -> super::capability::PrivateAskAuthEvidence {
+    let service = runtime_id.to_owned();
+    match stage_private_ask_credential(runtime_id, state_dir, proxy, cancelled) {
+        Ok(Some(credential)) => super::capability::PrivateAskAuthEvidence::observed(
+            service.clone(),
+            format!("{service}:{}", credential.name()),
+            true,
+        ),
+        Ok(None) => super::capability::PrivateAskAuthEvidence::observed(
+            service.clone(),
+            format!("{service}:staged-profile"),
+            true,
+        ),
+        // Every refusal collapses to "unavailable" on purpose. The distinctions
+        // are small oracles about this machine's secret store, and the viewer
+        // acts on the same thing either way: authentication is not proven.
+        Err(_) => super::capability::PrivateAskAuthEvidence::observed(
+            service.clone(),
+            format!("{service}:unavailable"),
+            false,
+        ),
+    }
+}
+
 #[cfg(test)]
 #[path = "credential_tests.rs"]
 mod tests;

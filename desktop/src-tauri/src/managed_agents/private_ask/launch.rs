@@ -282,7 +282,7 @@ pub(super) fn extra_read_roots(executable: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn prepare_state_dirs(root: &Path) -> Result<(), PrivateAskFailure> {
+pub(super) fn prepare_state_dirs(root: &Path) -> Result<(), PrivateAskFailure> {
     for name in [
         "home", "tmp", "config", "cache", "data", "state", "hermes", "managed",
     ] {

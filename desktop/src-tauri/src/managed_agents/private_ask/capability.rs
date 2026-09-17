@@ -56,9 +56,33 @@ pub(crate) struct PrivateAskToolProbe {
 /// reference is opaque and never carries the credential itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrivateAskAuthEvidence {
-    pub(crate) service: String,
-    pub(crate) reference: String,
-    pub(crate) auth_available: bool,
+    service: String,
+    reference: String,
+    auth_available: bool,
+}
+
+impl PrivateAskAuthEvidence {
+    /// Record one observed authentication outcome.
+    ///
+    /// The fields are private and this is the only way in, so a caller cannot
+    /// assert `auth_available` beside a reference describing something else.
+    /// The production observation is
+    /// [`super::credential::observe_auth_evidence`], which drives the real
+    /// staging path — already gated on the attempt's proxy serving — and
+    /// records its result. This dimension is deliberately independent of
+    /// containment: folding it in made a broken sandbox report itself as an
+    /// authentication failure.
+    pub(crate) fn observed(service: String, reference: String, auth_available: bool) -> Self {
+        Self {
+            service,
+            reference,
+            auth_available,
+        }
+    }
+
+    pub(crate) fn auth_available(&self) -> bool {
+        self.auth_available
+    }
 }
 
 /// One complete retained probe for a private Ask capability decision.
@@ -100,6 +124,18 @@ pub(crate) struct PrivateAskProbe {
     pub(crate) external_state_before: String,
     pub(crate) external_state_after: String,
     pub(crate) session_isolation: Option<SessionIsolationEvidence>,
+    /// Digest of the probe program that actually ran.
+    ///
+    /// The probe runs a program this build ships rather than the selected
+    /// runtime, because every dimension below is a property of the envelope —
+    /// the Seatbelt text plus the loopback proxy — and the kernel denies an
+    /// effect regardless of who attempts it. Recording what ran keeps that
+    /// honest: `executable` is the runtime the policy was DERIVED from and is
+    /// what this projection keys on, while this field says what was EXECUTED.
+    /// A trace produced by a different probe program — one that attempted
+    /// fewer things, or attempted them differently — no longer describes the
+    /// evidence this build requires, and is refused rather than reinterpreted.
+    pub(crate) probe_program_digest: String,
 }
 
 /// Structural reasons a probe cannot describe this selection at all. These are
@@ -109,6 +145,9 @@ pub(crate) enum PrivateAskProbeRejection {
     /// The trace is older than [`PROBE_MAX_AGE`], carries no per-run nonce, or
     /// ran somewhere that is not under the verified staging base.
     StaleOrMisplacedProbe,
+    /// The trace was produced by a probe program this build does not ship, so
+    /// it does not describe the experiment this build's dimensions assume.
+    ForeignProbeProgram,
     RuntimeMismatch,
     ExecutableMismatch,
     SelectionMismatch,
@@ -168,6 +207,9 @@ impl PrivateAskCapability {
         if !fresh_and_placed(&probe) {
             return Err(PrivateAskProbeRejection::StaleOrMisplacedProbe);
         }
+        if probe.probe_program_digest != super::probe_program::probe_program_digest() {
+            return Err(PrivateAskProbeRejection::ForeignProbeProgram);
+        }
 
         // The probe's own proxy port is rebuilt into the expected policy. A
         // trace captured under a different port — or under the old any-host
@@ -206,7 +248,7 @@ impl PrivateAskCapability {
         // credential to a bounded egress lives where the credential is created
         // — `credential::stage_private_ask_credential` refuses unless the
         // attempt's proxy is serving — which is the moment that matters.
-        let authentication_verified = probe.auth.auth_available
+        let authentication_verified = probe.auth.auth_available()
             && valid_bounded_label(&probe.auth.service)
             && valid_bounded_label(&probe.auth.reference);
         let independent_verified = probe

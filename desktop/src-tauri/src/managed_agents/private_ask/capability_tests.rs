@@ -7,8 +7,12 @@ use super::capability::{
     PrivateAskAuthEvidence, PrivateAskProbe, PrivateAskProbeRejection, PrivateAskToolProbe,
     SessionIsolationEvidence, PRIVATE_ASK_TOOL_PROBE_ID,
 };
+// Only the admission-ordering proofs, which need the real boundary, build a
+// full request here.
+#[cfg(target_os = "macos")]
+use super::tests::request;
 use super::tests::{
-    bounded_egress, canonical_tempdir, captured_now, executable, request, state, FIXTURE_PERSONA,
+    bounded_egress, canonical_tempdir, captured_now, executable, state, FIXTURE_PERSONA,
     PROBE_PROXY_PORT,
 };
 use super::*;
@@ -31,6 +35,7 @@ fn digest_of(value: &str) -> String {
 /// agent. Individual tests spoil exactly one field.
 fn healthy_probe(state: &SelectedAgentState, run_root: PathBuf) -> PrivateAskProbe {
     PrivateAskProbe {
+        probe_program_digest: super::probe_program::probe_program_digest(),
         runtime_id: state.runtime_id.clone(),
         executable: state.executable.clone(),
         effective_model: state.effective_model.clone(),
@@ -38,11 +43,11 @@ fn healthy_probe(state: &SelectedAgentState, run_root: PathBuf) -> PrivateAskPro
         persona: FIXTURE_PERSONA.into(),
         acl_fingerprint: state.acl_fingerprint.clone(),
         session_generation: state.session_generation.clone(),
-        auth: PrivateAskAuthEvidence {
-            service: "buzz-desktop-demo.staging-test".into(),
-            reference: "keychain-reference".into(),
-            auth_available: true,
-        },
+        auth: PrivateAskAuthEvidence::observed(
+            "buzz-desktop-demo.staging-test".into(),
+            "keychain-reference".into(),
+            true,
+        ),
         tool_probe: PrivateAskToolProbe {
             probe_id: PRIVATE_ASK_TOOL_PROBE_ID.into(),
             tool_name: "write_file".into(),
@@ -118,6 +123,10 @@ fn a_complete_probe_certifies_every_provable_dimension_but_egress_still_refuses(
 /// The fail-closed floor moved, it did not disappear. A probe whose proxy
 /// record does not bound egress still refuses, and the refusal names egress.
 /// Removing the `probe.egress.bounds_egress()` clause in `from_probe` fails this.
+// The refusal ORDER under test only exists once containment is verified,
+// which needs the real Seatbelt boundary. Off macOS the profile refuses first
+// and `fail_closed_tests` asserts exactly that.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_probe_whose_proxy_record_does_not_bound_egress_is_still_refused() {
     use super::egress_proxy::{EgressObservation, RefusalReason};
@@ -335,6 +344,10 @@ fn a_probe_for_another_selection_is_rejected_rather_than_projected() {
 /// viewer sees names it. Removing the `read_bounded` fence from
 /// `admit_private_ask`, or the read allow-list from
 /// `private_ask_containment_profile`, fails this.
+// The refusal ORDER under test only exists once containment is verified,
+// which needs the real Seatbelt boundary. Off macOS the profile refuses first
+// and `fail_closed_tests` asserts exactly that.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_probe_that_read_outside_its_run_root_cannot_certify_read_isolation() {
     let fixture = canonical_tempdir();

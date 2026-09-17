@@ -342,11 +342,11 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
         persona: FIXTURE_PERSONA.into(),
         acl_fingerprint: selected.acl_fingerprint.clone(),
         session_generation: selected.session_generation.clone(),
-        auth: PrivateAskAuthEvidence {
-            service: "buzz-desktop-demo.staging-test".into(),
-            reference: "keychain-reference".into(),
-            auth_available: true,
-        },
+        auth: PrivateAskAuthEvidence::observed(
+            "buzz-desktop-demo.staging-test".into(),
+            "keychain-reference".into(),
+            true,
+        ),
         tool_probe: PrivateAskToolProbe {
             probe_id: PRIVATE_ASK_TOOL_PROBE_ID.into(),
             tool_name: "write_file".into(),
@@ -384,6 +384,7 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
         external_state_before: digest_of("checkout-unchanged"),
         external_state_after: digest_of("checkout-unchanged"),
         session_isolation: None,
+        probe_program_digest: super::probe_program::probe_program_digest(),
     };
     let capability = PrivateAskCapability::from_probe(&selected, probe).expect("probe projection");
     assert_eq!(capability.tool_isolation, ProofStatus::Verified);
