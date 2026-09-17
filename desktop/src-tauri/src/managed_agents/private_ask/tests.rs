@@ -5,11 +5,11 @@ use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::PathBuf;
 
-fn canonical_tempdir() -> tempfile::TempDir {
+pub(super) fn canonical_tempdir() -> tempfile::TempDir {
     tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
 }
 
-fn scope() -> PrivateAskScope {
+pub(super) fn scope() -> PrivateAskScope {
     PrivateAskScope {
         community_id: "community-a".into(),
         relay_url: "ws://relay.example/community".into(),
@@ -21,7 +21,7 @@ fn scope() -> PrivateAskScope {
     }
 }
 
-fn executable(path: &Path) -> RecapExecutableIdentity {
+pub(super) fn executable(path: &Path) -> RecapExecutableIdentity {
     RecapExecutableIdentity {
         resolved_path: path.to_owned(),
         version: "fixture-1".into(),
@@ -30,13 +30,18 @@ fn executable(path: &Path) -> RecapExecutableIdentity {
     }
 }
 
-const FIXTURE_PERSONA: &str = "You are Scout, the repository archaeologist.";
+pub(super) const FIXTURE_PERSONA: &str = "You are Scout, the repository archaeologist.";
 
-fn state(path: &Path, runtime_id: &str, model: &str, profile: Option<&str>) -> SelectedAgentState {
+pub(super) fn state(
+    path: &Path,
+    runtime_id: &str,
+    model: &str,
+    profile: Option<&str>,
+) -> SelectedAgentState {
     state_with_persona(path, runtime_id, model, profile, FIXTURE_PERSONA)
 }
 
-fn state_with_persona(
+pub(super) fn state_with_persona(
     path: &Path,
     runtime_id: &str,
     model: &str,
@@ -57,7 +62,7 @@ fn state_with_persona(
     }
 }
 
-fn grounding() -> GroundedSource {
+pub(super) fn grounding() -> GroundedSource {
     let content = "fn answer() {\n    42\n}\n".to_string();
     GroundedSource {
         path: "src/lib.rs".into(),
@@ -69,7 +74,7 @@ fn grounding() -> GroundedSource {
     }
 }
 
-fn request() -> PrivateAskRequest {
+pub(super) fn request() -> PrivateAskRequest {
     PrivateAskRequest {
         scope: scope(),
         source_revision: "git:0123456789abcdef0123456789abcdef01234567".into(),
@@ -78,7 +83,7 @@ fn request() -> PrivateAskRequest {
     }
 }
 
-fn admission(
+pub(super) fn admission(
     path: &Path,
     runtime_id: &str,
     model: &str,
@@ -89,12 +94,12 @@ fn admission(
     admit_private_ask(request(), selected, capability).unwrap()
 }
 
-fn owned_receipt(fixture: &tempfile::TempDir) -> VerifiedStagingOwnership {
+pub(super) fn owned_receipt(fixture: &tempfile::TempDir) -> VerifiedStagingOwnership {
     super::super::recap_ownership::VerifiedStagingOwnership::for_test(fixture.path()).unwrap()
 }
 
 #[cfg(unix)]
-fn fake_runtime(dir: &Path, name: &str, script: &str) -> PathBuf {
+pub(super) fn fake_runtime(dir: &Path, name: &str, script: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, script).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();

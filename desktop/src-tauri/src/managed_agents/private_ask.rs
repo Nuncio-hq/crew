@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+mod capability;
 mod containment;
 mod launch;
 mod profile;
@@ -726,3 +727,11 @@ impl PrivateAskAttempt {
 #[cfg(test)]
 #[path = "private_ask/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "private_ask/containment_tests.rs"]
+mod containment_tests;
+
+#[cfg(test)]
+#[path = "private_ask/capability_tests.rs"]
+mod capability_tests;
