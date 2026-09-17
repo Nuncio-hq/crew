@@ -126,14 +126,97 @@ pub(super) fn build_prompt_with_nonce(
     prompt.push_str(&request.question);
     prompt.push_str(&format!("\n</question-{nonce}>\n\n<grounding-{nonce}>\n"));
     for source in &request.grounding {
-        prompt.push_str(&format!(
-            "<source-{nonce} path=\"{}\" lines=\"{}-{}\" sha256=\"{}\">\n{}\n</source-{nonce}>\n",
-            source.path, source.start_line, source.end_line, source.source_hash, source.content,
-        ));
+        prompt.push_str(&source_block(nonce, source));
     }
     prompt.push_str(&format!("</grounding-{nonce}>\n"));
     if prompt.len() > PRIVATE_ASK_INPUT_LIMIT {
         return Err(PrivateAskFailure::InputLimit);
     }
     Ok(prompt)
+}
+
+/// One grounded source, rendered exactly as `build_prompt_with_nonce` renders
+/// it. Shared so the budget below measures the bytes that are actually written
+/// rather than an estimate that drifts from them.
+fn source_block(nonce: &str, source: &super::GroundedSource) -> String {
+    format!(
+        "<source-{nonce} path=\"{}\" lines=\"{}-{}\" sha256=\"{}\">\n{}\n</source-{nonce}>\n",
+        source.path, source.start_line, source.end_line, source.source_hash, source.content,
+    )
+}
+
+/// A nonce-shaped stand-in for measuring the prompt envelope.
+///
+/// Every production nonce is a 32-character simple-form UUID, so a placeholder
+/// of the same length measures the same number of bytes. Measuring with a real
+/// nonce would be identical; this one is fixed so the measurement cannot depend
+/// on which run it was taken in.
+const MEASURING_NONCE: &str = "00000000000000000000000000000000";
+
+/// Assert one request fits the prompt bound under this persona, and name the
+/// half that did not.
+///
+/// A refusal must send the reader to the right problem: `QuestionLimit` when
+/// the envelope alone overflows — the question or persona really is too large
+/// — and `InputLimit` only when grounding pushed an otherwise-fitting envelope
+/// over, which is an invariant breach because grounding is trimmed to fit
+/// before a request is ever built.
+pub(super) fn check_fits(
+    request: &super::PrivateAskRequest,
+    persona: &str,
+) -> Result<(), PrivateAskFailure> {
+    match build_prompt(request, persona) {
+        Ok(_) => Ok(()),
+        Err(PrivateAskFailure::InputLimit) => {
+            let mut bare = request.clone();
+            bare.grounding.clear();
+            match build_prompt_with_nonce(&bare, persona, MEASURING_NONCE) {
+                Err(PrivateAskFailure::InputLimit) => Err(PrivateAskFailure::QuestionLimit),
+                _ => Err(PrivateAskFailure::InputLimit),
+            }
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// Trim a request's grounding to what the prompt can actually carry.
+///
+/// The bug this exists to prevent: a grounding collector that filled its own
+/// 128 KiB budget, followed by an assembler that refused the *whole prompt* at
+/// the same 128 KiB. Every repository with enough readable source to fill the
+/// budget was then refused as though the viewer's question were too large. The
+/// envelope — persona, run policy, citation instruction, scope, delimiters and
+/// the question — is therefore measured first, and grounding gets the
+/// remainder.
+///
+/// Sources are kept in the order the snapshot produced them and dropped from
+/// the first that does not fit, so the retained set is a prefix rather than an
+/// arbitrary subset: the citation fence checks what is present, and a hole in
+/// the middle would make the kept order meaningless to a reader.
+///
+/// An envelope that on its own exceeds the bound is
+/// [`PrivateAskFailure::QuestionLimit`]: with zero grounding there is nothing
+/// left to trim, so the question or persona really is too large.
+pub(super) fn fit_grounding(
+    request: &mut super::PrivateAskRequest,
+    persona: &str,
+) -> Result<(), PrivateAskFailure> {
+    let grounding = std::mem::take(&mut request.grounding);
+    let envelope = match build_prompt_with_nonce(request, persona, MEASURING_NONCE) {
+        Ok(envelope) => envelope.len(),
+        Err(PrivateAskFailure::InputLimit) => return Err(PrivateAskFailure::QuestionLimit),
+        Err(other) => return Err(other),
+    };
+    let Some(mut budget) = PRIVATE_ASK_INPUT_LIMIT.checked_sub(envelope) else {
+        return Err(PrivateAskFailure::QuestionLimit);
+    };
+    for source in grounding {
+        let Some(remaining) = budget.checked_sub(source_block(MEASURING_NONCE, &source).len())
+        else {
+            break;
+        };
+        budget = remaining;
+        request.grounding.push(source);
+    }
+    Ok(())
 }

@@ -109,6 +109,19 @@ impl PrivateAskSelection {
         &self.binding.state.session_generation
     }
 
+    /// The grounding this selection will actually prompt with, after the
+    /// prompt budget trimmed it.
+    #[cfg(test)]
+    pub(crate) fn grounding(&self) -> &[GroundedSource] {
+        &self.binding.request.grounding
+    }
+
+    /// The assembled prompt this selection would send, under its own persona.
+    #[cfg(test)]
+    pub(crate) fn prompt(&self) -> Result<String, PrivateAskFailure> {
+        super::prompt::build_prompt(&self.binding.request, &self.binding.state.persona)
+    }
+
     #[cfg(test)]
     pub(crate) fn lifecycle(&self) -> AgentLifecycle {
         self.binding.state.lifecycle
@@ -176,7 +189,13 @@ pub(crate) fn resolve_observed_selection(
         session_generation(&live.start_nonce),
         lifecycle,
     )?;
-    let request = PrivateAskRequest::from_verified_snapshot(scope, question, snapshot, grounding)?;
+    let request = PrivateAskRequest::from_verified_snapshot(
+        scope,
+        question,
+        snapshot,
+        grounding,
+        &state.persona,
+    )?;
 
     Ok(PrivateAskSelection {
         binding: PrivateAskBinding {
@@ -292,7 +311,14 @@ fn session_generation(start_nonce: &str) -> String {
 /// pure and the branches below are testable without a grant, a folder or a
 /// repository: a reference that cannot be read is skipped, a snapshot whose
 /// revision belongs to a different checkout mode grounds nothing, and the total
-/// is truncated at the input limit rather than overflowing it.
+/// is bounded rather than unbounded.
+///
+/// The bound here is a READ bound — how much source this is willing to pull off
+/// disk — and deliberately not the prompt bound. What actually fits the prompt
+/// depends on the persona and question, neither of which is known here, so the
+/// prompt-side trim belongs to `prompt::fit_grounding` and happens when the
+/// request is built. Enforcing the prompt bound in both places is what made
+/// every well-stocked repository refuse as though its question were too large.
 ///
 /// Zero grounding is a legal Ask — an install with no chosen source folder can
 /// still ask — so nothing here fails the attempt.
@@ -312,6 +338,8 @@ pub(crate) fn collect_grounding<E>(
     }
     let mut grounding = Vec::new();
     let mut budget = super::PRIVATE_ASK_INPUT_LIMIT;
+    // Reading exactly the prompt bound is enough: the prompt-side trim can only
+    // keep less than this, never more.
     for page in snapshot.pages() {
         for reference in page.source_references() {
             let Ok(file) = read(&revision, reference) else {

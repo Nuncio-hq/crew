@@ -443,6 +443,54 @@ fn grounding_is_collected_from_the_snapshots_own_references() {
     );
 }
 
+/// A repository with far more readable source than the prompt bound still
+/// gets an answer: the envelope is measured first and grounding is trimmed to
+/// the remainder, rather than the whole prompt being refused at the same bound
+/// the grounding collector already filled.
+///
+/// Production line: the `prompt::fit_grounding` call in
+/// `PrivateAskRequest::from_verified_snapshot`. Remove it and this resolution
+/// fails as an input-limit refusal instead of producing a selection.
+#[test]
+fn grounding_past_the_prompt_bound_is_trimmed_rather_than_refused() {
+    let fixture = canonical_tempdir();
+    let publication = publication();
+    let snapshot = verified(&publication);
+    let observation = Observation::new(fixture.path());
+
+    // Well past the bound: forty sources of eight KiB each is 320 KiB of
+    // content against a 128 KiB prompt.
+    let oversupplied: Vec<GroundedSource> = (0..40)
+        .map(|index| {
+            let content = "x".repeat(8 * 1024);
+            GroundedSource {
+                path: format!("src/file{index}.rs"),
+                start_line: 1,
+                end_line: 1,
+                source_hash: crew_wiki::source_snapshot::source_hash(content.as_bytes()),
+                content,
+                snapshot_head_event_id: snapshot.index().head_event_id().to_owned(),
+            }
+        })
+        .collect();
+
+    let selection =
+        resolve_with_grounding(&observation, scope(), &fixture, &snapshot, oversupplied)
+            .expect("an over-supplied repository still resolves to a selection");
+
+    let kept = selection.grounding().len();
+    assert!(
+        (1..40).contains(&kept),
+        "grounding must be trimmed, not dropped and not kept whole: kept {kept}"
+    );
+    let prompt = selection
+        .prompt()
+        .expect("the trimmed prompt fits its bound");
+    assert!(prompt.len() <= super::super::PRIVATE_ASK_INPUT_LIMIT);
+    // The trimmed set is a prefix of what was supplied, in order.
+    assert_eq!(selection.grounding()[0].path(), "src/file0.rs");
+}
+
 /// A resolved selection answers through the production path: resolve, probe,
 /// admit, run the contained one-shot. It needs the real Seatbelt boundary, so
 /// it is macOS-only; `fail_closed_tests` covers the refusal elsewhere.

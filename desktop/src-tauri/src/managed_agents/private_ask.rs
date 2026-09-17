@@ -214,11 +214,17 @@ impl PrivateAskRequest {
     /// Bind one question to the exact repository and revision in a verified
     /// snapshot.  There is no free-form production constructor for a source
     /// revision or grounding list.
+    ///
+    /// `persona` is the selected agent's own effective persona. It is taken
+    /// here rather than at admission because the prompt envelope it belongs to
+    /// decides how much grounding fits: without it the request would be built
+    /// with more source than the prompt can carry and then refused.
     pub(crate) fn from_verified_snapshot(
         scope: PrivateAskScope,
         question: String,
         snapshot: &crew_wiki::snapshot_v1::VerifiedSnapshot,
         grounding: Vec<GroundedSource>,
+        persona: &str,
     ) -> Result<Self, PrivateAskFailure> {
         let manifest = snapshot.index().manifest();
         if scope.repo_owner != manifest.2 || scope.repo_d != manifest.3 {
@@ -231,12 +237,13 @@ impl PrivateAskRequest {
         {
             return Err(PrivateAskFailure::InvalidGrounding);
         }
-        let request = Self {
+        let mut request = Self {
             scope,
             source_revision: snapshot.index().source_revision().to_owned(),
             question,
             grounding,
         };
+        prompt::fit_grounding(&mut request, persona)?;
         request.validate()?;
         Ok(request)
     }
@@ -254,11 +261,9 @@ impl PrivateAskRequest {
         }
         // The persona is not known here; admission re-checks the bound with the
         // selected agent's actual persona before anything can launch.
-        let prompt = build_prompt(self, "")?;
-        if prompt.len() > PRIVATE_ASK_INPUT_LIMIT {
-            return Err(PrivateAskFailure::InputLimit);
-        }
-        Ok(())
+        // `build_prompt` enforces the bound itself; measuring its output again
+        // here would be a second copy of the same rule that could drift.
+        prompt::check_fits(self, "")
     }
 }
 
@@ -428,6 +433,11 @@ pub(crate) enum PrivateAskFailure {
     InvalidQuestion,
     InvalidGrounding,
     InputLimit,
+    /// The question and persona alone — with no grounding at all — do not fit
+    /// the prompt bound. Distinct from [`Self::InputLimit`], which is the
+    /// assembled-prompt invariant: grounding is trimmed to fit, never refused,
+    /// so a viewer is only told their input is too large when it actually is.
+    QuestionLimit,
     ScopeMismatch,
     AgentUnbound,
     AccessRevoked,
@@ -462,6 +472,9 @@ impl std::fmt::Display for PrivateAskFailure {
             Self::InvalidQuestion => f.write_str("private Ask question is invalid"),
             Self::InvalidGrounding => f.write_str("private Ask grounding is invalid"),
             Self::InputLimit => f.write_str("private Ask input exceeds its bound"),
+            Self::QuestionLimit => {
+                f.write_str("private Ask question exceeds its bound before any source is grounded")
+            }
             Self::ScopeMismatch => f.write_str("private Ask scope changed"),
             Self::AgentUnbound => f.write_str("selected agent is unavailable"),
             Self::AccessRevoked => f.write_str("private Ask access was revoked"),
@@ -577,9 +590,11 @@ pub(crate) fn admit_private_ask(
     {
         return Err(PrivateAskFailure::SelectionChanged);
     }
-    if build_prompt(&request, &state.persona)?.len() > PRIVATE_ASK_INPUT_LIMIT {
-        return Err(PrivateAskFailure::InputLimit);
-    }
+    // The assembled prompt must fit under the agent's REAL persona, which the
+    // request's own validation could not see. Grounding was already trimmed to
+    // this persona when the selection was resolved, so this is the invariant
+    // check rather than the place a viewer is normally refused.
+    prompt::check_fits(&request, &state.persona)?;
     if state.runtime_id == "hermes"
         && state
             .profile
