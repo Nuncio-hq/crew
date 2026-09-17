@@ -6,6 +6,7 @@ import {
   collectLiveJobSignals,
   hrefForWorkbenchPlace,
   isLiveAgentJob,
+  liveRunsForThread,
   resolveWorkbenchPlace,
   selectedSessionFromLocation,
   shouldShowLiveJobDesk,
@@ -115,6 +116,53 @@ describe("live job desk (#219)", () => {
         search: {},
       }),
       { channelId: null, threadRootId: null },
+    );
+  });
+});
+
+describe("live runs of a thread", () => {
+  it("drops incomplete and duplicate run identities", () => {
+    assert.deepEqual(
+      liveRunsForThread([
+        {
+          agentPubkey: "agent",
+          progressLabel: "Working",
+          runs: [
+            { sessionId: "s", turnId: "t" },
+            { sessionId: "s", turnId: "t" },
+            { sessionId: "s", turnId: null },
+            { sessionId: "", turnId: "t" },
+          ],
+        },
+        { agentPubkey: "other" },
+      ]),
+      [
+        {
+          agentPubkey: "agent",
+          sessionId: "s",
+          turnId: "t",
+          liveness: "Working",
+        },
+      ],
+    );
+  });
+
+  it("keeps one entry per agent for runs that share a session", () => {
+    assert.deepEqual(
+      liveRunsForThread([
+        { agentPubkey: "a", runs: [{ sessionId: "s", turnId: "t" }] },
+        { agentPubkey: "b", runs: [{ sessionId: "s", turnId: "t" }] },
+      ]).map((run) => run.agentPubkey),
+      ["a", "b"],
+    );
+  });
+
+  it("has no liveness label when the summary carries none", () => {
+    assert.equal(
+      liveRunsForThread([
+        { agentPubkey: "a", runs: [{ sessionId: "s", turnId: "t" }] },
+      ])[0].liveness,
+      null,
     );
   });
 });

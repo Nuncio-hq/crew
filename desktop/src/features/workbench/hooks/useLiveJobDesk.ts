@@ -5,8 +5,11 @@ import { useActiveAgentsForConversation } from "@/features/agents/activeAgentTur
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import { useActiveTurnSummariesForConversation } from "@/features/agents/activeConversationAgentTurnSummaries";
+import { useRecentOutcomeForConversation } from "@/features/agents/recentConversationOutcomes";
 import {
   collectLiveJobSignals,
+  liveRunsForThread,
   shouldShowLiveJobDesk,
 } from "../lib/liveJobDesk";
 import { userInputBelongsToThread } from "../lib/workbenchTranscript";
@@ -50,7 +53,14 @@ export function useLiveJobDesk(args: {
     [activeAgentPubkeys.length, missionRow?.status, pendingOnThread.length],
   );
   const show = shouldShowLiveJobDesk(signals);
-  const managedAgents = useManagedAgentsQuery({ enabled: show }).data ?? [];
+  const outcome = useRecentOutcomeForConversation(conversationId);
+  // A cold mount into a just-cancelled thread renders StoppedRunTrace
+  // (`!show`) before it renders the strip, so the agent-name lookup must stay
+  // enabled through that trace window too — otherwise the trace reads the
+  // empty managed-agents cache and falls back to the generic "Agent" name.
+  const managedAgents =
+    useManagedAgentsQuery({ enabled: show || outcome?.outcome === "cancelled" })
+      .data ?? [];
   const targetPubkey = React.useMemo(() => {
     if (activeAgentPubkeys[0]) return normalizePubkey(activeAgentPubkeys[0]);
     const pendingPubkey = pendingOnThread[0]?.event.pubkey;
@@ -59,20 +69,36 @@ export function useLiveJobDesk(args: {
       ? normalizePubkey(missionRow.agents[0].pubkey)
       : null;
   }, [activeAgentPubkeys, missionRow?.agents, pendingOnThread]);
-  const targetName = React.useMemo(() => {
-    if (!targetPubkey) return "Agent";
-    const named =
-      managedAgents.find(
-        (agent) => normalizePubkey(agent.pubkey) === targetPubkey,
-      )?.name ??
-      missionRow?.agents.find(
-        (agent) => normalizePubkey(agent.pubkey) === targetPubkey,
-      )?.name;
-    return named || "Agent";
-  }, [managedAgents, missionRow?.agents, targetPubkey]);
+  // The exact run identities come from the same store the Activity picker
+  // reads, keyed by the same derived conversation id, so the strip can never
+  // offer a run Activity would not have listed.
+  const summaries = useActiveTurnSummariesForConversation(conversationId);
+  const runs = React.useMemo(
+    () => (conversationId ? liveRunsForThread(summaries) : []),
+    [conversationId, summaries],
+  );
+  const nameFor = React.useCallback(
+    (pubkey: string | null) => {
+      if (!pubkey) return "Agent";
+      const normalized = normalizePubkey(pubkey);
+      const named =
+        managedAgents.find(
+          (agent) => normalizePubkey(agent.pubkey) === normalized,
+        )?.name ??
+        missionRow?.agents.find(
+          (agent) => normalizePubkey(agent.pubkey) === normalized,
+        )?.name;
+      return named || "Agent";
+    },
+    [managedAgents, missionRow?.agents],
+  );
+  const targetName = nameFor(targetPubkey);
 
   return {
     conversationId,
+    nameFor,
+    outcome,
+    runs,
     show,
     targetName,
     targetPubkey,

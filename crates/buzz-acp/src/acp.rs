@@ -229,14 +229,18 @@ pub struct AcpClient {
     /// a JSON-RPC *success*, not `-32601` — which the main loop would read as
     /// a delivered steer and drop the user's message from the queue.
     steering_supported: bool,
-    /// Per-turn channel for receiving goose-native non-cancelling steer
-    /// requests from the main loop. Installed by
-    /// [`install_steer_rx`](Self::install_steer_rx) at dispatch and
-    /// consumed (via `take()`) by `session_prompt_with_idle_timeout` so it
-    /// is dropped at scope exit alongside the turn it served. `None`
-    /// outside of a goose-native turn — the read loop's steer arm is
-    /// disabled in that case.
-    steer_rx: Option<tokio::sync::mpsc::Receiver<crate::pool::SteerRequest>>,
+    /// Whether this adapter advertises Crew's exact selected-invocation
+    /// steering contract. Strict requests never fall back to ordinary
+    /// steering or a new turn.
+    strict_steering_supported: bool,
+    /// Per-task channel for receiving non-cancelling steer requests from the
+    /// main loop. Installed at dispatch and shared by each prompt read loop in
+    /// one logical turn, including its optional plan continuation. The mutex
+    /// is held only while awaiting one channel receive; it is never held while
+    /// writing to or reading from the ACP process. `None` outside a prompt.
+    steer_rx: Option<
+        std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<crate::pool::SteerRequest>>>,
+    >,
     /// Usage tracker for goose/buzz-agent's cumulative notification format.
     goose_usage: UsageTracker,
     /// Bounded text streamed by the agent during the current turn.
@@ -424,6 +428,38 @@ const GOOSE_STEER_METHOD: &str = "_goose/unstable/session/steer";
 /// `{outcome}`. Gated on [`AcpClient::steering_supported`].
 const ACP_STEER_METHOD: &str = "_session/steering";
 
+/// Crew's strict selected-invocation steering uses the same wire method but a
+/// stronger parameter/result contract, gated by the strict capability flag.
+const STRICT_ACP_STEER_METHOD: &str = ACP_STEER_METHOD;
+
+/// Largest adapter-supplied steer rejection reason forwarded to the operator.
+pub(crate) const MAX_STEER_REASON_BYTES: usize = 240;
+
+/// Make an adapter's rejection reason safe to carry into a control result.
+///
+/// Control characters would corrupt the observer frame and the rendered
+/// feedback line, and an unbounded adapter string must not become an
+/// unbounded event payload. Truncation lands on a char boundary so a
+/// multibyte character at the cut cannot panic.
+pub(crate) fn bound_steer_reason(reason: Option<&str>) -> Option<String> {
+    let scrubbed: String = reason?
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = scrubbed.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.len() <= MAX_STEER_REASON_BYTES {
+        return Some(trimmed.to_owned());
+    }
+    let mut end = MAX_STEER_REASON_BYTES;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(trimmed[..end].trim_end().to_owned())
+}
+
 /// `outcome` value meaning the steer was applied to the turn Buzz is waiting
 /// on, which therefore keeps running.
 const STEER_OUTCOME_INJECTED: &str = "injected";
@@ -443,6 +479,9 @@ enum SteerTransport {
     /// [`ACP_STEER_METHOD`] — success carries an `outcome` that must be
     /// positively recognized before the steer counts as delivered.
     AcpExtension,
+    /// [`STRICT_ACP_STEER_METHOD`] — result echoes the exact request and turn
+    /// identities and settles only after append or a terminal rejection.
+    Strict,
 }
 
 fn build_client_capabilities(user_input_enabled: bool) -> serde_json::Value {
@@ -620,6 +659,7 @@ impl AcpClient {
             observer_context: ObserverContext::default(),
             active_run_id: None,
             steering_supported: false,
+            strict_steering_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
             turn_summary: String::new(),
@@ -690,6 +730,10 @@ impl AcpClient {
         let result = self.send_request("initialize", params).await?;
         self.steering_supported = result
             .pointer("/_meta/steering/supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        self.strict_steering_supported = result
+            .pointer("/_meta/steering/strictTurnTarget")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         tracing::debug!(target: "acp::init", "initialize response: {result}");
@@ -897,6 +941,7 @@ impl AcpClient {
     ///
     /// The idle deadline resets on any stdout activity from the agent. The hard
     /// deadline is an absolute wall-clock cap (safety valve).
+    #[allow(dead_code)] // Public compatibility API; production uses the invocation-aware form.
     pub async fn session_prompt_with_idle_timeout(
         &mut self,
         session_id: &str,
@@ -919,6 +964,7 @@ impl AcpClient {
     /// Used for slash-command pass-through: ACP connectors detect commands via
     /// the **first** block's text starting with `/`, so the harness sends
     /// `["/cmd args", "<buzz context>"]` instead of one wrapped block.
+    #[allow(dead_code)] // Public compatibility API; production uses the invocation-aware form.
     pub async fn session_prompt_blocks_with_idle_timeout(
         &mut self,
         session_id: &str,
@@ -926,9 +972,29 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        self.session_prompt_blocks_with_idle_timeout_and_invocation(
+            session_id,
+            prompt_blocks,
+            idle_timeout,
+            max_duration,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`Self::session_prompt_blocks_with_idle_timeout`], carrying the
+    /// immutable Crew invocation UUID used by exact selected-run steering.
+    pub async fn session_prompt_blocks_with_idle_timeout_and_invocation(
+        &mut self,
+        session_id: &str,
+        prompt_blocks: &[&str],
+        idle_timeout: std::time::Duration,
+        max_duration: std::time::Duration,
+        invocation_id: Option<&str>,
+    ) -> Result<StopReason, AcpError> {
         self.turn_summary.clear();
         self.remaining_prompt_budget = None;
-        let params = build_prompt_params(session_id, prompt_blocks);
+        let params = build_prompt_params_with_invocation(session_id, prompt_blocks, invocation_id);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
@@ -1230,33 +1296,35 @@ impl AcpClient {
         self.standard_usage.seed_zero_baseline(session_id);
     }
 
-    /// Install a per-turn steer request channel for goose-native
-    /// non-cancelling mid-turn delivery.
+    /// Install a per-task steer request channel for non-cancelling mid-turn
+    /// delivery.
     ///
-    /// Called by the dispatch path immediately before
-    /// [`session_prompt_with_idle_timeout`] for all prompt tasks.
+    /// Called by the dispatch path immediately before the actual prompt read
+    /// loop for all prompt tasks. A session bootstrap prompt, when present,
+    /// is intentionally completed first so it cannot consume this channel.
+    /// The receiver remains available for the optional continuation of that
+    /// logical turn.
     /// The matching `Sender` is stored in `TaskMeta.steer_tx` for the
     /// main loop's mode-gate fork to drive.
     ///
     /// Panics if a receiver is already installed — there is exactly one
-    /// turn per `AcpClient` at a time, and stacking receivers would
-    /// silently misroute steer requests across turns. The previous
-    /// turn's receiver must have been consumed by the read loop and
-    /// dropped at scope exit before the next turn dispatches.
+    /// logical task per `AcpClient` at a time, and stacking receivers would
+    /// silently misroute steer requests across tasks. The task teardown must
+    /// clear the receiver before the next dispatch.
     pub fn install_steer_rx(&mut self, rx: tokio::sync::mpsc::Receiver<crate::pool::SteerRequest>) {
         assert!(
             self.steer_rx.is_none(),
-            "install_steer_rx: previous turn's receiver was not consumed — \
-             stacking receivers would misroute steer requests across turns"
+            "install_steer_rx: previous task's receiver was not cleared — \
+             stacking receivers would misroute steer requests across tasks"
         );
-        self.steer_rx = Some(rx);
+        self.steer_rx = Some(std::sync::Arc::new(tokio::sync::Mutex::new(rx)));
     }
 
     /// Clear any installed steer receiver without consuming it.
     ///
     /// Called by `send_prompt_result` on every exit path of `run_prompt_task`
     /// so that `install_steer_rx`'s `is_none()` invariant holds for the next
-    /// dispatch even when the turn ended before the read loop ran `take()`.
+    /// dispatch, including when the task ended before the read loop ran.
     /// Idempotent — safe to call when `steer_rx` is already `None`.
     pub fn clear_steer_rx(&mut self) {
         self.steer_rx = None;
@@ -1391,6 +1459,13 @@ impl AcpClient {
         let prompt_id = self.last_prompt_id.take().ok_or_else(|| {
             AcpError::Protocol("cancel_with_cleanup called with no in-flight prompt".into())
         })?;
+        // A cleanup drain belongs to the ending prompt, not to its next
+        // logical task. Close the selected-run receiver before sending the
+        // cancel notification so a request queued during cancellation cannot
+        // be written to a cancelled run or stranded until task teardown.
+        // The normal prompt path keeps this receiver through its optional
+        // plan continuation; cleanup is the terminal path for that task.
+        self.clear_steer_rx();
         if let (Some(runtime), Some(event_id)) = (
             self.user_input_runtime.as_ref(),
             self.pending_user_input_event_id.as_deref(),
@@ -1715,13 +1790,13 @@ impl AcpClient {
     ) -> Result<serde_json::Value, AcpError> {
         use tokio::time::Instant;
 
-        // Take the per-turn steer receiver into a local so it can be
-        // borrowed independently of `self.reader` inside `select!`.
-        // Dropped at scope exit (return paths drain `pending_steer` first
-        // so the ack_tx oneshot is never leaked silently).
-        let mut steer_rx = self.steer_rx.take();
+        // Clone the receiver handle so it can be borrowed independently of
+        // `self.reader` inside `select!`. The underlying receiver survives a
+        // successful prompt read for an optional plan continuation; task
+        // teardown clears the owning field after the logical turn ends.
+        let steer_rx = self.steer_rx.clone();
 
-        // Tracks the in-flight steer write: `(request_id, transport, ack_tx)`.
+        // Tracks the in-flight steer write: `(request_id, transport, target, ack_tx)`.
         // While `Some`, the steer arm is gated off so we don't stack writes,
         // and a response matching `id` is routed to the ack_tx instead
         // of being treated as the prompt result. `transport` records which
@@ -1731,6 +1806,7 @@ impl AcpClient {
         let mut pending_steer: Option<(
             u64,
             SteerTransport,
+            Option<crate::pool::StrictSteerTarget>,
             tokio::sync::oneshot::Sender<crate::pool::SteerAck>,
         )> = None;
 
@@ -1765,7 +1841,7 @@ impl AcpClient {
             // exists). Check the classified deadline here so a steady-
             // stream agent is still bounded.
             if pending_elicitation.is_none() && Instant::now() >= next_deadline {
-                if let Some((_, _, ack_tx)) = pending_steer.take() {
+                if let Some((_, _, _, ack_tx)) = pending_steer.take() {
                     // Prompt is timing out — release the withheld event via
                     // PromptCompletedNeutral (no fallback signal: there is
                     // no in-flight turn to signal once we return, and
@@ -1789,14 +1865,18 @@ impl AcpClient {
                 read_result = self.reader.next() => Some(read_result),
                 // Steer arm: gated off whenever a steer write is already in
                 // flight so we don't stack two writes against the same
-                // process. The `async { steer_rx.as_mut()?.recv().await }`
+                // process. The `async { steer_rx.as_ref()?.lock().await.recv().await }`
                 // wrapper produces `None` when no receiver is installed,
                 // which mismatches the `Some(req)` pattern and disables the
                 // branch for that iteration (no busy loop). Cancel-safe:
-                // `mpsc::Receiver::recv` does not lose messages on drop.
+                // `mpsc::Receiver::recv` does not lose messages on drop, and
+                // dropping this branch releases the async mutex guard.
                 Some(req) = async {
-                    match steer_rx.as_mut() {
-                        Some(rx) => rx.recv().await,
+                    match steer_rx.as_ref() {
+                        Some(rx) => {
+                            let mut rx = rx.lock().await;
+                            rx.recv().await
+                        }
                         None => None,
                     }
                 }, if pending_steer.is_none() => {
@@ -1828,30 +1908,62 @@ impl AcpClient {
                     // delivered steer and silently drop the user's message.
                     let prompt_block_refs: Vec<&str> =
                         req.prompt_blocks.iter().map(String::as_str).collect();
-                    let selected = match (&self.active_run_id, self.steering_supported) {
-                        (Some(run_id), _) => Some((
-                            SteerTransport::Goose,
-                            GOOSE_STEER_METHOD,
-                            build_goose_steer_params(session_id, run_id, &prompt_block_refs),
-                        )),
-                        (None, true) => Some((
-                            SteerTransport::AcpExtension,
-                            ACP_STEER_METHOD,
-                            build_acp_steer_params(session_id, &prompt_block_refs),
-                        )),
-                        (None, false) => None,
+                    let selected = if let Some(target) = req.strict_target.as_ref() {
+                        if !self.strict_steering_supported
+                            || target.session_id != session_id
+                            || self.observer_context.turn_id.as_deref()
+                                != Some(target.turn_id.as_str())
+                        {
+                            None
+                        } else {
+                            Some((
+                                SteerTransport::Strict,
+                                STRICT_ACP_STEER_METHOD,
+                                build_strict_steer_params(
+                                    session_id,
+                                    target,
+                                    &prompt_block_refs,
+                                ),
+                                Some(target.clone()),
+                            ))
+                        }
+                    } else {
+                        match (&self.active_run_id, self.steering_supported) {
+                            (Some(run_id), _) => Some((
+                                SteerTransport::Goose,
+                                GOOSE_STEER_METHOD,
+                                build_goose_steer_params(session_id, run_id, &prompt_block_refs),
+                                None,
+                            )),
+                            (None, true) => Some((
+                                SteerTransport::AcpExtension,
+                                ACP_STEER_METHOD,
+                                build_acp_steer_params(session_id, &prompt_block_refs),
+                                None,
+                            )),
+                            (None, false) => None,
+                        }
                     };
                     match selected {
                         None => {
-                            tracing::warn!(
-                                "steer: no active_run_id and agent did not advertise \
-                                 {ACP_STEER_METHOD} — falling back to cancel+merge"
-                            );
+                            let error = if req.strict_target.is_some() {
+                                if self.strict_steering_supported {
+                                    crate::pool::SteerError::StrictTargetMismatch
+                                } else {
+                                    crate::pool::SteerError::StrictUnsupported
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "steer: no active_run_id and agent did not advertise \
+                                     {ACP_STEER_METHOD} — falling back to cancel+merge"
+                                );
+                                crate::pool::SteerError::ExpectedRunIdMissing
+                            };
                             let _ = req.ack_tx.send(crate::pool::SteerAck::Err(
-                                crate::pool::SteerError::ExpectedRunIdMissing,
+                                error,
                             ));
                         }
-                        Some((transport, method, params)) => {
+                        Some((transport, method, params, target)) => {
                             let id = self.next_id;
                             self.next_id += 1;
                             let msg = serde_json::json!({
@@ -1867,7 +1979,11 @@ impl AcpClient {
                             );
                             match self.write_ndjson(&msg).await {
                                 Ok(()) => {
-                                    pending_steer = Some((id, transport, req.ack_tx));
+                                    // From here the request has reached the
+                                    // adapter: a later lost ack is
+                                    // "outcome unknown", never "never sent".
+                                    req.dispatched.mark_dispatched();
+                                    pending_steer = Some((id, transport, target, req.ack_tx));
                                 }
                                 Err(e) => {
                                     tracing::warn!(
@@ -1953,7 +2069,7 @@ impl AcpClient {
                     // would catch this anyway, but firing the deadline arm
                     // here makes the wakeup immediate (no extra reader poll
                     // round-trip when stdout is idle).
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
+                    if let Some((_, _, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     if idle_fires_first {
@@ -1977,13 +2093,13 @@ impl AcpClient {
 
             match read_result {
                 None => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
+                    if let Some((_, _, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     return Err(AcpError::AgentExited);
                 }
                 Some(Err(LinesCodecError::MaxLineLengthExceeded)) => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
+                    if let Some((_, _, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     return Err(AcpError::Protocol(
@@ -1991,7 +2107,7 @@ impl AcpClient {
                     ));
                 }
                 Some(Err(e)) => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
+                    if let Some((_, _, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     return Err(AcpError::Io(std::io::Error::other(e)));
@@ -2040,13 +2156,13 @@ impl AcpClient {
                     // share the `no method` guard.
                     if let Some(id) = msg.get("id") {
                         if msg.get("method").is_none() {
-                            if let Some((steer_id, _, _)) = pending_steer.as_ref() {
+                            if let Some((steer_id, _, _, _)) = pending_steer.as_ref() {
                                 if *id == serde_json::json!(*steer_id) {
                                     // Take the ack_tx out and route the
                                     // response. We do not return — keep
                                     // reading until the prompt response
                                     // arrives.
-                                    let (_, transport, ack_tx) =
+                                    let (_, transport, target, ack_tx) =
                                         pending_steer.take().expect("just checked");
                                     let ack = if let Some(error) = msg.get("error") {
                                         let code = error
@@ -2054,15 +2170,91 @@ impl AcpClient {
                                             .and_then(|c| c.as_i64())
                                             .unwrap_or(-1);
                                         let message = error.to_string();
-                                        crate::pool::SteerAck::Err(
-                                            crate::pool::SteerError::AgentError { code, message },
-                                        )
+                                        if matches!(transport, SteerTransport::Strict) {
+                                            crate::pool::SteerAck::Err(
+                                                crate::pool::SteerError::StrictOutcome {
+                                                    outcome: "rejected".into(),
+                                                    reason: bound_steer_reason(
+                                                        error
+                                                            .get("message")
+                                                            .and_then(|m| m.as_str()),
+                                                    ),
+                                                },
+                                            )
+                                        } else {
+                                            crate::pool::SteerAck::Err(
+                                                crate::pool::SteerError::AgentError {
+                                                    code,
+                                                    message,
+                                                },
+                                            )
+                                        }
                                     } else {
                                         // Success result. Whether it counts as
                                         // a delivered steer — and whether the
                                         // turn Buzz awaits is still running —
                                         // depends on the transport.
                                         let outcome = match transport {
+                                            SteerTransport::Strict => {
+                                                let Some(target) = target.as_ref() else {
+                                                    let _ = ack_tx.send(crate::pool::SteerAck::Err(
+                                                        crate::pool::SteerError::StrictResponseMismatch,
+                                                    ));
+                                                    continue;
+                                                };
+                                                let result = &msg["result"];
+                                                if result["requestId"].as_str()
+                                                    != Some(target.request_id.as_str())
+                                                    || result["turnId"].as_str()
+                                                        != Some(target.turn_id.as_str())
+                                                {
+                                                    let _ = ack_tx.send(crate::pool::SteerAck::Err(
+                                                        crate::pool::SteerError::StrictResponseMismatch,
+                                                    ));
+                                                    continue;
+                                                }
+                                                let Some(outcome) = result["outcome"].as_str()
+                                                else {
+                                                    let _ = ack_tx
+                                                        .send(crate::pool::SteerAck::Err(
+                                                        crate::pool::SteerError::OutcomeRejected {
+                                                            outcome: "<absent>".into(),
+                                                        },
+                                                    ));
+                                                    continue;
+                                                };
+                                                if outcome == "appended" {
+                                                    let _ = ack_tx.send(
+                                                        crate::pool::SteerAck::Success {
+                                                            session_id: session_id.to_owned(),
+                                                        },
+                                                    );
+                                                } else if matches!(
+                                                    outcome,
+                                                    "stale_target"
+                                                        | "rejected"
+                                                        | "busy"
+                                                        | "expired"
+                                                ) {
+                                                    let _ = ack_tx
+                                                        .send(crate::pool::SteerAck::Err(
+                                                        crate::pool::SteerError::StrictOutcome {
+                                                            outcome: outcome.to_owned(),
+                                                            reason: bound_steer_reason(
+                                                                result["reason"].as_str(),
+                                                            ),
+                                                        },
+                                                    ));
+                                                } else {
+                                                    let _ = ack_tx
+                                                        .send(crate::pool::SteerAck::Err(
+                                                        crate::pool::SteerError::OutcomeRejected {
+                                                            outcome: outcome.to_owned(),
+                                                        },
+                                                    ));
+                                                }
+                                                continue;
+                                            }
                                             // goose returns no outcome field;
                                             // a success response means the
                                             // steer landed in the live run.
@@ -2146,13 +2338,13 @@ impl AcpClient {
                             }
                             if *id == serde_json::json!(expected_id) {
                                 if let Some(error) = msg.get("error") {
-                                    if let Some((_, _, ack_tx)) = pending_steer.take() {
+                                    if let Some((_, _, _, ack_tx)) = pending_steer.take() {
                                         let _ = ack_tx
                                             .send(crate::pool::SteerAck::PromptCompletedNeutral);
                                     }
                                     return Err(agent_error_from_json(error));
                                 }
-                                if let Some((_, _, ack_tx)) = pending_steer.take() {
+                                if let Some((_, _, _, ack_tx)) = pending_steer.take() {
                                     let _ =
                                         ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                                 }
@@ -2601,15 +2793,33 @@ impl AcpClient {
 }
 
 /// Build `session/prompt` params from one or more text content blocks.
+#[cfg(test)]
 fn build_prompt_params(session_id: &str, prompt_blocks: &[&str]) -> serde_json::Value {
+    build_prompt_params_with_invocation(session_id, prompt_blocks, None)
+}
+
+/// Build `session/prompt` params and, when supplied, bind the prompt to one
+/// immutable harness invocation UUID. The metadata is omitted for ordinary
+/// callers so existing adapters see the unchanged shape.
+fn build_prompt_params_with_invocation(
+    session_id: &str,
+    prompt_blocks: &[&str],
+    invocation_id: Option<&str>,
+) -> serde_json::Value {
     let blocks: Vec<serde_json::Value> = prompt_blocks
         .iter()
         .map(|text| serde_json::json!({ "type": "text", "text": text }))
         .collect();
-    serde_json::json!({
+    let mut params = serde_json::json!({
         "sessionId": session_id,
         "prompt": blocks,
-    })
+    });
+    if let Some(invocation_id) = invocation_id {
+        params["_meta"] = serde_json::json!({
+            "crew": { "invocationId": invocation_id },
+        });
+    }
+    params
 }
 
 /// Build `_goose/unstable/session/steer` params from one or more text
@@ -2649,6 +2859,20 @@ fn build_goose_steer_params(
 fn build_acp_steer_params(session_id: &str, prompt_blocks: &[&str]) -> serde_json::Value {
     serde_json::json!({
         "sessionId": session_id,
+        "prompt": steer_prompt_blocks(prompt_blocks),
+    })
+}
+
+/// Build the strict selected-invocation steering request.
+fn build_strict_steer_params(
+    session_id: &str,
+    target: &crate::pool::StrictSteerTarget,
+    prompt_blocks: &[&str],
+) -> serde_json::Value {
+    serde_json::json!({
+        "sessionId": session_id,
+        "expectedTurnId": target.turn_id,
+        "requestId": target.request_id,
         "prompt": steer_prompt_blocks(prompt_blocks),
     })
 }
@@ -4745,7 +4969,9 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["test steer body".into()],
+                    strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -4814,7 +5040,9 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["test steer body".into()],
+                    strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -4886,7 +5114,9 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -4960,7 +5190,9 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -4996,6 +5228,120 @@ done
         client.steering_supported = true;
     }
 
+    /// Drive one exact selected-run steer through the read loop. The observer
+    /// turn context is the same fence used by the production dispatch path;
+    /// without it, strict requests must be rejected before they reach the
+    /// adapter.
+    async fn run_one_strict_steer(
+        client: &mut AcpClient,
+        capture_path: &std::path::Path,
+        session_id: &str,
+        turn_id: &str,
+        request_id: &str,
+    ) -> (
+        Option<String>,
+        crate::pool::SteerAck,
+        crate::pool::SteerDispatchMarker,
+    ) {
+        client.strict_steering_supported = true;
+        client.set_observer_context(ObserverContext {
+            turn_id: Some(turn_id.to_owned()),
+            ..ObserverContext::default()
+        });
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(steer_rx);
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let dispatched = crate::pool::SteerDispatchMarker::default();
+        let target = crate::pool::StrictSteerTarget {
+            session_id: session_id.to_owned(),
+            turn_id: turn_id.to_owned(),
+            request_id: request_id.to_owned(),
+        };
+        steer_tx
+            .send(crate::pool::SteerRequest {
+                prompt_blocks: vec!["strict steer body".into()],
+                strict_target: Some(target),
+                ack_tx,
+                dispatched: dispatched.clone(),
+            })
+            .await
+            .expect("strict steer send should succeed");
+        let idle = std::time::Duration::from_millis(800);
+        let max_dur = std::time::Duration::from_secs(10);
+        let hard_deadline = tokio::time::Instant::now() + max_dur;
+        let _ = client
+            .read_until_response_with_idle_timeout(session_id, 999, idle, hard_deadline, max_dur)
+            .await;
+        let ack = ack_rx.await.expect("strict steer ack must be received");
+        (std::fs::read_to_string(capture_path).ok(), ack, dispatched)
+    }
+
+    #[tokio::test]
+    async fn strict_steer_writes_exact_target_and_accepts_append() {
+        let capture = capture_path("strict_shape");
+        let session = "session-exact";
+        let turn = "11111111-1111-4111-8111-111111111111";
+        let request = "22222222-2222-4222-8222-222222222222";
+        let response = format!(
+            r#"{{"jsonrpc":"2.0","id":0,"result":{{"requestId":"{request}","turnId":"{turn}","outcome":"appended"}}}}"#
+        );
+        let mut client = spawn_steer_capture_script(&capture, &response).await;
+        let (written, ack, dispatched) =
+            run_one_strict_steer(&mut client, &capture, session, turn, request).await;
+        // The marker is what separates "never sent" from "answer lost"; a
+        // written request must always carry it.
+        assert!(dispatched.was_dispatched());
+        let written = written.expect("strict steer request must have been written");
+        let msg: serde_json::Value =
+            serde_json::from_str(&written).expect("strict steer line must be valid JSON");
+        assert_eq!(msg["method"].as_str(), Some(STRICT_ACP_STEER_METHOD));
+        assert_eq!(msg["params"]["sessionId"].as_str(), Some(session));
+        assert_eq!(msg["params"]["expectedTurnId"].as_str(), Some(turn));
+        assert_eq!(msg["params"]["requestId"].as_str(), Some(request));
+        assert_eq!(
+            msg["params"]["prompt"][0]["text"].as_str(),
+            Some("strict steer body")
+        );
+        assert!(matches!(ack, crate::pool::SteerAck::Success { .. }));
+    }
+
+    #[tokio::test]
+    async fn strict_steer_response_echo_mismatch_never_counts_as_success() {
+        let capture = capture_path("strict_mismatch");
+        let turn = "33333333-3333-4333-8333-333333333333";
+        let request = "44444444-4444-4444-8444-444444444444";
+        let response = r#"{"jsonrpc":"2.0","id":0,"result":{"requestId":"wrong","turnId":"wrong","outcome":"appended"}}"#;
+        let mut client = spawn_steer_capture_script(&capture, response).await;
+        let (_written, ack, _dispatched) =
+            run_one_strict_steer(&mut client, &capture, "session-mismatch", turn, request).await;
+        assert!(matches!(
+            ack,
+            crate::pool::SteerAck::Err(crate::pool::SteerError::StrictResponseMismatch)
+        ));
+    }
+
+    #[tokio::test]
+    async fn strict_steer_rejection_carries_the_adapter_message_to_the_operator() {
+        let capture = capture_path("strict_reason");
+        let turn = "55555555-5555-4555-8555-555555555555";
+        let request = "66666666-6666-4666-8666-666666666666";
+        let response = r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32602,"message":"expectedTurnId must be a UUID"}}"#;
+        let mut client = spawn_steer_capture_script(&capture, response).await;
+        let (_written, ack, dispatched) =
+            run_one_strict_steer(&mut client, &capture, "session-reason", turn, request).await;
+        assert!(dispatched.was_dispatched());
+        match ack {
+            crate::pool::SteerAck::Err(crate::pool::SteerError::StrictOutcome {
+                outcome,
+                reason,
+            }) => {
+                assert_eq!(outcome, "rejected");
+                assert_eq!(reason.as_deref(), Some("expectedTurnId must be a UUID"));
+            }
+            other => panic!("strict rejection must carry its reason, got {other:?}"),
+        }
+    }
+
     /// Run `initialize` against a script that replies with `init_result` as
     /// the JSON-RPC result, and return the resulting `steering_supported`.
     async fn steering_supported_after_initialize(init_result: &str) -> bool {
@@ -5010,6 +5356,20 @@ done
             .await
             .expect("initialize should succeed");
         client.steering_supported()
+    }
+
+    async fn strict_steering_supported_after_initialize(init_result: &str) -> bool {
+        let script = format!(
+            "read -r _init; printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{result}}}'; \
+             sleep 5",
+            result = init_result,
+        );
+        let mut client = spawn_script(&script).await;
+        client
+            .initialize()
+            .await
+            .expect("initialize should succeed");
+        client.strict_steering_supported
     }
 
     /// Test 1a: an adapter advertising `_meta.steering.supported: true`
@@ -5052,6 +5412,37 @@ done
         assert!(
             !supported,
             "_meta.steering.supported: false must leave steering_supported false"
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_records_strict_steering_only_when_exact_capability_is_advertised() {
+        let supported = strict_steering_supported_after_initialize(
+            r#"{"protocolVersion":2,"_meta":{"steering":{"supported":true,"strictTurnTarget":true}}}"#,
+        )
+        .await;
+        assert!(
+            supported,
+            "strict Activity Steer requires the exact strictTurnTarget capability"
+        );
+
+        // buzz-agent advertises only the strict contract; strict must stay on.
+        let strict_only = strict_steering_supported_after_initialize(
+            r#"{"protocolVersion":2,"_meta":{"steering":{"supported":false,"strictTurnTarget":true}}}"#,
+        )
+        .await;
+        assert!(
+            strict_only,
+            "strict Activity Steer must not depend on the parameterless capability"
+        );
+
+        let unsupported = strict_steering_supported_after_initialize(
+            r#"{"protocolVersion":2,"_meta":{"steering":{"supported":true}}}"#,
+        )
+        .await;
+        assert!(
+            !unsupported,
+            "ordinary steering support must not imply strict Activity Steer"
         );
     }
 
@@ -5210,7 +5601,9 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");
@@ -5263,7 +5656,9 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    strict_target: None,
                     ack_tx,
+                    dispatched: Default::default(),
                 })
                 .await
                 .expect("steer_tx send should succeed");

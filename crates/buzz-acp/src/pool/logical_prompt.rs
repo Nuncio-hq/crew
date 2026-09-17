@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
 pub(super) async fn run_logical_prompt(
     acp: &mut AcpClient,
     session_id: &str,
@@ -14,8 +15,38 @@ pub(super) async fn run_logical_prompt(
     allow_continuation: bool,
     deciding: &AtomicBool,
 ) -> Result<StopReason, AcpError> {
+    run_logical_prompt_with_invocation(
+        acp,
+        session_id,
+        blocks,
+        idle_timeout,
+        max_duration,
+        allow_continuation,
+        deciding,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // One logical turn's explicit execution boundaries.
+pub(super) async fn run_logical_prompt_with_invocation(
+    acp: &mut AcpClient,
+    session_id: &str,
+    blocks: &[&str],
+    idle_timeout: Duration,
+    max_duration: Duration,
+    allow_continuation: bool,
+    deciding: &AtomicBool,
+    invocation_id: Option<&str>,
+) -> Result<StopReason, AcpError> {
     let reason = acp
-        .session_prompt_blocks_with_idle_timeout(session_id, blocks, idle_timeout, max_duration)
+        .session_prompt_blocks_with_idle_timeout_and_invocation(
+            session_id,
+            blocks,
+            idle_timeout,
+            max_duration,
+            invocation_id,
+        )
         .await?;
     if !allow_continuation || !matches!(reason, StopReason::EndTurn) {
         return Ok(reason);
@@ -31,11 +62,12 @@ pub(super) async fn run_logical_prompt(
     }
     // One continuation shares the remaining execution budget. Human decision
     // time is excluded, matching the existing ACP elicitation wait policy.
-    acp.session_prompt_blocks_with_idle_timeout(
+    acp.session_prompt_blocks_with_idle_timeout_and_invocation(
         session_id,
         &[PLAN_CONTINUE_PROMPT],
         idle_timeout,
         remaining,
+        invocation_id,
     )
     .await
 }

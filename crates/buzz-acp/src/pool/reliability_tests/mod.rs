@@ -6,6 +6,7 @@ use super::*;
 use nostr::{EventBuilder, Keys, Kind};
 
 mod continuation;
+mod session_identity;
 mod workspace;
 
 async fn inert_owned_agent(index: usize) -> OwnedAgent {

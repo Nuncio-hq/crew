@@ -20,7 +20,7 @@ const MAX_OUTCOME_ENTRIES = 512;
 
 /** Terminal outcome for one conversation/thread (latest event wins). */
 export type ConversationOutcomeEntry = {
-  outcome: "completed" | "error" | "lost-contact";
+  outcome: "completed" | "cancelled" | "error" | "lost-contact";
   agentPubkey: string;
   sessionId?: string;
   turnId?: string;
@@ -41,6 +41,12 @@ export type ConversationOutcomeEntry = {
     eventId: string;
     sessionId: string;
     turnId: string;
+  }>;
+  cancelledAgentSlots?: Array<{
+    agentPubkey: string;
+    triggeringEventIds: string[];
+    sessionId?: string;
+    turnId?: string;
   }>;
   failedAgentSlots?: Array<{
     agentPubkey: string;
@@ -65,6 +71,13 @@ export function conversationOutcomeTerminalOrderKey(
   ].join("\u0000");
 }
 
+function isStructuredOwnerCancellation(event: ObserverEvent): boolean {
+  if (event.kind !== "turn_error") return false;
+  if (!event.payload || typeof event.payload !== "object") return false;
+  const payload = event.payload as Record<string, unknown>;
+  return payload.outcome === "cancelled";
+}
+
 /** Build one exact producer/run-scoped terminal outcome from a signed frame. */
 export function buildSignedConversationOutcome(input: {
   agentKey: string;
@@ -77,11 +90,14 @@ export function buildSignedConversationOutcome(input: {
   sessionId?: string;
 }): ConversationOutcomeEntry {
   const triggers = [...input.triggeringEventIds];
+  const outcome =
+    input.event.kind === "turn_completed" && input.sessionId
+      ? "completed"
+      : isStructuredOwnerCancellation(input.event)
+        ? "cancelled"
+        : "error";
   return {
-    outcome:
-      input.event.kind === "turn_completed" && input.sessionId
-        ? "completed"
-        : "error",
+    outcome,
     agentPubkey: input.agentKey,
     sessionId: input.sessionId,
     turnId: input.resolvedTurnId,
@@ -107,11 +123,33 @@ export function buildSignedConversationOutcome(input: {
           turnId: input.resolvedTurnId,
         }))
       : undefined,
+    cancelledAgentSlots:
+      outcome === "cancelled"
+        ? [
+            {
+              agentPubkey: input.agentKey,
+              triggeringEventIds: [...triggers],
+              sessionId: input.sessionId,
+              turnId: input.resolvedTurnId,
+            },
+          ]
+        : undefined,
   };
 }
 
 function outcomeSlotKey(agentPubkey: string, triggeringEventIds: string[]) {
   return `${agentPubkey}\u0000${[...triggeringEventIds].sort().join("\u0000")}`;
+}
+
+function cancelledSlotFromEntry(
+  entry: ConversationOutcomeEntry,
+): NonNullable<ConversationOutcomeEntry["cancelledAgentSlots"]>[number] {
+  return {
+    agentPubkey: entry.agentPubkey,
+    triggeringEventIds: [...(entry.triggeringEventIds ?? [])],
+    sessionId: entry.sessionId,
+    turnId: entry.turnId,
+  };
 }
 
 function latestOutcomePresentation(
@@ -158,7 +196,15 @@ function aggregateSignedOutcome(
           },
         ]
       : []);
+  const priorCancelled =
+    prior?.cancelledAgentSlots ??
+    (prior?.outcome === "cancelled" ? [cancelledSlotFromEntry(prior)] : []);
   const failedAgentSlots = priorFailed.filter(
+    (slot) =>
+      outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) !==
+      incomingSlot,
+  );
+  const cancelledAgentSlots = priorCancelled.filter(
     (slot) =>
       outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) !==
       incomingSlot,
@@ -167,6 +213,14 @@ function aggregateSignedOutcome(
     failedAgentSlots.push({
       agentPubkey: incoming.agentPubkey,
       triggeringEventIds: incomingTriggers,
+    });
+  }
+  if (incoming.outcome === "cancelled") {
+    cancelledAgentSlots.push({
+      agentPubkey: incoming.agentPubkey,
+      triggeringEventIds: [...incomingTriggers],
+      sessionId: incoming.sessionId,
+      turnId: incoming.turnId,
     });
   }
   const incomingTriggerSet = new Set(incomingTriggers);
@@ -180,9 +234,15 @@ function aggregateSignedOutcome(
   const presentation = latestOutcomePresentation(prior, incoming);
   return {
     ...presentation,
-    outcome: failedAgentSlots.length > 0 ? "error" : incoming.outcome,
+    outcome:
+      failedAgentSlots.length > 0
+        ? "error"
+        : cancelledAgentSlots.length > 0
+          ? "cancelled"
+          : incoming.outcome,
     failedEventIds: failedAgentSlots.flatMap((slot) => slot.triggeringEventIds),
     failedAgentSlots,
+    cancelledAgentSlots,
     agentTriggerPairs: [
       ...new Map(
         completedPairs.map((pair) => [
@@ -209,6 +269,14 @@ function sharesOutcomeAuthoritySlot(
   );
   if (
     prior.failedAgentSlots?.some(
+      (slot) =>
+        outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) ===
+        incomingKey,
+    )
+  )
+    return true;
+  if (
+    prior.cancelledAgentSlots?.some(
       (slot) =>
         outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) ===
         incomingKey,
@@ -264,27 +332,47 @@ export function retireConversationOutcomeAgent(
   const remainingFailures = (existing.failedAgentSlots ?? []).filter(
     (slot) => slot.agentPubkey !== agentPubkey,
   );
+  const existingCancelled =
+    existing.cancelledAgentSlots ??
+    (existing.outcome === "cancelled"
+      ? [cancelledSlotFromEntry(existing)]
+      : []);
+  const remainingCancelled = existingCancelled.filter(
+    (slot) => slot.agentPubkey !== agentPubkey,
+  );
   if (
     remainingPairs.length === (existing.agentTriggerPairs?.length ?? 0) &&
-    remainingFailures.length === (existing.failedAgentSlots?.length ?? 0)
+    remainingFailures.length === (existing.failedAgentSlots?.length ?? 0) &&
+    remainingCancelled.length === existingCancelled.length
   ) {
     return existing.agentPubkey === agentPubkey
       ? outcomeByConversation.delete(conversationId)
       : false;
   }
-  if (remainingPairs.length === 0 && remainingFailures.length === 0)
+  if (
+    remainingPairs.length === 0 &&
+    remainingFailures.length === 0 &&
+    remainingCancelled.length === 0
+  )
     return outcomeByConversation.delete(conversationId);
   outcomeByConversation.set(conversationId, {
     ...existing,
-    outcome: remainingFailures.length > 0 ? "error" : "completed",
+    outcome:
+      remainingFailures.length > 0
+        ? "error"
+        : remainingCancelled.length > 0
+          ? "cancelled"
+          : "completed",
     agentPubkey:
       remainingFailures.at(-1)?.agentPubkey ??
+      remainingCancelled.at(-1)?.agentPubkey ??
       remainingPairs.at(-1)?.agentPubkey ??
       existing.agentPubkey,
     failedEventIds: remainingFailures.flatMap(
       (slot) => slot.triggeringEventIds,
     ),
     failedAgentSlots: remainingFailures,
+    cancelledAgentSlots: remainingCancelled,
     agentTriggerPairs: remainingPairs,
   });
   return true;
@@ -401,6 +489,10 @@ export function cloneConversationOutcomeLedger(): Map<
         ? [...entry.triggeringEventIds]
         : undefined,
       agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
+      cancelledAgentSlots: entry.cancelledAgentSlots?.map((slot) => ({
+        ...slot,
+        triggeringEventIds: [...slot.triggeringEventIds],
+      })),
       failedAgentSlots: entry.failedAgentSlots?.map((slot) => ({
         ...slot,
         triggeringEventIds: [...slot.triggeringEventIds],
@@ -425,6 +517,10 @@ export function restoreConversationOutcomeLedger(
         ? [...entry.triggeringEventIds]
         : undefined,
       agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
+      cancelledAgentSlots: entry.cancelledAgentSlots?.map((slot) => ({
+        ...slot,
+        triggeringEventIds: [...slot.triggeringEventIds],
+      })),
       failedAgentSlots: entry.failedAgentSlots?.map((slot) => ({
         ...slot,
         triggeringEventIds: [...slot.triggeringEventIds],

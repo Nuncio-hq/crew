@@ -1,3 +1,10 @@
+/**
+ * How long the control waits for the correlated Stop result before reporting
+ * it unconfirmed. Stop is answered by the native cancel handler rather than by
+ * a strict steer adapter, so it does not share the steer budget.
+ */
+export const STOP_UI_BUDGET_MS = 10_000;
+
 import type { ControlResultFrame } from "@/shared/api/types";
 
 /** Stop feedback must describe the harness result, not relay delivery alone. */

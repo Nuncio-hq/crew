@@ -28,6 +28,7 @@ import {
 } from "@/features/agents/agentAttention";
 import type { AgentReceiptSummary } from "@/features/agents/agentReceiptStore";
 import type { ConnectionState } from "@/features/agents/ui/agentSessionTypes";
+import { receiptMatchesCancelledRun } from "@/features/agents/lib/cancelledRunReceipts";
 
 export type MissionInboxState =
   | "needsYou"
@@ -187,6 +188,7 @@ export function deriveMissionInboxSections(
 ): MissionInboxSections {
   const now = input.now ?? Date.now();
   const channelIds = new Set(input.channels.map((channel) => channel.id));
+  const outcomesByConversation = new Map(input.outcomes);
   const channelNames = new Map(
     input.channels.map((channel) => [channel.id, channel.name]),
   );
@@ -228,6 +230,7 @@ export function deriveMissionInboxSections(
   for (const [conversationId, entry] of input.outcomes) {
     if (
       entry.outcome === "completed" ||
+      entry.outcome === "cancelled" ||
       blocked.has(conversationId) ||
       !channelIds.has(entry.channelId) ||
       isSleepingAgent(input, entry.agentPubkey)
@@ -270,6 +273,8 @@ export function deriveMissionInboxSections(
   const receiptsByConversation = new Map<string, AgentReceiptSummary[]>();
   for (const receipt of input.receipts) {
     if (!input.ownedAgentPubkeys.has(receipt.agentPubkey)) continue;
+    const outcome = outcomesByConversation.get(receipt.conversationId);
+    if (outcome && receiptMatchesCancelledRun(receipt, outcome)) continue;
     const receipts = receiptsByConversation.get(receipt.conversationId) ?? [];
     receipts.push(receipt);
     receiptsByConversation.set(receipt.conversationId, receipts);

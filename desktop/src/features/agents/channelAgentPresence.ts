@@ -64,6 +64,7 @@ function latestDoneByAgent(channelId: string, now: number) {
   walkConversationOutcomes((conversationId, entry) => {
     if (
       entry.channelId !== channelId ||
+      entry.outcome === "cancelled" ||
       now - entry.endedAt > CONVERSATION_OUTCOME_TTL_MS
     ) {
       return;

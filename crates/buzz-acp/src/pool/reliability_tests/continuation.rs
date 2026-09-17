@@ -77,6 +77,7 @@ while IFS= read -r line; do :; done"#
         Arc::new(ctx),
         tx,
         Some(control_rx),
+        None,
         "continuation-turn".into(),
     ));
     if decision_wait {

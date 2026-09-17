@@ -159,6 +159,27 @@ describe("getAgentThreadDigestForChannel", () => {
     assert.equal(digest2.done.length, 0);
   });
 
+  it("omits an owner-cancelled run from failed and done buckets", () => {
+    syncAgentTurnsFromEvents(AGENT_A, [
+      makeEvent({
+        seq: 1,
+        channelId: "chan-1",
+        conversationId: "conv-stopped",
+        turnId: "t-stopped",
+      }),
+      makeEvent({
+        seq: 2,
+        kind: "turn_error",
+        channelId: "chan-1",
+        conversationId: "conv-stopped",
+        turnId: "t-stopped",
+        payload: { outcome: "cancelled", error: "Run stopped" },
+      }),
+    ]);
+
+    assert.equal(getAgentThreadDigestForChannel("chan-1"), null);
+  });
+
   it("returns a stable reference until generation bumps", () => {
     syncAgentTurnsFromEvents(AGENT_A, [
       makeEvent({ seq: 1, conversationId: "conv-a", turnId: "t1" }),
