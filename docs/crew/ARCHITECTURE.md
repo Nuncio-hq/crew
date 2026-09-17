@@ -990,6 +990,15 @@ desktop does not depend on `buzz-acp`, so that directory's location is a mirrore
 derivation pinned by a test. An agent with no live harness generation therefore
 cannot be asked at all — there is nothing to be shown to have been left alone.
 
+That observation brackets the **answering run**, not the capability probe: the
+ledger digest, entry count and owning PID are read immediately before and after,
+and an answer produced beside a session any of them moved under is refused
+rather than returned. It is deliberately not part of the probe receipt, because
+it is a fact about one run beside one session rather than a property of the
+machine — which is exactly what lets a fresh receipt restore the containment
+dimensions and lets a second Ask on the same selection answer without spawning a
+probe child.
+
 `private_ask/binding.rs` is what turns a resolved selection into an answer, and
 `private_ask/citations.rs` is what bounds that answer: the runtime prints its
 citations in a fixed Markdown footnote form the prompt states, and an answer
@@ -997,8 +1006,6 @@ citing a path the verified grounding cannot account for is refused outright.
 Previously the response simply echoed the request's grounding, which said
 nothing about the answer.
 
-What is still missing is the *resolver* in front of the binding: nothing yet
-turns a developer's question into a selected managed agent record, a
-grant-anchored repository scope and a verified snapshot, so the developer
-surface still shows `AgentUnbound`. See D-083 for the producers that exist, the
-one that does not, and the named limits.
+The resolver in front of the binding is `private_ask/selection_native.rs`, so
+the developer surface reaches a real selection or a typed refusal. See D-083 for
+what each producer observes and for the named limits.

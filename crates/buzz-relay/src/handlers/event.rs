@@ -3630,14 +3630,17 @@ mod tests {
         ///
         /// Only then does the absence of the private canary mean anything.
         ///
-        /// The desktop adapter cannot be driven from this crate — it lives in
-        /// `desktop/src-tauri` and is not a dependency here. This test asserts
-        /// the relay-side invariant over the exact kinds a private Ask could
-        /// otherwise have used; the binding proof that the desktop publishes
-        /// nothing at all is
+        /// What this test actually proves is therefore the DETECTOR, not the
+        /// feature: the wide subscription is live and the SQL query finds a
+        /// published question, and neither finds one that was never published.
+        /// The name says that, because the desktop adapter cannot be driven
+        /// from this crate — it lives in `desktop/src-tauri` and is not a
+        /// dependency here, so nothing here can make a private Ask happen. The
+        /// binding proof that the desktop publishes nothing at all is
         /// `managed_agents::private_ask::privacy_tests`, which counts relay
-        /// egress at the desktop's own guard.
-        async fn a_private_ask_is_neither_delivered_nor_stored_impl() {
+        /// egress at the desktop's own guard; this is the control that makes
+        /// that proof's relay-side half readable.
+        async fn the_relay_canary_detector_sees_only_a_published_question_impl() {
             /// The question a viewer asked privately. It must never appear.
             const PRIVATE_CANARY: &str = "canary-private-ask-question";
             /// Published on purpose, to prove the detector can see a canary.
@@ -3860,8 +3863,8 @@ mod tests {
 
             #[tokio::test]
             #[ignore = "requires isolated PostgreSQL"]
-            async fn a_private_ask_is_neither_delivered_nor_stored() {
-                super::a_private_ask_is_neither_delivered_nor_stored_impl().await;
+            async fn the_relay_canary_detector_sees_only_a_published_question() {
+                super::the_relay_canary_detector_sees_only_a_published_question_impl().await;
             }
         }
     }

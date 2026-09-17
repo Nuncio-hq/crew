@@ -105,7 +105,7 @@ fn a_refusal_is_recorded_as_history_too() {
     let refused = PrivateAskHistoryEntry::refused(
         "why is this refused?",
         "attempt-refused",
-        &super::super::PrivateAskFailure::AgentBusy,
+        &super::super::PrivateAskFailure::InvalidOutput,
         2_000,
     );
     record(&ownership, refused, 2_000).expect("record");
@@ -115,7 +115,7 @@ fn a_refusal_is_recorded_as_history_too() {
     assert_eq!(entries[0].markdown, None);
     assert_eq!(
         entries[0].refusal.as_deref(),
-        Some("selected agent is busy"),
+        Some("selected runtime returned invalid output"),
         "the screen's reason is the one kept"
     );
 }
@@ -290,7 +290,7 @@ fn a_long_multibyte_question_is_shortened_at_a_character_boundary() {
     let recorded = PrivateAskHistoryEntry::refused(
         &question,
         "attempt",
-        &super::super::PrivateAskFailure::AgentBusy,
+        &super::super::PrivateAskFailure::InvalidOutput,
         1_000,
     );
 

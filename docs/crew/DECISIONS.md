@@ -2451,8 +2451,17 @@ Everything admission checks is observed on this machine:
   private Ask still publishes nothing;
 - the grounding, read through the `wiki_source` grant the viewer already chose.
   An install with no chosen source folder asks a zero-grounding question rather
-  than being refused, and references are taken in the snapshot's own page order
-  and truncated at the input limit.
+  than being refused, and references are taken in the snapshot's own page order.
+
+  The prompt budget is the envelope first and grounding second. An earlier
+  revision collected grounding against the 128 KiB input bound and then measured
+  the *assembled* prompt against the same bound, so any repository with enough
+  readable source was refused as though the viewer's question were too long.
+  Now the envelope — persona, run policy, citation instruction, scope,
+  delimiters and the question — is measured, and grounding is kept as a prefix
+  of what fits the remainder, priced at the exact rendered cost of each source.
+  Grounding is trimmed, never refused; a refusal that names the input means the
+  question or persona alone did not fit, and says so as a distinct reason.
 
 An earlier revision of this entry said the resolver was blocked because the
 recap runtime-ready grant has no in-app writer. That remains true of the grant
@@ -2479,8 +2488,27 @@ mirror is pinned by a test rather than assumed.
 
 The consequence is stated rather than hidden: an agent with no live harness
 generation cannot be asked. It has no ledger to be shown to have been left
-alone, and admission requires an independent invocation unconditionally. That
-is `SessionObservationUnavailable`; `AgentUnbound` means there is no such agent.
+alone. That is `SessionObservationUnavailable`; `AgentUnbound` means there is no
+such agent.
+
+**Independence is observed around the answer, not around the probe.** It is not
+a property of this machine and therefore not a thing a receipt can carry: it is
+a statement about one contained run beside one live session. The desktop reads
+the session's ledger digest, entry count and owning PID immediately before and
+immediately after the answering run, and refuses the answer if any of them
+moved. An earlier revision required the dimension at *admission*, which a
+retained trace could never satisfy, so every Ask for an agent with a live
+session captured a fresh probe child — the common case paid for the probe every
+time. Now a fresh, valid receipt restores the containment dimensions and a probe
+is captured only when the receipt is missing, stale, or does not project onto
+this selection. A busy agent is no longer refused before it is observed; the
+`AgentBusy` refusal is gone, because nothing could produce it once the check
+moved to where the observation is.
+
+NAMED LIMIT of that move: the answering child is spawned by the desktop, so its
+parentage is true by construction rather than observed, unlike the probe path
+where the child reports its own `getppid`. What is genuinely observed on this
+path is the session's own bytes and owning PID either side of the run.
 
 **A capability is minted from one real contained run.** The probe launches under
 byte-identical policy text to a production answer, with the proxy serving, and
@@ -2491,6 +2519,17 @@ detected by taking a lock such a descendant would still hold — which needs no
 PID, so a recycled one cannot answer for a process that already exited. Only the
 *attempts* are self-reported, because only the probe can see the return value of
 its own syscall.
+
+The probe also attempts a **hard link** of a file outside the run root into it.
+The desktop's hard-link fence runs before spawn and can only inspect the run
+root as it stands then; a link created during the run would give the child a
+writable name inside its own tree pointing at an outside inode. Measured on
+macOS 25.5: that `link()` succeeds without the policy and is refused with it, so
+the existing profile already covers the vector and the probe records it rather
+than the policy growing a rule. The probe likewise attempts the IPv6 loopback —
+against a second desktop-owned control listener bound for the purpose, since the
+policy names `localhost:<port>` — and a UNIX-domain connect to a system socket.
+All three fold into the refusal the tool-isolation dimension reads.
 
 What runs is a small probe program Crew ships, not the selected runtime. Every
 dimension the projection can mint is a property of the envelope — the Seatbelt
@@ -2533,9 +2572,23 @@ the child cannot resolve a name or open any other socket, the set of
 destinations the proxy recorded is the complete set the child asked for, and the
 capability's `egress_bounded` dimension is projected only from that record: the
 provider was reached, every accepted target was the provider, something else was
-attempted and refused, and nothing bypassed the proxy. A record with an empty
-refusal list, or an empty accepted list, certifies nothing — an untested proxy
-and a proxy that blocked everything must not look like a bounded one.
+attempted and refused, nothing bypassed the proxy, and the record is complete —
+a record that hit its own recorded-target cap certifies nothing, and that
+truncation flag now survives the receipt round trip instead of being written as
+a constant `false`. A record with an empty refusal list, or an empty accepted
+list, certifies nothing either — an untested proxy and a proxy that blocked
+everything must not look like a bounded one.
+
+The CONNECT line is the client's claim about where it is going; the TLS
+ClientHello is what the far side is actually asked for. The proxy therefore
+reads the handshake, matches its server name against the allowed target, and
+refuses a mismatch or a non-handshake with its own recorded reason before a byte
+is forwarded — the fronting move, where the CONNECT names the provider and the
+handshake asks a shared front end for somebody else's site. No TLS is
+terminated: the bytes are read, matched and passed through unmodified. The
+concurrency cap is applied at accept rather than after the request head is
+parsed, so a child cannot hold an unbounded number of desktop descriptors inside
+the head-read timeout.
 
 A provider credential is created only while that proxy is serving, travels in
 the child's environment alone, and never renders its own value.
@@ -2580,13 +2633,18 @@ attempt through the production launch path must move that count by zero.
   selected runtime has no in-process capability the envelope permits. That is
   the Seatbelt model rather than a gap this boundary introduces, but installed
   acceptance is what confirms a real runtime behaves inside it.
-- A receipt carries no session-isolation evidence, so `independent_invocation`
-  is never satisfied from a retained trace. Independence is a statement about
-  one attempt beside one live session rather than a cacheable property of a
-  machine, and the attempt that needs it must observe it for itself. The
-  consequence is stated plainly rather than hidden: an Ask for an agent with a
-  live session captures a fresh probe every time. The receipt still bounds
-  staleness and retains the trace; it does not yet save the probe run.
+- A receipt carries no session-isolation evidence, and never will: independence
+  is observed around the answering run instead. The receipt now does save the
+  probe run in the common case — a second Ask on the same selection answers from
+  it without spawning a probe child.
+- The proxy checks the handshake's OUTER server name. A client sending an
+  encrypted ClientHello chooses its own outer name and this check sees that one.
+  No runtime a private Ask runs does so today, and the only alternative is
+  terminating TLS, which this boundary deliberately does not do.
+- The probe's IPv6 leg is only evidence on a machine that has IPv6: without it
+  there is no second control listener to reach, and the leg reports denied
+  because there was nothing there. The IPv4 control remains the load-bearing
+  one.
 - A runtime installed in a directory that *contains* the run roots is now
   refused before any policy text is built, for the runtime's own directory and
   for every interpreter read root, since that read allowance would otherwise
@@ -2600,9 +2658,14 @@ attempt through the production launch path must move that count by zero.
   a 0o700 directory this uid owns, written 0o600 through a temporary file and a
   rename. Refusals are kept alongside answers, because a list holding only the
   answers would omit exactly the attempts a developer needs to see. It stores the
-  citation paths and line ranges, never the source text. A history that cannot be
-  written does not change the answer or the refusal the viewer is given; the
-  screen says the attempt was not kept.
+  citation paths and line ranges, never the source text. Each entry's question
+  and answer are capped, and the writer prunes oldest-first until the serialized
+  document fits the size its own reader accepts — without that, fifty long
+  questions exceeded the reader's bound and the viewer's entire private record
+  vanished on the next read. A file that cannot be read is moved aside under a
+  name that says so rather than being overwritten by the next attempt. A history
+  that cannot be written does not change the answer or the refusal the viewer is
+  given; the screen says the attempt was not kept.
 - The runtime CLI is resolved from this machine's `PATH`, so what the selection
   binds to is whatever `claude` or `hermes` resolves to there. A shell wrapper
   resolves as the executable, and the read allow-list is then derived from the

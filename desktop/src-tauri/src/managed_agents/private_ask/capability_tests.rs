@@ -316,11 +316,11 @@ fn recap_evidence_and_a_missing_session_snapshot_do_not_carry_over() {
     unsnapshotted.session_isolation = None;
     let capability =
         PrivateAskCapability::from_probe(&selected, unsnapshotted, captured_now()).unwrap();
+    // A probe captured with no session snapshot cannot speak to independence,
+    // and never pretends to. Admission does not read this dimension at all —
+    // it is observed around the answering run — so the projection is where the
+    // absence has to show.
     assert_eq!(capability.independent_invocation, ProofStatus::Unverified);
-    assert_eq!(
-        admit_private_ask(request(), selected, capability).unwrap_err(),
-        PrivateAskFailure::IndependentInvocationUnverified
-    );
 }
 
 /// A trace about another executable, runtime or persona is not evidence about

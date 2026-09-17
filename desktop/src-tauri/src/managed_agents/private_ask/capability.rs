@@ -166,15 +166,6 @@ pub(crate) enum PrivateAskProbeRejection {
 }
 
 impl PrivateAskCapability {
-    /// Whether this projection can speak to running beside a live session.
-    ///
-    /// Exposed because the binding must decide whether to capture its own probe
-    /// rather than answer under a dimension a retained trace deliberately never
-    /// carries.
-    pub(crate) fn certifies_independent_invocation(&self) -> bool {
-        self.independent_invocation == ProofStatus::Verified
-    }
-
     /// Consume one retained probe and project it onto the selected agent.
     ///
     /// The returned capability is only as strong as the evidence: each

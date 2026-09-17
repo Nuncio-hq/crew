@@ -441,7 +441,6 @@ pub(crate) enum PrivateAskFailure {
     ScopeMismatch,
     AgentUnbound,
     AccessRevoked,
-    AgentBusy,
     SelectionChanged,
     MissingRuntime,
     InvalidModel,
@@ -478,7 +477,6 @@ impl std::fmt::Display for PrivateAskFailure {
             Self::ScopeMismatch => f.write_str("private Ask scope changed"),
             Self::AgentUnbound => f.write_str("selected agent is unavailable"),
             Self::AccessRevoked => f.write_str("private Ask access was revoked"),
-            Self::AgentBusy => f.write_str("selected agent is busy"),
             Self::SelectionChanged => f.write_str("selected agent configuration changed"),
             Self::MissingRuntime => f.write_str("selected runtime is unavailable"),
             Self::InvalidModel => f.write_str("selected runtime model is invalid"),
@@ -555,11 +553,6 @@ pub(crate) fn admit_private_ask(
     {
         return Err(PrivateAskFailure::InvalidState);
     }
-    if state.lifecycle == AgentLifecycle::Busy
-        && capability.independent_invocation != ProofStatus::Verified
-    {
-        return Err(PrivateAskFailure::AgentBusy);
-    }
     if capability.runtime_id != state.runtime_id
         || !same_executable_proof(&capability.executable, &state.executable)
         || capability.effective_model != state.effective_model
@@ -619,9 +612,11 @@ pub(crate) fn admit_private_ask(
     if capability.side_effect_free != ProofStatus::Verified {
         return Err(PrivateAskFailure::SideEffectProofUnverified);
     }
-    if capability.independent_invocation != ProofStatus::Verified {
-        return Err(PrivateAskFailure::IndependentInvocationUnverified);
-    }
+    // Independence is deliberately NOT checked here. It is not a property of a
+    // capability at all — it is an observation of the employee's own live
+    // session either side of the answering run, which admission happens before.
+    // `binding::answer` takes that bracket and refuses the answer if it does
+    // not hold.
     // Last, so a probe that failed a dimension it *could* have proved hears
     // about that first. Today no producer can verify this one, so a private Ask
     // is refused here even when every other proof holds — see

@@ -1416,7 +1416,15 @@ must capture:
   probe base), so the executable fingerprint, the policy text, the probe-program
   digest and `captured_at` are all readable evidence.
 - The employee session's ledger-directory digest and entry count, and the
-  harness PID, before and after the Ask.
+  harness PID, before and after the Ask — these are what the desktop itself
+  brackets the answering run with, so the runbook reading must agree with the
+  Ask's own verdict.
+- A **second** Ask on the same selection, to confirm it answers without a new
+  probe child: the receipt's `captured_at` must not move, and no
+  `sandbox-exec`/`perl` probe process should appear.
+- A repository with well over 128 KiB of readable source, to confirm the Ask
+  answers with trimmed grounding rather than refusing as an over-long
+  question.
 - The answered attempt's owner-local history entry: question, answer, citation
   paths and line ranges.
 - Base and head SHAs.
@@ -1434,12 +1442,18 @@ with `runtime network egress is not bounded to the model provider`.
 
 ### Two-identity relay canary
 
-`crates/buzz-relay` holds the relay-side half: identity B keeps a wide live REQ
-open across identity A's Ask, then backfills with `since`, and the events table
-is queried for the canary. The test is built so that "nothing arrived" cannot
-pass vacuously — a control event B *must* receive proves the subscription is
-live and wide, and a positive-control canary that the SQL query *must* find
-proves the detector works.
+`crates/buzz-relay` holds the relay-side half:
+`the_relay_canary_detector_finds_a_published_question_and_not_an_unpublished_one`.
+Identity B keeps a wide live REQ open, then backfills with `since`, and the
+events table is queried for the canary. What it proves is the **detector**, not
+the feature: the desktop adapter is not a dependency of that crate, so nothing
+there can make a private Ask happen. A control event B *must* receive proves the
+subscription is live and wide, and a positive-control canary the SQL query
+*must* find proves the query would have seen a published question. The binding
+proof that the desktop publishes nothing is
+`managed_agents::private_ask::privacy_tests`, which counts relay egress at the
+desktop's own guard; this test is the control that makes that proof's relay-side
+half readable.
 
 It needs the isolated PostgreSQL lane:
 

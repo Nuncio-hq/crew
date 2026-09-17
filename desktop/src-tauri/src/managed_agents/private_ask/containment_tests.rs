@@ -402,7 +402,7 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
     assert_eq!(capability.egress_bounded, ProofStatus::Unverified);
     assert_eq!(
         admit_private_ask(request(), selected, capability).unwrap_err(),
-        PrivateAskFailure::IndependentInvocationUnverified,
+        PrivateAskFailure::EgressBoundUnverified,
         "a hostile-tool denial alone must not admit a private Ask"
     );
 }

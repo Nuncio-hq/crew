@@ -5,8 +5,10 @@
 //! * the happy path — `binding::answer`'s `probe_receipt::load` / `capture` /
 //!   `store` sequence followed by `PrivateAskCapability::from_probe`;
 //! * the re-probe — `probe_receipt::load`'s `PROBE_MAX_AGE` check;
-//! * the busy refusal — the `independent_invocation` clause of the busy fence in
-//!   `admit_private_ask`;
+//! * the receipt reuse — the `Some(capability) => capability` arm of
+//!   `binding::answer`, which no longer re-probes for a live session;
+//! * the independence bracket — the `session.capture()` pair around
+//!   `attempt.run()` in `binding::answer`;
 //! * the citation fence — the `citations::resolve` call in
 //!   `PrivateAskAttempt::run`.
 //!
@@ -141,6 +143,13 @@ fn a_selection_with_no_retained_probe_probes_itself_and_answers() {
     assert_eq!(stored_receipt(&ownership)["captured_at"], 1_000);
 }
 
+/// A second Ask on the same selection answers from the retained receipt,
+/// beside the same live session, without spawning a probe child.
+///
+/// This is the point of separating the two: containment is a property of the
+/// machine and is cached; independence is a property of THIS run beside THAT
+/// session and is observed live every time. Restore the old
+/// `needs_own_probe` rule and the receipt stamp moves on the second Ask.
 #[test]
 fn a_retained_probe_is_reused_until_it_goes_stale() {
     let fixture = canonical_tempdir();
@@ -160,20 +169,15 @@ fn a_retained_probe_is_reused_until_it_goes_stale() {
         1_000
     );
 
-    // With no session to bracket, the binding has nothing to observe that the
-    // retained trace lacks, so it reuses it and the stamp does not move. (The
-    // Ask itself is still refused — a trace with no session evidence cannot
-    // certify an independent invocation — which is the fail-closed direction.)
-    assert_eq!(
-        ask(
-            owned_receipt(&fixture),
-            selection(&path, AgentLifecycle::Idle),
-            None,
-            1_500,
-        )
-        .unwrap_err(),
-        PrivateAskFailure::IndependentInvocationUnverified
-    );
+    // The second Ask, with the same live session: it answers, and it answers
+    // from the retained trace.
+    ask(
+        owned_receipt(&fixture),
+        selection(&path, AgentLifecycle::Idle),
+        Some(session.observation.clone()),
+        1_500,
+    )
+    .expect("a second Ask answers from the retained receipt");
     assert_eq!(
         stored_receipt(&owned_receipt(&fixture))["captured_at"],
         1_000,
@@ -185,36 +189,62 @@ fn a_retained_probe_is_reused_until_it_goes_stale() {
     // check in `probe_receipt::load` leaves the stamp at 1_000 and lets an
     // expired trace go on certifying.
     let stale = 1_000 + PROBE_MAX_AGE + 1;
-    let _ = ask(
+    ask(
         owned_receipt(&fixture),
         selection(&path, AgentLifecycle::Idle),
-        None,
+        Some(session.observation.clone()),
         stale,
-    );
+    )
+    .expect("a stale receipt re-probes and still answers");
     assert_eq!(
         stored_receipt(&owned_receipt(&fixture))["captured_at"],
         stale
     );
 }
 
+/// A live session that cannot be read either side of the run is a refusal, not
+/// an answer: a session nobody could observe has not been shown to be
+/// untouched.
+///
+/// Production line: the `session.capture()` pair around `attempt.run()` in
+/// `binding::answer`. Drop the bracket and this answers.
 #[test]
-fn a_busy_agent_is_refused_rather_than_answered() {
+fn an_unobservable_session_refuses_rather_than_answering_beside_it() {
     let fixture = canonical_tempdir();
     let path = answering_runtime(fixture.path());
+    let session = LiveSession::start(fixture.path());
+    let mut unobservable = session.observation.clone();
+    unobservable.ledger_dir = fixture.path().join("no-such-ledger");
 
-    // The probe is captured with no live session to bracket, so
-    // `independent_invocation` is unverified. An idle agent does not need it;
-    // a busy one does, and is refused rather than answered beside a session
-    // nothing observed.
     let refusal = ask(
         owned_receipt(&fixture),
         selection(&path, AgentLifecycle::Busy),
-        None,
+        Some(unobservable),
         2_000,
     )
     .unwrap_err();
 
-    assert_eq!(refusal, PrivateAskFailure::AgentBusy);
+    assert_eq!(refusal, PrivateAskFailure::SessionObservationUnavailable);
+}
+
+/// A busy agent is answered when the bracket holds. The old rule refused it
+/// outright unless this very attempt had captured a probe beside the session,
+/// which made every Ask for a working employee pay for a probe run.
+#[test]
+fn a_busy_agent_is_answered_when_its_session_is_untouched() {
+    let fixture = canonical_tempdir();
+    let path = answering_runtime(fixture.path());
+    let session = LiveSession::start(fixture.path());
+
+    let response = ask(
+        owned_receipt(&fixture),
+        selection(&path, AgentLifecycle::Busy),
+        Some(session.observation.clone()),
+        2_000,
+    )
+    .expect("a busy agent answers when its session is untouched");
+
+    assert!(response.markdown.starts_with("It returns 42."));
 }
 
 #[test]

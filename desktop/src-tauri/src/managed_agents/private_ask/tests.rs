@@ -232,18 +232,24 @@ fn a_rotated_existing_session_invalidates_the_retained_capability() {
     );
 }
 
+/// Admission is about the capability, not about whether the agent happens to
+/// be busy. Independence is an observation of the employee's live session
+/// either side of the answering run, which has not happened yet at this point,
+/// so a busy agent with an otherwise complete capability is admitted here and
+/// judged by that bracket afterwards.
+///
+/// Production line: the absence of any `independent_invocation` or
+/// `AgentLifecycle::Busy` clause in `admit_private_ask`. Restoring one makes an
+/// Ask beside a live session refuse before it can ever be observed.
 #[test]
-fn busy_agent_is_rejected_without_an_independent_invocation_receipt() {
+fn a_busy_agent_is_admitted_and_judged_by_the_run_it_is_bracketed_around() {
     let fixture = canonical_tempdir();
     let path = runtime_installation(fixture.path()).join("runtime");
     let mut selected = state(&path, "claude", "claude-fable-5-1", None);
     selected.lifecycle = AgentLifecycle::Busy;
     let mut capability = PrivateAskCapability::verified_for_fixture(&selected);
     capability.independent_invocation = ProofStatus::Unverified;
-    assert_eq!(
-        admit_private_ask(request(), selected, capability).unwrap_err(),
-        PrivateAskFailure::AgentBusy
-    );
+    admit_private_ask(request(), selected, capability).expect("a busy agent still admits");
 }
 
 #[test]

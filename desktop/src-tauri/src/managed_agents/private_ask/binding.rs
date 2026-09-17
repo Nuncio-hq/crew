@@ -19,14 +19,18 @@
 //! staleness is a re-probe rather than a refusal, and an expired trace can
 //! never certify anything.
 //!
-//! NAMED LIMIT, deliberate: a receipt does not carry session-isolation
-//! evidence, so a selection answered from a retained receipt leaves
-//! `independent_invocation` unverified. A *busy* agent is therefore refused
-//! (`AgentBusy`) unless this attempt captured its own probe beside that live
-//! session. That is the fail-closed direction.
+//! Session isolation is deliberately NOT one of the things a receipt has to
+//! carry, because it is not a property of this machine that can be cached: it
+//! is a statement about one contained run beside one live session. It is
+//! therefore observed around the ANSWERING run itself — the ledger digest and
+//! owning PID are read immediately before and immediately after — rather than
+//! around the probe. That is what lets a fresh, valid receipt restore the
+//! containment dimensions while independence stays observed live on every Ask,
+//! and it is why a second Ask on the same selection no longer spawns a probe
+//! child.
 
 use super::attempt::AttemptIdentity;
-use super::session_evidence::SessionObservation;
+use super::session_evidence::{SessionIsolationEvidence, SessionObservation};
 use super::{
     admit_private_ask, probe_program, probe_receipt, PrivateAskAttempt, PrivateAskCapability,
     PrivateAskFailure, PrivateAskRequest, PrivateAskResponse, SelectedAgentState,
@@ -72,27 +76,13 @@ pub(super) fn answer(binding: PrivateAskBinding) -> Result<PrivateAskResponse, P
     let capability = retained.and_then(|probe| {
         PrivateAskCapability::from_probe(&binding.state, probe, binding.now).ok()
     });
-    // A retained trace never carries session-isolation evidence, by design: an
-    // independent invocation is a fact about one contained run beside one live
-    // session, not a property of this machine that can be cached. So when the
-    // selection HAS a live session and the retained trace cannot speak to it,
-    // this attempt captures its own probe beside that session rather than
-    // answering under a dimension nobody observed.
-    //
-    // NAMED LIMIT, and the honest consequence: because admission requires that
-    // dimension, an Ask for an agent with a live session captures a fresh probe
-    // every time. The receipt still bounds staleness and retains the trace; it
-    // does not yet save the probe run.
-    let needs_own_probe = binding.session.is_some()
-        && capability
-            .as_ref()
-            .is_none_or(|capability| !capability.certifies_independent_invocation());
     let capability = match capability {
-        // Reusable only when nothing this attempt can observe is missing from
-        // it. Otherwise — and whenever there is no retained trace at all — this
-        // attempt captures its own.
-        Some(capability) if !needs_own_probe => capability,
-        _ => {
+        // A retained trace that still projects onto this selection is the whole
+        // capability: the dimension it cannot carry — independence — is not
+        // restored from it at all, it is observed around the answering run
+        // below.
+        Some(capability) => capability,
+        None => {
             let probe = capture(&binding)?;
             // Persisted before it is used, so the trace this attempt paid for
             // is on disk. A store failure is returned rather than ignored: a
@@ -109,7 +99,36 @@ pub(super) fn answer(binding: PrivateAskBinding) -> Result<PrivateAskResponse, P
     if let Some(profile) = binding.hermes_profile.as_deref() {
         attempt.stage_hermes_profile(profile)?;
     }
-    attempt.run()
+    // The bracket goes around the ANSWER, not around a probe: what a viewer
+    // needs to know is that THIS run left the employee's live session alone.
+    // A failure to read the session before the run is a refusal — a session
+    // that cannot be observed has not been shown to be untouched.
+    let before = binding
+        .session
+        .as_ref()
+        .map(SessionObservation::capture)
+        .transpose()?;
+    let response = attempt.run();
+    if let (Some(session), Some(before)) = (binding.session.as_ref(), before) {
+        let after = session.capture()?;
+        // The runtime child is spawned by THIS process, so its parent is this
+        // process by construction rather than by observation.
+        //
+        // NAMED LIMIT: that makes the lineage clause of `is_verified` a
+        // tautology on this path, unlike the probe path where the child reports
+        // its own `getppid`. What is genuinely observed here is the session's
+        // own ledger and owning PID either side of the run, which is the part
+        // a cached trace could never speak to.
+        let desktop_pid = std::process::id();
+        let evidence = SessionIsolationEvidence::observe(before, after, desktop_pid, desktop_pid)?;
+        // Checked before the run's own result is returned: a containment breach
+        // is the stronger news, and an answer produced beside a session this
+        // run disturbed is not an answer this feature may hand back.
+        if !evidence.is_verified() {
+            return Err(PrivateAskFailure::IndependentInvocationUnverified);
+        }
+    }
+    response
 }
 
 /// Capture one fresh probe for this selection.

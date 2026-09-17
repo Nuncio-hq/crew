@@ -267,29 +267,21 @@ fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_own
     let capability =
         PrivateAskCapability::from_probe(&selected, probe, captured_now()).expect("projection");
     assert_eq!(capability.independent_invocation, ProofStatus::Verified);
-    // The busy-session fence is satisfied by a real observation, so the request
-    // no longer fails as `AgentBusy` — and with the proxy's own record carried
-    // by the probe, the egress bound is satisfied too. This is a complete
-    // admission built entirely from observations of a real run.
+    // With the proxy's own record carried by the probe, the egress bound is
+    // satisfied too. This is a complete admission built entirely from
+    // observations of a real run.
     assert_eq!(capability.egress_bounded, ProofStatus::Verified);
     admit_private_ask(request(), selected, capability).expect("complete admission");
 }
 
-/// Without that observation a busy agent is refused, and the refusal names the
-/// busy session rather than a generic unverified capability. Removing the
-/// `AgentLifecycle::Busy` fence from `admit_private_ask` fails this.
+/// A session observation that does not hold cannot be projected as
+/// independence, whichever dimension of it moved. This is the half a receipt
+/// can restore from a probe capture; the answering run's own bracket in
+/// `binding::answer` is what covers a reused receipt.
 #[test]
-fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
+fn a_session_observation_that_moved_is_not_an_independent_invocation() {
     let directory = canonical_tempdir();
     let path = runtime_installation(directory.path()).join("runtime");
-    let mut selected = state(&path, "claude", "claude-fable-5-1", None);
-    selected.lifecycle = AgentLifecycle::Busy;
-    let mut capability = PrivateAskCapability::verified_for_fixture(&selected);
-    capability.independent_invocation = ProofStatus::Unverified;
-    assert_eq!(
-        admit_private_ask(request(), selected.clone(), capability).unwrap_err(),
-        PrivateAskFailure::AgentBusy
-    );
 
     // A session snapshot whose PID moved is not an independent invocation.
     let restarted = SessionIsolationEvidence::from_parts(
@@ -305,6 +297,7 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
     let run_root = directory.path().join("probe-root");
     std::fs::create_dir(&run_root).unwrap();
     let probe_state = state(&path, "claude", "claude-fable-5-1", None);
+    let _ = &probe_state;
     let build = |isolation: SessionIsolationEvidence, root: PathBuf| PrivateAskProbe {
         probe_program_digest: super::probe_program::probe_program_digest(),
         runtime_id: "claude".into(),
