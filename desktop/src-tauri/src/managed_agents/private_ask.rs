@@ -41,7 +41,7 @@ use recovery::{
 use validation::{is_hex64, valid_model, valid_profile, valid_scope_value, valid_source_revision};
 // The test modules below are children of this module and share its vocabulary;
 // these re-imports keep them compiling after the attempt half moved out.
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use super::discovery::bounded_command::{BoundedPolicy, OutputBudget};
 #[cfg(test)]
 use super::recap_ownership::VerifiedStagingOwnership;
