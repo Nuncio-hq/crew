@@ -87,6 +87,18 @@ impl PrivateAskLaunchPlan {
                     OsString::from("HERMES_ACP_SKIP_CONFIGURED_MCP"),
                     OsString::from("1"),
                 );
+                // Hermes writes its managed directory before the profile is
+                // read. Without an explicit private location it defaults to one
+                // outside the run root, which the containment policy refuses —
+                // a confusing write failure rather than an honest isolation.
+                env.insert(
+                    OsString::from("HERMES_MANAGED_DIR"),
+                    root.join("managed").into_os_string(),
+                );
+                // Hermes checks this guard before discovering plugins, loading
+                // configured MCP servers or registering user hooks; the
+                // `--safe-mode` flag alone is applied later.
+                env.insert(OsString::from("HERMES_SAFE_MODE"), OsString::from("1"));
                 let usage = root.join("usage.json");
                 prepare_usage_file(&usage)?;
                 (fixed_hermes_args(profile, root, &usage), Some(usage), false)
@@ -234,7 +246,9 @@ pub(super) fn isolated_env(root: &Path, executable: &Path) -> BTreeMap<OsString,
 }
 
 fn prepare_state_dirs(root: &Path) -> Result<(), PrivateAskFailure> {
-    for name in ["home", "tmp", "config", "cache", "data", "state", "hermes"] {
+    for name in [
+        "home", "tmp", "config", "cache", "data", "state", "hermes", "managed",
+    ] {
         let path = root.join(name);
         create_private_dir(&path)?;
         crate::managed_agents::recap_state::directory_identity(&path)

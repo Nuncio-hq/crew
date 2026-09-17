@@ -65,7 +65,6 @@ fn fixture() -> (tempfile::TempDir, SelectedAgentState, PathBuf) {
     let path = directory.path().join("runtime");
     let mut selected = state(&path, "claude", "claude-fable-5-1", None);
     selected.executable = executable(&path);
-    selected.executable.platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     let run_root = directory.path().join("probe-root");
     std::fs::create_dir(&run_root).unwrap();
     (directory, selected, run_root)

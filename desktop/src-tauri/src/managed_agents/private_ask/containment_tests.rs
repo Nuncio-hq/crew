@@ -112,23 +112,14 @@ impl HostileFixture {
             .and_then(|value| value.trim().parse().ok())
     }
 
-    /// Any descendant recorded by the fixture must be gone. A live PID here is
-    /// a leaked process tree, not a passing test.
-    fn surviving_descendants(&self) -> u32 {
-        match self.descendant_pid() {
-            Some(pid) => {
-                // The control descendant is reaped by the fixture itself; poll
-                // briefly so a slow exit is not reported as an escape.
-                for _ in 0..50 {
-                    if !process_is_alive(pid) {
-                        return 0;
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                1
-            }
-            None => 0,
-        }
+    /// A descendant that recorded its own PID is a descendant that was created.
+    /// Under the production policy the fork is refused, so no PID file exists at
+    /// all; in the control run the fixture waits for its own child before
+    /// exiting, so the file is present and the process is already reaped. A
+    /// `kill(pid, 0)` liveness probe is deliberately not used: it can be
+    /// answered by a recycled PID and would turn a real escape into a pass.
+    fn recorded_descendants(&self) -> u32 {
+        u32::from(self.descendant_pid_file.exists())
     }
 }
 
@@ -141,17 +132,7 @@ impl Drop for HostileFixture {
         if let Some(thread) = self.listener_thread.take() {
             let _ = thread.join();
         }
-        if let Some(pid) = self.descendant_pid() {
-            if process_is_alive(pid) {
-                // Never leave a test-created process behind, even on failure.
-                unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-            }
-        }
     }
-}
-
-fn process_is_alive(pid: u32) -> bool {
-    pid != 0 && unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
 }
 
 fn digest_of(value: &str) -> String {
@@ -212,9 +193,13 @@ fn the_hostile_fixture_reaches_every_effect_when_it_is_not_contained() {
     );
     assert!(fixture.accepted_connections() >= 1);
     assert_eq!(
-        fixture.surviving_descendants(),
-        0,
-        "the control descendant must be reaped by the fixture itself"
+        fixture.recorded_descendants(),
+        1,
+        "an uncontained fixture must create a setsid descendant"
+    );
+    assert!(
+        fixture.descendant_pid().is_some(),
+        "the control descendant must record its own PID"
     );
 }
 
@@ -258,7 +243,11 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
     );
     assert!(!fixture.descendant_marker.exists());
     assert_eq!(fixture.accepted_connections(), 0);
-    assert_eq!(fixture.surviving_descendants(), 0);
+    assert_eq!(
+        fixture.recorded_descendants(),
+        0,
+        "no descendant may be created under the production policy"
+    );
     // The disposable generation is gone; nothing outlives the attempt.
     assert!(!base
         .join("recap-runs")
@@ -295,7 +284,7 @@ fn a_hostile_runtime_is_denied_every_effect_through_the_production_launch_path()
             sentinel_before,
             sentinel_after,
             network_connections_observed: fixture.accepted_connections(),
-            surviving_descendants: fixture.surviving_descendants(),
+            surviving_descendants: fixture.recorded_descendants(),
         },
         containment_profile: containment::private_ask_containment_profile(&run_root).unwrap(),
         probe_run_root: run_root,
@@ -359,19 +348,4 @@ fn the_launch_command_applies_the_effect_denying_policy_to_the_runtime() {
     let mut run = run;
     run.mark_finished().unwrap();
     run.cleanup().unwrap();
-}
-
-/// A run root that cannot be expressed as an unambiguous SBPL literal, or a
-/// platform without this boundary, must stop the launch rather than proceed
-/// with a weaker policy.
-#[test]
-fn a_run_root_that_cannot_be_confined_refuses_a_containment_profile() {
-    assert_eq!(
-        containment::private_ask_containment_profile(Path::new("relative/root")),
-        Err(PrivateAskFailure::ProcessContainmentUnverified)
-    );
-    assert_eq!(
-        containment::private_ask_containment_profile(Path::new("/tmp/run\"root")),
-        Err(PrivateAskFailure::ProcessContainmentUnverified)
-    );
 }

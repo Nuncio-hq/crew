@@ -18,12 +18,28 @@ pub(super) const PRIVATE_ASK_PERSONA_LIMIT: usize = 16 * 1024;
 ///
 /// An empty persona is valid and means "no authored persona"; a persona with
 /// NUL or other control bytes, or one that closes its own delimiter, is not.
+/// Newlines and tabs are ordinary prose in an authored system prompt — a
+/// persona containing an indented code block must not be refused — so they are
+/// the two control characters allowed through.
 pub(super) fn valid_persona(persona: &str) -> bool {
     persona.len() <= PRIVATE_ASK_PERSONA_LIMIT
         && !persona
             .chars()
-            .any(|character| character.is_control() && character != '\n')
+            .any(|character| character.is_control() && character != '\n' && character != '\t')
         && !persona.contains("</persona>")
+}
+
+/// Normalize an authored persona to the accepted form before it is fingerprinted.
+///
+/// Windows line endings and a trailing carriage return are an artefact of how
+/// the prompt was typed, not a hostile payload; rejecting them would refuse a
+/// legitimate agent with a misleading "selection changed".
+pub(super) fn normalize_persona(persona: &str) -> String {
+    persona
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_owned()
 }
 
 /// Hash the exact runtime selection that must not drift between admission and

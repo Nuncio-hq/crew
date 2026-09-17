@@ -42,7 +42,7 @@ impl BusyEmployeeSession {
             .stderr(Stdio::null())
             .spawn()
             .expect("busy employee session");
-        let session = Self {
+        let mut session = Self {
             child,
             ledger,
             observer_sequence,
@@ -53,7 +53,7 @@ impl BusyEmployeeSession {
 
     /// Block only until the session has actually started working, with a
     /// deadline: a test must never wait on a process that failed to start.
-    fn wait_until_working(&self) {
+    fn wait_until_working(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             if self.is_alive() {
@@ -68,8 +68,10 @@ impl BusyEmployeeSession {
         self.child.id()
     }
 
-    fn is_alive(&self) -> bool {
-        unsafe { libc::kill(self.pid() as libc::pid_t, 0) == 0 }
+    /// Ask the child itself, not the PID namespace: a `kill(pid, 0)` probe can
+    /// be answered by a recycled PID, and this process owns the handle anyway.
+    fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
     }
 
     fn ledger_digest(&self) -> String {
@@ -121,7 +123,7 @@ fn digest_of(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-/// The proof for plan section 4. A private Ask running beside a busy employee
+/// A private Ask running beside a busy employee
 /// session leaves that session's ledger bytes, observer sequence and process
 /// untouched, is parented to this process rather than to the session, and never
 /// sees the employee's home. Removing the `HOME` entry from `isolated_env`
@@ -130,7 +132,7 @@ fn digest_of(value: &str) -> String {
 #[test]
 fn a_private_ask_beside_a_busy_employee_session_changes_nothing_that_session_owns() {
     let directory = canonical_tempdir();
-    let session = BusyEmployeeSession::start(directory.path());
+    let mut session = BusyEmployeeSession::start(directory.path());
     let ledger_before = session.ledger_digest();
     let observer_before = session.observer_sequence();
     let acp_pid_before = session.pid();
@@ -255,9 +257,7 @@ fn a_busy_agent_without_an_independence_observation_is_refused_as_busy() {
     };
     let run_root = directory.path().join("probe-root");
     std::fs::create_dir(&run_root).unwrap();
-    let mut probe_state = state(&path, "claude", "claude-fable-5-1", None);
-    probe_state.executable.platform =
-        format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let probe_state = state(&path, "claude", "claude-fable-5-1", None);
     let build = |isolation: SessionIsolationEvidence, root: PathBuf| PrivateAskProbe {
         runtime_id: "claude".into(),
         executable: probe_state.executable.clone(),

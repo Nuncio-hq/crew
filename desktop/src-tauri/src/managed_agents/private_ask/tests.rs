@@ -26,7 +26,7 @@ pub(super) fn executable(path: &Path) -> RecapExecutableIdentity {
         resolved_path: path.to_owned(),
         version: "fixture-1".into(),
         fingerprint: "d".repeat(64),
-        platform: "macos-aarch64".into(),
+        platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
     }
 }
 
@@ -792,4 +792,53 @@ fn the_owned_child_pid_is_recorded_before_any_output_is_read() {
         .run()
         .unwrap();
     assert_eq!(response.markdown, "pid-recorded");
+}
+
+/// An authored system prompt legitimately contains tabs and may arrive with
+/// Windows line endings; neither is a hostile payload, and refusing them would
+/// strand a real agent behind a misleading "selection changed". Removing the
+/// tab allowance from `valid_persona`, or the normalization from
+/// `SelectedAgentState::from_effective_config`, fails this.
+#[test]
+fn ordinary_authored_prose_in_a_persona_is_not_treated_as_hostile() {
+    use super::super::effective_config::{
+        ConfigSource, EffectiveAgentConfig, EffectiveConfigResult, ResolvedField,
+    };
+
+    let authored = "You are Scout.\r\n\r\nExample:\r\n\tcargo test\r\n";
+    let fixture = canonical_tempdir();
+    let path = fixture.path().join("runtime");
+    let resolved = EffectiveConfigResult::Resolved(EffectiveAgentConfig {
+        model: ResolvedField {
+            value: Some("claude-fable-5-1".into()),
+            source: ConfigSource::Definition,
+        },
+        provider: ResolvedField {
+            value: Some("anthropic".into()),
+            source: ConfigSource::Definition,
+        },
+        system_prompt: ResolvedField {
+            value: Some(authored.into()),
+            source: ConfigSource::Definition,
+        },
+    });
+    let observed = SelectedAgentState::from_effective_config(
+        scope(),
+        "claude",
+        executable(&path),
+        "claude-fable-5-1",
+        None,
+        &resolved,
+        "f".repeat(64),
+        "generation-1",
+        AgentLifecycle::Idle,
+    )
+    .expect("ordinary prose must be admitted");
+    assert_eq!(observed.persona, "You are Scout.\n\nExample:\n\tcargo test");
+    let capability = PrivateAskCapability::verified_for_fixture(&observed);
+    let admitted = admit_private_ask(request(), observed, capability)
+        .expect("a persona with tabs and CRLF must admit");
+    assert!(build_prompt(&admitted.request, &admitted.state.persona)
+        .unwrap()
+        .contains("\tcargo test"));
 }

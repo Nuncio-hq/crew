@@ -268,13 +268,8 @@ impl SelectedAgentState {
         let super::effective_config::EffectiveConfigResult::Resolved(config) = config else {
             return Err(PrivateAskFailure::AgentUnbound);
         };
-        let persona = config
-            .system_prompt
-            .value
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
+        let persona =
+            prompt::normalize_persona(config.system_prompt.value.as_deref().unwrap_or_default());
         let runtime_id = runtime_id.into();
         let effective_model = effective_model.into();
         if !prompt::valid_persona(&persona) {
@@ -735,6 +730,10 @@ mod containment_tests;
 #[cfg(test)]
 #[path = "private_ask/capability_tests.rs"]
 mod capability_tests;
+
+#[cfg(test)]
+#[path = "private_ask/fail_closed_tests.rs"]
+mod fail_closed_tests;
 
 #[cfg(test)]
 #[path = "private_ask/isolation_tests.rs"]
