@@ -64,12 +64,14 @@ pub(super) fn answer(binding: PrivateAskBinding) -> Result<PrivateAskResponse, P
         &probe_program::probe_program_digest(),
         binding.now,
     );
-    // A structurally wrong trace is an error, not weaker evidence: it is not
-    // evidence about this selection in either direction.
-    let capability = retained
-        .map(|probe| PrivateAskCapability::from_probe(&binding.state, probe, binding.now))
-        .transpose()
-        .map_err(|_| PrivateAskFailure::SelectionChanged)?;
+    // A trace that does not project onto THIS selection is a miss, not a
+    // refusal. It describes a selection that no longer exists — most ordinarily
+    // a previous harness generation, since `session_generation` changes every
+    // time the agent restarts — and the honest response is to capture a fresh
+    // probe rather than to tell the viewer their configuration changed.
+    let capability = retained.and_then(|probe| {
+        PrivateAskCapability::from_probe(&binding.state, probe, binding.now).ok()
+    });
     // A retained trace never carries session-isolation evidence, by design: an
     // independent invocation is a fact about one contained run beside one live
     // session, not a property of this machine that can be cached. So when the

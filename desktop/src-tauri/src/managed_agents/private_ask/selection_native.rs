@@ -16,9 +16,7 @@ use super::attempt::AttemptIdentity;
 use super::selection::{
     resolve_observed_selection, LiveAgentRuntime, ObservedAgent, PrivateAskSelection,
 };
-use super::{
-    session_evidence, GroundedSource, PrivateAskFailure, PrivateAskScope, PRIVATE_ASK_INPUT_LIMIT,
-};
+use super::{session_evidence, GroundedSource, PrivateAskFailure, PrivateAskScope};
 use crate::app_state::AppState;
 use crate::commands::NativeSourceRoot;
 use crate::managed_agents::recap_capability::{verify_executable, RecapExecutableIdentity};
@@ -47,9 +45,12 @@ pub(crate) async fn resolve_selection<R: tauri::Runtime>(
 ) -> Result<PrivateAskSelection, PrivateAskFailure> {
     let ownership =
         VerifiedStagingOwnership::load(app).map_err(|_| PrivateAskFailure::InvalidState)?;
+    // A scope that cannot be captured is this machine's own lock or identity
+    // state, not a revocation: saying "access was revoked" would send the
+    // reader to the wrong problem.
     let captured = crate::app_state::owner_scope::capture(app.clone())
         .await
-        .map_err(|_| PrivateAskFailure::AccessRevoked)?;
+        .map_err(|_| PrivateAskFailure::InvalidState)?;
 
     let record = agent_record(app, agent_id)?;
     let relay_url = bound_relay_url(app, &record)?;
@@ -333,10 +334,8 @@ fn verified_snapshot(
 
 /// Read the snapshot's own source references through the viewer's grant.
 ///
-/// Zero grounding is a legal Ask — an install with no chosen source folder can
-/// still ask a question — so a reference that cannot be read is skipped rather
-/// than failing the attempt. The total is bounded by the same input limit the
-/// prompt is, and references are taken in the snapshot's own page order.
+/// The decision of what may be grounded belongs to `selection::collect_grounding`;
+/// this only supplies the reader.
 fn grounding(
     snapshot: &crew_wiki::snapshot_v1::VerifiedSnapshot,
     source_root: Option<&NativeSourceRoot>,
@@ -344,36 +343,12 @@ fn grounding(
     let Some(source_root) = source_root else {
         return Vec::new();
     };
-    let revision = snapshot.index().source_revision().to_owned();
-    if !revision.starts_with(&format!("{}:", source_root.workspace_mode())) {
-        // The grant anchors a different checkout mode of the same repository;
-        // its bytes are not this snapshot's bytes.
-        return Vec::new();
-    }
     let deadline = std::time::Instant::now() + GROUNDING_DEADLINE;
-    let mut grounding = Vec::new();
-    let mut budget = PRIVATE_ASK_INPUT_LIMIT;
-    for page in snapshot.pages() {
-        for reference in page.source_references() {
-            let Ok(file) = source_root.read_verified_reference(&revision, reference, deadline)
-            else {
-                continue;
-            };
-            let Ok(source) =
-                GroundedSource::from_verified_snapshot(snapshot, page, reference, &file)
-            else {
-                continue;
-            };
-            let Some(remaining) = budget.checked_sub(source.content.len()) else {
-                // Truncate at the limit rather than overflow it: the request's
-                // own validation would refuse the whole Ask otherwise.
-                return grounding;
-            };
-            budget = remaining;
-            grounding.push(source);
-        }
-    }
-    grounding
+    super::selection::collect_grounding(
+        snapshot,
+        source_root.workspace_mode(),
+        |revision, reference| source_root.read_verified_reference(revision, reference, deadline),
+    )
 }
 
 /// Run one private Ask from the developer surface.

@@ -286,6 +286,52 @@ fn session_generation(start_nonce: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Read the snapshot's own source references into grounding.
+///
+/// The reader is supplied rather than reached for, so the deciding half stays
+/// pure and the branches below are testable without a grant, a folder or a
+/// repository: a reference that cannot be read is skipped, a snapshot whose
+/// revision belongs to a different checkout mode grounds nothing, and the total
+/// is truncated at the input limit rather than overflowing it.
+///
+/// Zero grounding is a legal Ask — an install with no chosen source folder can
+/// still ask — so nothing here fails the attempt.
+pub(crate) fn collect_grounding<E>(
+    snapshot: &crew_wiki::snapshot_v1::VerifiedSnapshot,
+    workspace_mode: &str,
+    read: impl Fn(
+        &str,
+        &crew_wiki::source_snapshot::SourceReference,
+    ) -> Result<crew_wiki::source_access::VerifiedSourceFile, E>,
+) -> Vec<GroundedSource> {
+    let revision = snapshot.index().source_revision().to_owned();
+    if !revision.starts_with(&format!("{workspace_mode}:")) {
+        // The grant anchors a different checkout mode of the same repository;
+        // its bytes are not this snapshot's bytes.
+        return Vec::new();
+    }
+    let mut grounding = Vec::new();
+    let mut budget = super::PRIVATE_ASK_INPUT_LIMIT;
+    for page in snapshot.pages() {
+        for reference in page.source_references() {
+            let Ok(file) = read(&revision, reference) else {
+                continue;
+            };
+            let Ok(source) =
+                GroundedSource::from_verified_snapshot(snapshot, page, reference, &file)
+            else {
+                continue;
+            };
+            let Some(remaining) = budget.checked_sub(source.content.len()) else {
+                return grounding;
+            };
+            budget = remaining;
+            grounding.push(source);
+        }
+    }
+    grounding
+}
+
 #[cfg(test)]
 #[path = "selection_tests.rs"]
 mod tests;

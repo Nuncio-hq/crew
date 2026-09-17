@@ -1348,8 +1348,12 @@ the existing staging harness; step 5 is where the Ask itself stops today.
    running process does nothing. With the surface closed the composer renders
    the ordinary unavailable Ask box; with it open, the developer composer
    appears.
-2. **Hermes runtime binary.** The acceptance profile runs the Hermes CLI from
-   its own virtualenv, installed **outside** `<app-data>/agents` — a runtime
+2. **Hermes runtime binary, resolved from `PATH`.** The resolver binds to
+   whatever `hermes` resolves to on this machine's `PATH`, so that entry must be
+   the venv binary and not the `~/.local/bin/hermes` bash wrapper: the read
+   allow-list is derived from the named executable, and a wrapper leaves the
+   interpreter's prefix out of it. The acceptance profile runs the Hermes CLI
+   from its own virtualenv, installed **outside** `<app-data>/agents` — a runtime
    directory that contains the staging base is refused before any policy text
    exists, and the screen shows `runtime process containment is unverified`.
 3. **An HTTPS provider profile.** The staged Hermes profile must name a provider
@@ -1369,6 +1373,11 @@ the existing staging harness; step 5 is where the Ask itself stops today.
    answer should be grounded. Without a grant the Ask still runs; it simply
    carries no grounding, and an answer that cites anything is then refused by
    the citation fence.
+
+Restarting the agent between Asks is expected to re-probe rather than refuse:
+`session_generation` is the running harness generation's digest, so a receipt
+captured under the previous generation is a cache miss. A repository with no
+published Wiki snapshot refuses with `private Ask grounding is invalid`.
 
 Then ask. **The expected outcome on a bound agent is an answer**, with the
 agent picker showing the running agent, the composer showing the answer, and

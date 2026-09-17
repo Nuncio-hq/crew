@@ -2603,6 +2603,20 @@ attempt through the production launch path must move that count by zero.
   citation paths and line ranges, never the source text. A history that cannot be
   written does not change the answer or the refusal the viewer is given; the
   screen says the attempt was not kept.
+- The runtime CLI is resolved from this machine's `PATH`, so what the selection
+  binds to is whatever `claude` or `hermes` resolves to there. A shell wrapper
+  resolves as the executable, and the read allow-list is then derived from the
+  wrapper rather than from the interpreter behind it, so the run dies in the
+  dynamic loader. The path must point at the real binary; this is checked by
+  installed acceptance, not by a fence.
+- A retained probe receipt no longer projects onto a selection whose harness
+  generation changed, since `session_generation` is that generation's digest.
+  That is a cache miss — a fresh probe — not a refusal: an agent restart must
+  not tell the viewer their configuration changed.
+- A repository with no published Wiki snapshot cannot ground an Ask, and the
+  refusal reads `private Ask grounding is invalid`. It is accurate but blunt;
+  a later revision should distinguish "no snapshot published yet" from "the
+  snapshot did not verify".
 - A private Ask's scope carries a `project_id`, and there is no native project
   registry to resolve one from, so the repository coordinate is used as that
   identity. It is derived natively rather than accepted from a caller, but it

@@ -204,12 +204,22 @@ fn resolve(
     fixture: &tempfile::TempDir,
     snapshot: &VerifiedSnapshot,
 ) -> Result<PrivateAskSelection, PrivateAskFailure> {
+    resolve_with_grounding(observation, scope, fixture, snapshot, Vec::new())
+}
+
+fn resolve_with_grounding(
+    observation: &Observation,
+    scope: PrivateAskScope,
+    fixture: &tempfile::TempDir,
+    snapshot: &VerifiedSnapshot,
+    grounding: Vec<GroundedSource>,
+) -> Result<PrivateAskSelection, PrivateAskFailure> {
     resolve_observed_selection(
         scope,
         "What does answer do?".into(),
         observation.agent(),
         snapshot,
-        Vec::new(),
+        grounding,
         owned_receipt(fixture),
         1_000,
         AttemptIdentity::fresh(),
@@ -397,6 +407,42 @@ fn a_busy_harness_generation_resolves_as_busy() {
     );
 }
 
+/// The one source reference the fixture snapshot carries, read back as the
+/// grant would read it.
+fn fixture_source() -> crew_wiki::source_access::VerifiedSourceFile {
+    crew_wiki::source_access::VerifiedSourceFile {
+        content: "fn answer() {\n    42\n}\n".into(),
+        start_line: 1,
+        end_line: 3,
+    }
+}
+
+#[test]
+fn grounding_is_collected_from_the_snapshots_own_references() {
+    // Production line: `collect_grounding`, which `selection_native::grounding`
+    // supplies a grant-backed reader to. A reader that cannot read is not a
+    // failed Ask — an install with no chosen source folder still asks.
+    let publication = publication();
+    let snapshot = verified(&publication);
+
+    let grounded = collect_grounding(&snapshot, "git", |_, _| Ok::<_, ()>(fixture_source()));
+    assert_eq!(grounded.len(), 1);
+    assert_eq!(grounded[0].path(), "src/lib.rs");
+
+    // A reference that cannot be read is skipped, not fatal.
+    assert!(collect_grounding(&snapshot, "git", |_, _| Err::<
+        crew_wiki::source_access::VerifiedSourceFile,
+        (),
+    >(()))
+    .is_empty());
+
+    // A grant anchored to a different checkout mode grounds nothing: its bytes
+    // are not this snapshot's bytes, and the revision prefix says so.
+    assert!(
+        collect_grounding(&snapshot, "folder", |_, _| Ok::<_, ()>(fixture_source())).is_empty()
+    );
+}
+
 /// A resolved selection answers through the production path: resolve, probe,
 /// admit, run the contained one-shot. It needs the real Seatbelt boundary, so
 /// it is macOS-only; `fail_closed_tests` covers the refusal elsewhere.
@@ -414,13 +460,13 @@ fn a_resolved_selection_answers_through_the_production_path() {
     let publication = publication();
     let snapshot = verified(&publication);
     let mut observation = Observation::new(fixture.path());
-    // A benign runtime that answers without citing anything: this Ask carries
-    // no grounding, and an answer that cited a path would be refused by the
-    // citation fence — correctly, since there is nothing to resolve it against.
+    // A benign runtime that answers and cites the one file this Ask is
+    // grounded in. The citation must come back resolved against that grounding
+    // — the answer's own citation, not a copy of the input.
     observation.runtime = fake_runtime(
         fixture.path(),
         "claude",
-        "#!/usr/bin/perl\nlocal $/; my $in = <STDIN>; die \"no prompt\" unless defined $in; print '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"It returns 42.\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
+        "#!/usr/bin/perl\nlocal $/; my $in = <STDIN>; die \"no prompt\" unless defined $in; print '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"It returns 42.\\n\\n[^cite]: src/lib.rs\",\"modelUsage\":{\"claude-fable-5-1\":{}}}';\n",
     );
     // One real live child, so the PID in the observation comes from a handle
     // this fixture owns rather than from a PID probe.
@@ -438,7 +484,9 @@ fn a_resolved_selection_answers_through_the_production_path() {
         lifecycle: ManagedAgentRuntimeLifecycle::Ready,
     });
 
-    let response = resolve(&observation, scope(), &fixture, &snapshot)
+    let grounding = collect_grounding(&snapshot, "git", |_, _| Ok::<_, ()>(fixture_source()));
+    assert_eq!(grounding.len(), 1, "the fixture snapshot grounds one file");
+    let response = resolve_with_grounding(&observation, scope(), &fixture, &snapshot, grounding)
         .expect("a bound agent resolves")
         .answer();
     let _ = session.kill();
@@ -446,7 +494,8 @@ fn a_resolved_selection_answers_through_the_production_path() {
     let response = response.expect("a resolved selection answers");
 
     assert!(response.markdown.starts_with("It returns 42."));
-    assert!(response.citations.is_empty());
+    assert_eq!(response.citations.len(), 1);
+    assert_eq!(response.citations[0].path(), "src/lib.rs");
     assert_eq!(
         response.session_generation,
         session_generation("harness-generation-nonce")
