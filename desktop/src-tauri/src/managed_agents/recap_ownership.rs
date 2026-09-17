@@ -291,6 +291,32 @@ impl VerifiedStagingOwnership {
         Ok(base)
     }
 
+    /// The owned directory holding this viewer's own private Ask history.
+    ///
+    /// It is deliberately separate from the probe receipts: a receipt is
+    /// evidence about this machine, while the history is what the viewer asked
+    /// and what came back. Neither is ever published — a private Ask reaches no
+    /// relay — so this tree is the only place either exists.
+    pub(crate) fn private_ask_history_base(&self) -> Result<PathBuf, RecapStateFailure> {
+        #[cfg(test)]
+        if let Some(base) = self.test_recap_base.as_ref() {
+            let base = base.join("private-ask-history");
+            std::fs::create_dir_all(&base).map_err(|_| RecapStateFailure::Io)?;
+            return Ok(base);
+        }
+        self.validate()?;
+        let base = self.app_data.join("private-ask-history");
+        match std::fs::symlink_metadata(&base) {
+            Ok(_) => validate_private_root(&base, self.native.uid)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_owned_directory(&base)?;
+                validate_private_root(&base, self.native.uid)?;
+            }
+            Err(_) => return Err(RecapStateFailure::Ownership),
+        }
+        Ok(base)
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test_recap_base(base: PathBuf) -> Self {
         let native = NativeIdentity {

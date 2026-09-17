@@ -1,0 +1,194 @@
+//! The owner-local history: both bounds, the read-back, and the refusal to
+//! turn a damaged file into a partial record.
+//!
+//! The production lines these bind to are `retained`'s count and age bounds and
+//! `load`'s "anything unusable is empty" ladder.
+
+use super::super::tests::{canonical_tempdir, owned_receipt};
+use super::{load, record, PrivateAskHistoryEntry, HISTORY_LIMIT, HISTORY_MAX_AGE};
+use crate::managed_agents::recap_ownership::VerifiedStagingOwnership;
+
+fn entry(id: &str, asked_at: u64) -> PrivateAskHistoryEntry {
+    PrivateAskHistoryEntry {
+        attempt_id: id.to_owned(),
+        question: format!("question {id}"),
+        markdown: Some("answer".into()),
+        refusal: None,
+        citations: Vec::new(),
+        asked_at,
+    }
+}
+
+fn history_file(ownership: &VerifiedStagingOwnership) -> std::path::PathBuf {
+    ownership
+        .private_ask_history_base()
+        .expect("history base")
+        .join("attempts.json")
+}
+
+#[test]
+fn an_attempt_is_read_back_after_a_restart() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    record(&ownership, entry("first", 1_000), 1_000).expect("record");
+
+    // A fresh ownership handle is what a restart looks like from here: nothing
+    // is carried in memory, the bytes on disk are the whole record.
+    let restarted = owned_receipt(&fixture);
+    let entries = load(&restarted, 1_100);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].attempt_id, "first");
+    assert_eq!(entries[0].question, "question first");
+}
+
+#[test]
+fn the_history_is_newest_first_and_bounded_by_count() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    let now = 100_000;
+    for index in 0..(HISTORY_LIMIT + 5) {
+        record(
+            &ownership,
+            entry(
+                &format!("attempt-{index}"),
+                now - (HISTORY_LIMIT + 5 - index) as u64,
+            ),
+            now,
+        )
+        .expect("record");
+    }
+
+    let entries = load(&ownership, now);
+    assert_eq!(entries.len(), HISTORY_LIMIT, "the count bound holds");
+    // The newest survives and the oldest is the one dropped.
+    assert_eq!(
+        entries[0].attempt_id,
+        format!("attempt-{}", HISTORY_LIMIT + 4)
+    );
+    assert!(
+        !entries.iter().any(|entry| entry.attempt_id == "attempt-0"),
+        "the oldest attempt is the one the count bound drops"
+    );
+}
+
+#[test]
+fn an_attempt_past_the_age_bound_is_dropped() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    let now = 10 * HISTORY_MAX_AGE;
+    record(&ownership, entry("old", now - HISTORY_MAX_AGE - 1), now).expect("record old");
+    record(&ownership, entry("recent", now - 10), now).expect("record recent");
+
+    let entries = load(&ownership, now);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].attempt_id, "recent");
+}
+
+#[test]
+fn an_attempt_stamped_in_the_future_is_not_kept() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    // Not a reading of this machine's clock, so it is not retained — otherwise
+    // it would sit at the head of the list forever.
+    record(&ownership, entry("ahead", 5_000), 1_000).expect("record");
+
+    assert!(load(&ownership, 1_000).is_empty());
+}
+
+#[test]
+fn a_refusal_is_recorded_as_history_too() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    let refused = PrivateAskHistoryEntry::refused(
+        "why is this refused?",
+        "attempt-refused",
+        &super::super::PrivateAskFailure::AgentBusy,
+        2_000,
+    );
+    record(&ownership, refused, 2_000).expect("record");
+
+    let entries = load(&ownership, 2_000);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].markdown, None);
+    assert_eq!(
+        entries[0].refusal.as_deref(),
+        Some("selected agent is busy"),
+        "the screen's reason is the one kept"
+    );
+}
+
+#[test]
+fn a_reused_attempt_id_replaces_rather_than_duplicates() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    record(&ownership, entry("same", 1_000), 1_000).expect("first");
+    let mut second = entry("same", 1_200);
+    second.question = "the second question".into();
+    record(&ownership, second, 1_200).expect("second");
+
+    let entries = load(&ownership, 1_300);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].question, "the second question");
+}
+
+#[test]
+fn a_damaged_history_reads_as_empty_rather_than_partial() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    record(&ownership, entry("first", 1_000), 1_000).expect("record");
+
+    std::fs::write(history_file(&ownership), b"{not json at all").expect("damage");
+    assert!(
+        load(&ownership, 1_100).is_empty(),
+        "unparseable bytes are not a partial record"
+    );
+
+    // And a damaged file does not block the next attempt from being recorded.
+    record(&ownership, entry("after", 1_200), 1_200).expect("record after damage");
+    assert_eq!(load(&ownership, 1_200).len(), 1);
+}
+
+#[test]
+fn a_history_from_another_schema_is_not_read() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    record(&ownership, entry("first", 1_000), 1_000).expect("record");
+    let path = history_file(&ownership);
+    let bytes = std::fs::read(&path).expect("read");
+    let document = String::from_utf8(bytes)
+        .expect("utf8")
+        .replace("crew-private-ask-history", "some-other-log");
+    std::fs::write(&path, document).expect("rewrite");
+
+    assert!(load(&ownership, 1_100).is_empty());
+}
+
+#[test]
+fn a_missing_history_is_an_empty_one() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+
+    assert!(load(&ownership, 1_000).is_empty());
+}
+
+#[test]
+fn a_completed_write_leaves_no_temporary_file() {
+    let fixture = canonical_tempdir();
+    let ownership = owned_receipt(&fixture);
+    for index in 0..3 {
+        record(
+            &ownership,
+            entry(&format!("attempt-{index}"), 1_000 + index),
+            2_000,
+        )
+        .expect("record");
+    }
+
+    let base = ownership.private_ask_history_base().expect("history base");
+    let files: Vec<_> = std::fs::read_dir(&base)
+        .expect("readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(files, vec!["attempts.json".to_string()]);
+}

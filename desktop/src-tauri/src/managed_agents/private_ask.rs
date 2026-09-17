@@ -14,6 +14,7 @@ mod containment;
 mod credential;
 pub(crate) mod dev_gate;
 mod egress_proxy;
+pub(crate) mod history;
 mod launch;
 mod probe_program;
 mod probe_receipt;
@@ -114,6 +115,21 @@ pub(crate) struct GroundedSource {
 }
 
 impl GroundedSource {
+    /// Where this source lives inside the verified snapshot. Read-only
+    /// accessors, so a caller outside this module can render a citation without
+    /// being able to describe one.
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) fn start_line(&self) -> u64 {
+        self.start_line
+    }
+
+    pub(crate) fn end_line(&self) -> u64 {
+        self.end_line
+    }
+
     fn validate(&self) -> Result<(), PrivateAskFailure> {
         if !crew_wiki::source_snapshot::valid_source_path(&self.path)
             || self.start_line == 0

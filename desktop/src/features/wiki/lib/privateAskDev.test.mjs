@@ -84,7 +84,7 @@ test("refused_isRecordedSoAnIntentionalFenceDoesNotLookLikeAHang", () => {
   assert.equal(state.history.length, 1);
   assert.equal(state.history[0].markdown, null);
   assert.equal(
-    state.history[0].error,
+    state.history[0].refusal,
     "runtime network egress is not bounded to the model provider",
   );
 });
@@ -133,4 +133,58 @@ test("answered_keepsItsCitations", () => {
   });
   assert.deepEqual(state.citations, [CITATION]);
   assert.deepEqual(state.history[0].citations, [CITATION]);
+});
+
+test("restored_replacesTheWindowListWithTheMachinesOwnRecord", () => {
+  // The backend's record is the one that survived a restart, and it is already
+  // bounded and pruned there. Merging would resurrect entries its age bound
+  // dropped, so the restore replaces rather than merges.
+  let state = privateAskReducer(withQuestion("q"), { type: "start" });
+  state = privateAskReducer(state, {
+    type: "answered",
+    attemptId: "window-only",
+    markdown: "answer",
+    citations: [],
+  });
+  const restored = privateAskReducer(state, {
+    type: "restored",
+    history: [
+      {
+        attemptId: "from-disk",
+        question: "asked before the restart",
+        markdown: "kept answer",
+        refusal: null,
+        citations: [CITATION],
+        askedAt: 1000,
+      },
+    ],
+  });
+  assert.equal(restored.history.length, 1);
+  assert.equal(restored.history[0].attemptId, "from-disk");
+  assert.deepEqual(restored.history[0].citations, [CITATION]);
+});
+
+test("answered_reportsWhenTheMachineCouldNotKeepTheAttempt", () => {
+  let state = privateAskReducer(withQuestion("q"), { type: "start" });
+  state = privateAskReducer(state, {
+    type: "answered",
+    attemptId: "a1",
+    markdown: "answer",
+    citations: [],
+    historyRecorded: false,
+  });
+  // The answer still stands; what is reported is that it was not kept.
+  assert.equal(state.answer, "answer");
+  assert.equal(state.historyRecorded, false);
+
+  // A later attempt that WAS kept clears the note rather than leaving it on
+  // screen beside an answer it does not describe.
+  state = privateAskReducer(state, { type: "start" });
+  state = privateAskReducer(state, {
+    type: "answered",
+    attemptId: "a2",
+    markdown: "second",
+    citations: [],
+  });
+  assert.equal(state.historyRecorded, true);
 });

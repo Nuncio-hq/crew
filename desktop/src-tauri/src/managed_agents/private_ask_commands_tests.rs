@@ -4,6 +4,20 @@
 use super::super::private_ask::dev_gate::dev_gate_open;
 use super::*;
 
+/// A minimal app handle. The commands need one for the owner-local history and
+/// nothing else; a mock app gives a real `AppHandle` with a per-test identifier
+/// so two tests never share an app-data tree.
+fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!(
+        "xyz.nuncio.crew.private-ask-command-{}",
+        uuid::Uuid::new_v4().simple()
+    );
+    tauri::test::mock_builder()
+        .build(context)
+        .expect("build the private Ask command fixture app")
+}
+
 /// The gate a closed build would apply. `cfg!(debug_assertions)` is true under
 /// `cargo test`, so the closed branch is exercised through the pure decision
 /// rather than through the cached reader.
@@ -26,9 +40,12 @@ async fn an_open_gate_still_refuses_the_run_with_the_blocking_reason() {
     // reachable — and must still refuse, with the reason the production path
     // produced rather than a placeholder answer or a string chosen here.
     assert!(super::private_ask_dev_enabled());
-    let error = private_ask_run("What does answer do?".to_string())
-        .await
-        .expect_err("a private Ask must not answer without a bound selection");
+    let error = private_ask_run(
+        mock_app().handle().clone(),
+        "What does answer do?".to_string(),
+    )
+    .await
+    .expect_err("a private Ask must not answer without a bound selection");
     assert_eq!(
         error,
         crate::managed_agents::private_ask::dev_run("What does answer do?")
@@ -40,7 +57,7 @@ async fn an_open_gate_still_refuses_the_run_with_the_blocking_reason() {
 #[tokio::test]
 async fn an_empty_question_is_refused_without_reaching_admission() {
     for blank in ["", "   ", "\n", "\t "] {
-        let error = private_ask_run(blank.to_string())
+        let error = private_ask_run(mock_app().handle().clone(), blank.to_string())
             .await
             .expect_err("a blank question is not a question");
         assert_eq!(error, "a private Ask needs a question");
@@ -48,13 +65,19 @@ async fn an_empty_question_is_refused_without_reaching_admission() {
 }
 
 #[tokio::test]
-async fn the_status_command_reports_the_blocking_reason_when_it_is_open() {
-    let status = private_ask_dev_status().await.expect("status");
+async fn the_status_command_reports_a_reason_without_launching_anything() {
+    let status = private_ask_dev_status(mock_app().handle().clone())
+        .await
+        .expect("status");
     assert!(status.enabled, "debug build opens the surface");
-    let expected = crate::managed_agents::private_ask::dev_run("status probe")
-        .expect_err("no selection is bound")
-        .to_string();
-    assert_eq!(status.blocked_reason.as_deref(), Some(expected.as_str()));
+    // A mock app has no owned staging tree, so the status stops at that fence
+    // and says so. The point is that it stopped there: the status is polled on
+    // every mount, and reaching the run path would start a capability probe —
+    // a contained child process — each time the composer appeared.
+    assert_eq!(
+        status.blocked_reason.as_deref(),
+        Some("this install has no owned staging tree for a private Ask")
+    );
 }
 
 /// Cancelling twice, or cancelling something that already finished, is not an

@@ -32,9 +32,22 @@ export type PrivateAskHistoryEntry = {
   /** Present when the attempt produced an answer. */
   markdown: string | null;
   /** Present when the attempt was refused; mutually exclusive with markdown. */
-  error: string | null;
+  refusal: string | null;
   citations: PrivateAskCitation[];
   askedAt: number;
+};
+
+/**
+ * What `private_ask_run` returns. The citations are the ones the ANSWER cited,
+ * resolved by the backend against the verified snapshot — not a copy of the
+ * grounding it was given.
+ */
+export type PrivateAskRunResult = {
+  attemptId: string;
+  markdown: string;
+  citations: PrivateAskCitation[];
+  /** False when the answer was produced but could not be kept on this machine. */
+  historyRecorded: boolean;
 };
 
 export type PrivateAskState = {
@@ -44,7 +57,13 @@ export type PrivateAskState = {
   citations: PrivateAskCitation[];
   error: string | null;
   running: boolean;
+  /**
+   * Owner-local, read back from the backend on mount. It is the machine's own
+   * record: a private Ask publishes nothing, so nothing else holds it.
+   */
   history: PrivateAskHistoryEntry[];
+  /** False when the last answer could not be written to that record. */
+  historyRecorded: boolean;
 };
 
 /**
@@ -61,6 +80,7 @@ export const initialPrivateAskState: PrivateAskState = {
   error: null,
   running: false,
   history: [],
+  historyRecorded: true,
 };
 
 export type PrivateAskAction =
@@ -72,9 +92,12 @@ export type PrivateAskAction =
       attemptId: string;
       markdown: string;
       citations: PrivateAskCitation[];
+      /** Whether the backend kept this attempt. Defaults to kept. */
+      historyRecorded?: boolean;
     }
   | { type: "refused"; attemptId: string; error: string }
-  | { type: "cancelled" };
+  | { type: "cancelled" }
+  | { type: "restored"; history: PrivateAskHistoryEntry[] };
 
 /** Whether the Ask control should be actionable right now. */
 export function canAskPrivately(
@@ -123,11 +146,12 @@ export function privateAskReducer(
         answer: action.markdown,
         citations: action.citations,
         error: null,
+        historyRecorded: action.historyRecorded ?? true,
         history: remember(state.history, {
           attemptId: action.attemptId,
           question: state.question,
           markdown: action.markdown,
-          error: null,
+          refusal: null,
           citations: action.citations,
           askedAt: Date.now(),
         }),
@@ -141,15 +165,22 @@ export function privateAskReducer(
         answer: "",
         citations: [],
         error: action.error,
+        historyRecorded: true,
         history: remember(state.history, {
           attemptId: action.attemptId,
           question: state.question,
           markdown: null,
-          error: action.error,
+          refusal: action.error,
           citations: [],
           askedAt: Date.now(),
         }),
       };
+    case "restored":
+      // The backend's record replaces whatever this window accumulated: it is
+      // the one that survived a restart, and it is already bounded and pruned
+      // there. A merge would resurrect entries the backend's own age bound
+      // dropped.
+      return { ...state, history: action.history };
     case "cancelled":
       // Cancelling records nothing: the viewer withdrew the question, so there
       // is no outcome worth keeping.

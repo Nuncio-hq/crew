@@ -8,7 +8,10 @@ import {
   canAskPrivately,
   initialPrivateAskState,
   privateAskReducer,
+  type PrivateAskCitation,
   type PrivateAskDevStatus,
+  type PrivateAskHistoryEntry,
+  type PrivateAskRunResult,
 } from "@/features/wiki/lib/privateAskDev";
 import { invokeTauri } from "@/shared/api/tauri";
 import {
@@ -59,10 +62,12 @@ function usePrivateAskDevStatus(): PrivateAskDevStatus {
 }
 
 export function WikiAskBox({
+  onOpenSource,
   scopeLabel,
 }: {
   channelId?: string | null;
   door: "library" | "project";
+  onOpenSource?: (citation: PrivateAskCitation) => void;
   owner?: string;
   repoD?: string;
   scopeLabel: string;
@@ -72,7 +77,13 @@ export function WikiAskBox({
   const status = usePrivateAskDevStatus();
 
   if (status.enabled) {
-    return <PrivateAskDevComposer scopeLabel={scopeLabel} status={status} />;
+    return (
+      <PrivateAskDevComposer
+        onOpenSource={onOpenSource}
+        scopeLabel={scopeLabel}
+        status={status}
+      />
+    );
   }
 
   return (
@@ -147,10 +158,45 @@ export function WikiAskBox({
  * persistence beyond this window, and it shows the backend's refusal verbatim
  * rather than dressing it up, because the refusal is the thing under test.
  */
+/**
+ * One citation, as a control rather than decoration.
+ *
+ * It opens the cited source when the host supplied an opener; otherwise it
+ * renders the path as plain text rather than a control that goes nowhere.
+ */
+function CitationLink({
+  citation,
+  onOpen,
+}: {
+  citation: PrivateAskCitation;
+  onOpen?: (citation: PrivateAskCitation) => void;
+}) {
+  const label = `${citation.path}:${citation.startLine}-${citation.endLine}`;
+  if (!onOpen) {
+    return (
+      <span data-testid={`wiki-ask-dev-citation-${citation.path}`}>
+        {label}
+      </span>
+    );
+  }
+  return (
+    <button
+      className="font-mono text-2xs text-primary"
+      data-testid={`wiki-ask-dev-citation-${citation.path}`}
+      onClick={() => onOpen(citation)}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
 function PrivateAskDevComposer({
+  onOpenSource,
   scopeLabel,
   status,
 }: {
+  onOpenSource?: (citation: PrivateAskCitation) => void;
   scopeLabel: string;
   status: PrivateAskDevStatus;
 }) {
@@ -160,6 +206,26 @@ function PrivateAskDevComposer({
   );
   const attempt = React.useRef(0);
 
+  /**
+   * Read the owner-local record. It lives on this machine only — a private Ask
+   * publishes nothing — so this is the only place a past attempt exists, and it
+   * is what makes the list survive a restart.
+   */
+  const refreshHistory = React.useCallback(
+    () =>
+      invokeTauri<PrivateAskHistoryEntry[]>("private_ask_history")
+        .then((history) => dispatch({ type: "restored", history }))
+        .catch(() => {
+          // A record that cannot be read is an empty list, never a crash: the
+          // composer must still be usable.
+        }),
+    [],
+  );
+
+  React.useEffect(() => {
+    void refreshHistory();
+  }, [refreshHistory]);
+
   const ask = React.useCallback(() => {
     if (!canAskPrivately(state, status)) {
       return;
@@ -167,9 +233,20 @@ function PrivateAskDevComposer({
     attempt.current += 1;
     const attemptId = `attempt-${attempt.current}`;
     dispatch({ type: "start" });
-    invokeTauri<string>("private_ask_run", { question: state.question })
-      .then((markdown) => {
-        dispatch({ type: "answered", attemptId, markdown, citations: [] });
+    invokeTauri<PrivateAskRunResult>("private_ask_run", {
+      question: state.question,
+    })
+      .then((result) => {
+        dispatch({
+          type: "answered",
+          // The backend's own attempt id, not a renderer counter: it is the id
+          // the owner-local record is keyed on.
+          attemptId: result.attemptId,
+          markdown: result.markdown,
+          citations: result.citations,
+          historyRecorded: result.historyRecorded,
+        });
+        void refreshHistory();
       })
       .catch((error: unknown) => {
         dispatch({
@@ -177,8 +254,10 @@ function PrivateAskDevComposer({
           attemptId,
           error: error instanceof Error ? error.message : String(error),
         });
+        // A refusal is recorded on this machine too, so the list must catch up.
+        void refreshHistory();
       });
-  }, [state, status]);
+  }, [state, status, refreshHistory]);
 
   const cancel = React.useCallback(() => {
     dispatch({ type: "cancelled" });
@@ -263,6 +342,17 @@ function PrivateAskDevComposer({
           </p>
         ) : null}
 
+        {state.answer && !state.historyRecorded ? (
+          <p
+            aria-live="polite"
+            className="mt-2 text-2xs text-muted-foreground"
+            data-testid="wiki-ask-dev-history-unrecorded"
+            role="status"
+          >
+            This answer could not be kept on this machine.
+          </p>
+        ) : null}
+
         {state.answer ? (
           <div className="mt-2 text-sm" data-testid="wiki-ask-dev-answer">
             {state.answer}
@@ -273,7 +363,7 @@ function PrivateAskDevComposer({
               >
                 {state.citations.map((citation) => (
                   <li key={`${citation.path}:${citation.startLine}`}>
-                    {citation.path}:{citation.startLine}-{citation.endLine}
+                    <CitationLink citation={citation} onOpen={onOpenSource} />
                   </li>
                 ))}
               </ul>
@@ -288,7 +378,7 @@ function PrivateAskDevComposer({
           >
             {state.history.map((entry) => (
               <li key={entry.attemptId}>
-                {entry.question} — {entry.error ?? "answered"}
+                {entry.question} — {entry.refusal ?? "answered"}
               </li>
             ))}
           </ol>
