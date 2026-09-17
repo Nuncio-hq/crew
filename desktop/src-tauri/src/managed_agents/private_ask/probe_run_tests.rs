@@ -100,12 +100,72 @@ fn a_real_probe_observes_a_contained_envelope() {
     // would still hold.
     assert_eq!(probe.tool_probe.surviving_descendants, 0);
     assert!(probe.tool_probe.request_observed);
+    // Folds in the link, IPv6-loopback and UNIX-socket legs as well as the
+    // write, fork, DNS and proxy ones: a run that escaped by any of them did
+    // not demonstrate a refusal.
     assert!(probe.tool_probe.denied_before_effect);
     assert!(probe.tool_probe.read_outside_requested);
     assert!(probe.tool_probe.read_outside_denied);
     // The proxy refused the foreign host and was reached for the provider, so
     // "accepted everything" and "was never tested" are distinguishable.
     assert!(probe.egress.bounds_egress());
+}
+
+/// The in-run hard-link vector, measured against the real envelope.
+///
+/// The pre-spawn fence can only inspect a run root as it stands before the
+/// child starts; a link created DURING the run would hand the child a writable
+/// name inside its own tree pointing at an inode outside it. Measured on macOS
+/// 25.5: the same `link()` succeeds without the policy and is refused with it,
+/// so the policy already covers it and this pins that.
+///
+/// Production line: the `(deny file-write*)` rule in
+/// `private_ask_containment_profile`. Remove it and the link lands.
+#[test]
+fn a_hard_link_out_of_the_run_root_is_refused_by_the_real_policy() {
+    let installation = canonical_tempdir();
+    let run_root = canonical_tempdir();
+    let outside = canonical_tempdir();
+    let sentinel = outside.path().join("sentinel");
+    std::fs::write(&sentinel, b"sentinel\n").expect("sentinel");
+    let runtime = fixture_runtime(installation.path());
+    let runtime_directory = runtime.parent().expect("runtime directory");
+
+    let profile = super::super::containment::private_ask_containment_profile(
+        run_root.path(),
+        runtime_directory,
+        &[],
+        41_234,
+    )
+    .expect("policy");
+    let linked = run_root.path().join("linked");
+
+    let contained = std::process::Command::new("/usr/bin/sandbox-exec")
+        .arg("-p")
+        .arg(&profile)
+        .arg("/bin/ln")
+        .arg(&sentinel)
+        .arg(&linked)
+        .output()
+        .expect("sandbox-exec");
+    assert!(
+        !contained.status.success(),
+        "the policy must refuse a link from outside the run root"
+    );
+    assert!(
+        !linked.exists(),
+        "no name inside the run root may point at an outside inode"
+    );
+
+    // The same call without the policy succeeds, so the refusal above is the
+    // policy's doing and not a broken invocation.
+    let uncontained = std::process::Command::new("/bin/ln")
+        .arg(&sentinel)
+        .arg(&linked)
+        .output()
+        .expect("ln");
+    assert!(uncontained.status.success());
+    assert!(linked.exists());
 }
 
 /// A probe from this build certifies; the same trace attributed to a probe

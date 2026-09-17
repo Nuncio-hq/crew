@@ -27,11 +27,21 @@
 //!
 //! # What it attempts
 //!
-//! One write outside the run root, one read outside the run root, one direct
-//! TCP connect to a desktop-owned control listener, one `CONNECT` through the
-//! proxy to a foreign host, one `CONNECT` through the proxy to the configured
-//! provider, one DNS lookup, and one `fork`. Then it prints a single-line
-//! marker carrying the desktop's own per-run nonce and exits zero.
+//! One write outside the run root, one hard link of an outside file INTO the
+//! run root, one read outside the run root, one direct TCP connect to a
+//! desktop-owned control listener over IPv4 and — when the machine has one —
+//! over IPv6, one UNIX-domain connect to a system socket, one `CONNECT` through
+//! the proxy to a foreign host, one `CONNECT` through the proxy to the
+//! configured provider, one DNS lookup, and one `fork`. Then it prints a
+//! single-line marker carrying the desktop's own per-run nonce and exits zero.
+//!
+//! The hard link is the in-run half of the pre-spawn hard-link fence: that
+//! fence can only inspect the run root as it stands before the child starts,
+//! and a link created during the run would give the child a writable name
+//! inside its own tree pointing at an inode outside it. Measured on macOS 25.5:
+//! `link()` from outside the write allowance is refused with `EPERM` under this
+//! policy and succeeds without it, so the existing profile already covers the
+//! vector and the probe records that rather than the policy growing a rule.
 //!
 //! Only the *attempts* are self-reported. Every *effect* is measured by the
 //! desktop: the sentinel digest, the control listener's accept count, the
@@ -54,6 +64,8 @@ pub(super) const ENV_PROXY: &str = "CREW_PROBE_PROXY";
 pub(super) const ENV_PROVIDER: &str = "CREW_PROBE_PROVIDER";
 pub(super) const ENV_FOREIGN: &str = "CREW_PROBE_FOREIGN";
 pub(super) const ENV_LOCK: &str = "CREW_PROBE_LOCK";
+/// The IPv6 control listener, when this machine has one. Empty otherwise.
+pub(super) const ENV_CONTROL6: &str = "CREW_PROBE_CONTROL6";
 
 /// The interpreter the probe runs under. It is inside the policy's fixed read
 /// allow-list for every runtime, which is the whole reason this design needs no
@@ -75,6 +87,7 @@ use Fcntl qw(:flock);
 my $nonce    = $ENV{CREW_PROBE_NONCE}    // '';
 my $sentinel = $ENV{CREW_PROBE_SENTINEL} // '';
 my $control  = $ENV{CREW_PROBE_CONTROL}  // '';
+my $control6 = $ENV{CREW_PROBE_CONTROL6} // '';
 my $proxy    = $ENV{CREW_PROBE_PROXY}    // '';
 my $provider = $ENV{CREW_PROBE_PROVIDER} // '';
 my $foreign  = $ENV{CREW_PROBE_FOREIGN}  // '';
@@ -91,6 +104,16 @@ if ($sentinel ne '') {
         close $out;
         $write_denied = 0;
     }
+}
+
+# 1b. Hard link the outside file INTO the run root. The pre-spawn fence checks
+#     the run root for existing links; this is the vector it cannot see, because
+#     the link would be created during the run. A successful link gives the
+#     child a writable name inside its own tree pointing at an inode outside it.
+my $link_denied = 1;
+my ($run_root) = $0 =~ m{^(.*)/[^/]+$};
+if ($sentinel ne '' && defined $run_root) {
+    $link_denied = 0 if link($sentinel, "$run_root/probe-linked-sentinel");
 }
 
 # 2. Read outside the run root.
@@ -127,6 +150,32 @@ if ($control ne '') {
         syswrite($socket, "probe-direct\n");
         close $socket;
     }
+}
+
+# 3b. The same direct connect over IPv6. The policy names `localhost:<port>`,
+#     and a rule that only covered the v4 loopback would leave the v6 one open.
+#     The desktop binds its control listener on both when the machine has IPv6;
+#     when it does not, there is nothing to reach and the leg reports denied.
+my $ipv6_direct_denied = 1;
+if ($control6 ne '') {
+    my ($port6) = $control6 =~ m{:([0-9]+)$};
+    if (defined $port6 && socket(my $socket, PF_INET6, SOCK_STREAM, 0)) {
+        my $address = pack('n n N a16 N', AF_INET6, $port6, 0, pack('x15C', 1), 0);
+        if (connect($socket, $address)) {
+            $ipv6_direct_denied = 0;
+            syswrite($socket, "probe-direct-v6\n");
+        }
+        close $socket;
+    }
+}
+
+# 3c. A UNIX-domain connect to a system socket outside the run root. This is the
+#     same egress the resolver uses, measured directly rather than inferred from
+#     a failed name lookup.
+my $unix_connect_denied = 1;
+if (socket(my $unix_socket, PF_UNIX, SOCK_STREAM, 0)) {
+    $unix_connect_denied = 0 if connect($unix_socket, sockaddr_un('/var/run/mDNSResponder'));
+    close $unix_socket;
 }
 
 # 4/5. CONNECT through the proxy, to a foreign host and to the provider.
@@ -197,12 +246,15 @@ if ($lock ne '') {
 }
 
 printf(
-    "CREW-PRIVATE-ASK-PROBE-V1 {\"nonce\":\"%s\",\"parentPid\":%d,\"writeOutsideDenied\":%s,\"readOutsideDenied\":%s,\"directConnectDenied\":%s,\"foreignConnect\":\"%s\",\"providerConnect\":\"%s\",\"dnsDenied\":%s,\"forkDenied\":%s}\n",
+    "CREW-PRIVATE-ASK-PROBE-V1 {\"nonce\":\"%s\",\"parentPid\":%d,\"writeOutsideDenied\":%s,\"linkOutsideDenied\":%s,\"readOutsideDenied\":%s,\"directConnectDenied\":%s,\"ipv6DirectDenied\":%s,\"unixConnectDenied\":%s,\"foreignConnect\":\"%s\",\"providerConnect\":\"%s\",\"dnsDenied\":%s,\"forkDenied\":%s}\n",
     $nonce,
     getppid(),
     jbool($write_denied),
+    jbool($link_denied),
     jbool($read_denied),
     jbool($direct_denied),
+    jbool($ipv6_direct_denied),
+    jbool($unix_connect_denied),
     $foreign_result,
     $provider_result,
     jbool($dns_denied),
@@ -251,8 +303,18 @@ pub(super) struct ProbeMarker {
     /// answered that question for it.
     pub(super) parent_pid: u32,
     pub(super) write_outside_denied: bool,
+    /// The child could not hard-link a file outside its run root into it. The
+    /// pre-spawn fence cannot see this one: the link would be created during
+    /// the run, and a name inside the run root pointing at an outside inode is
+    /// a write allowance the policy never granted.
+    pub(super) link_outside_denied: bool,
     pub(super) read_outside_denied: bool,
     pub(super) direct_connect_denied: bool,
+    /// The same direct connect over the IPv6 loopback. `None` when this machine
+    /// had no IPv6 control listener to reach, which is not evidence either way.
+    pub(super) ipv6_direct_denied: bool,
+    /// A UNIX-domain connect to a system socket outside the run root.
+    pub(super) unix_connect_denied: bool,
     pub(super) foreign_connect_refused: bool,
     pub(super) provider_connect_reached_proxy: bool,
     pub(super) dns_denied: bool,
@@ -290,8 +352,11 @@ pub(super) fn parse_marker(stdout: &[u8], expected_nonce: &str) -> Option<ProbeM
     Some(ProbeMarker {
         parent_pid,
         write_outside_denied: flag("writeOutsideDenied")?,
+        link_outside_denied: flag("linkOutsideDenied")?,
         read_outside_denied: flag("readOutsideDenied")?,
         direct_connect_denied: flag("directConnectDenied")?,
+        ipv6_direct_denied: flag("ipv6DirectDenied")?,
+        unix_connect_denied: flag("unixConnectDenied")?,
         // "refused" is the proxy answering something other than 200. A foreign
         // target the proxy *accepted* is an escape; a target the child could not
         // reach the proxy for at all proves nothing and is not a refusal.

@@ -9,7 +9,9 @@ use super::*;
 fn marker_line(nonce: &str) -> String {
     format!(
         "{PROBE_MARKER}{{\"nonce\":\"{nonce}\",\"parentPid\":4321,\"writeOutsideDenied\":true,\
-         \"readOutsideDenied\":true,\"directConnectDenied\":true,\
+         \"linkOutsideDenied\":true,\"readOutsideDenied\":true,\
+         \"directConnectDenied\":true,\"ipv6DirectDenied\":true,\
+         \"unixConnectDenied\":true,\
          \"foreignConnect\":\"refused\",\"providerConnect\":\"accepted\",\
          \"dnsDenied\":true,\"forkDenied\":true}}\n"
     )
@@ -22,8 +24,11 @@ fn a_complete_marker_with_this_runs_nonce_parses() {
     // parse rather than being filled in by the desktop.
     assert_eq!(parsed.parent_pid, 4321);
     assert!(parsed.write_outside_denied);
+    assert!(parsed.link_outside_denied);
     assert!(parsed.read_outside_denied);
     assert!(parsed.direct_connect_denied);
+    assert!(parsed.ipv6_direct_denied);
+    assert!(parsed.unix_connect_denied);
     assert!(parsed.foreign_connect_refused);
     assert!(parsed.provider_connect_reached_proxy);
     assert!(parsed.dns_denied);
@@ -61,7 +66,9 @@ fn a_truncated_marker_is_not_a_partial_result() {
 fn a_marker_missing_one_field_yields_nothing_rather_than_a_default() {
     let line = format!(
         "{PROBE_MARKER}{{\"nonce\":\"nonce-a\",\"writeOutsideDenied\":true,\
-         \"readOutsideDenied\":true,\"directConnectDenied\":true,\
+         \"linkOutsideDenied\":true,\"readOutsideDenied\":true,\
+         \"directConnectDenied\":true,\"ipv6DirectDenied\":true,\
+         \"unixConnectDenied\":true,\
          \"foreignConnect\":\"refused\",\"providerConnect\":\"accepted\",\
          \"dnsDenied\":true}}"
     );

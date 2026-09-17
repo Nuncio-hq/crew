@@ -61,6 +61,10 @@ const FOREIGN_HOST: &str = "probe-foreign.invalid";
 /// tested", which a proxy record alone cannot.
 struct ControlListener {
     address: String,
+    /// The IPv6 loopback address of the same control, when this machine has
+    /// IPv6. Empty otherwise: a leg with nothing listening is not evidence, and
+    /// the v4 control is the load-bearing one.
+    address6: String,
     accepted: Arc<AtomicU32>,
     stop: Arc<AtomicBool>,
 }
@@ -78,6 +82,39 @@ impl ControlListener {
             .map_err(|_| PrivateAskFailure::InvalidState)?;
         let accepted = Arc::new(AtomicU32::new(0));
         let stop = Arc::new(AtomicBool::new(false));
+        // The policy names `localhost:<port>`, which is the v4 loopback. A
+        // second control on the v6 loopback is what turns "we did not test it"
+        // into "it was reachable and the policy refused it". A machine without
+        // IPv6 simply has no second control, and the probe's v6 leg reports
+        // nothing to reach.
+        let listener6 = TcpListener::bind("[::1]:0").ok();
+        let address6 = listener6
+            .as_ref()
+            .and_then(|listener| listener.local_addr().ok())
+            .map(|address| address.to_string())
+            .unwrap_or_default();
+        if let Some(listener6) = listener6.as_ref() {
+            if listener6.set_nonblocking(true).is_err() {
+                return Err(PrivateAskFailure::InvalidState);
+            }
+        }
+        let counter6 = Arc::clone(&accepted);
+        let halt6 = Arc::clone(&stop);
+        if let Some(listener6) = listener6 {
+            std::thread::spawn(move || {
+                while !halt6.load(Ordering::Acquire) {
+                    match listener6.accept() {
+                        Ok(_) => {
+                            counter6.fetch_add(1, Ordering::AcqRel);
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
         let counter = Arc::clone(&accepted);
         let halt = Arc::clone(&stop);
         // One dedicated thread with a polling accept loop, bounded by `stop`.
@@ -98,6 +135,7 @@ impl ControlListener {
         });
         Ok(Self {
             address,
+            address6,
             accepted,
             stop,
         })
@@ -250,6 +288,7 @@ fn capture_inside(
     command.env(probe_program::ENV_NONCE, &run_nonce);
     command.env(probe_program::ENV_SENTINEL, &sentinel);
     command.env(probe_program::ENV_CONTROL, &control.address);
+    command.env(probe_program::ENV_CONTROL6, &control.address6);
     command.env(
         probe_program::ENV_PROXY,
         format!("127.0.0.1:{}", proxy.port()),
@@ -335,12 +374,11 @@ fn capture_inside(
     );
     // Only now stop the proxy and take its record: after this point nothing may
     // reach the network on this attempt's behalf.
-    // `with_observed_direct_connections` is how a probe supplies the count its
-    // own listener measured; a production run has no such listener and
-    // truthfully reports zero.
-    let egress = proxy
-        .observe(direct_connections)
-        .with_observed_direct_connections(direct_connections);
+    // `observe` already takes the count this probe's own listener measured; a
+    // production run has no such listener and truthfully reports zero. Setting
+    // it a second time afterwards said the same thing twice, which is one
+    // place too many for a value the evidence depends on.
+    let egress = proxy.observe(direct_connections);
     drop(sentinel_guard);
 
     let probe = PrivateAskProbe {
@@ -430,7 +468,10 @@ fn tool_probe_from(
         // refused", and a run that escaped by any of these routes did not
         // demonstrate a refusal.
         denied_before_effect: marker.write_outside_denied
+            && marker.link_outside_denied
             && marker.direct_connect_denied
+            && marker.ipv6_direct_denied
+            && marker.unix_connect_denied
             && marker.dns_denied
             && marker.fork_denied
             && marker.foreign_connect_refused
