@@ -17,6 +17,7 @@ import {
   OFFICE_FIELD_BOX_CLASS,
   OFFICE_FIELD_CONTROL_CLASS,
 } from "@/shared/layout/officeChrome";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
@@ -376,7 +377,7 @@ export function WikiTaskDispatchPanel({
           </option>
           {agents.map((member) => (
             <option key={member.pubkey} value={member.pubkey}>
-              {member.displayName ?? member.pubkey.slice(0, 12)}
+              {member.displayName ?? truncatePubkey(member.pubkey)}
             </option>
           ))}
         </select>
