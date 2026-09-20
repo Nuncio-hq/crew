@@ -485,20 +485,16 @@ fn sandbox_profile_denies_tools_and_routes_all_network_through_the_gateway() {
         &gateway(),
     )
     .unwrap();
-    let ProcessContainment::Seatbelt { policy, .. } = plan.containment else {
+    let Some(policy) = plan.sandbox_profile.as_deref() else {
         panic!("macOS plan must contain the launch in seatbelt")
     };
-    let policy = std::str::from_utf8(&policy).unwrap();
-    assert!(policy.contains("(allow network-outbound (remote ip \"localhost:*\"))"));
-    assert!(!policy.contains("(allow network-outbound"));
-    let deny_position = policy.find("(deny process-fork)").unwrap();
-    let exec_position = policy.find("(allow process-exec)").unwrap();
-    assert!(exec_position < deny_position);
-    let authority = std::ffi::OsStr::new("sandbox-authority/v1")
-        .to_string_lossy()
-        .to_string();
-    assert!(policy.contains(&authority));
-    assert!(policy.contains(&format!("literal \"{}\"", root.display())));
+    assert_eq!(policy.matches("(allow network-outbound").count(), 1);
+    assert!(policy.contains("(allow network-outbound (remote ip \"localhost:43123\"))"));
+    assert!(policy.contains("(deny default)"));
+    assert!(policy.contains("(deny process-fork)"));
+    assert!(policy.contains("(allow process-exec)"));
+    assert!(policy.contains(&format!("subpath \"{}\"", root.display())));
+    assert!(policy.contains("literal \"/dev/null\""));
 }
 
 #[cfg(target_os = "macos")]

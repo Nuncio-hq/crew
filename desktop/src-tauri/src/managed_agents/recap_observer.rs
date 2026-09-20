@@ -887,10 +887,13 @@ mod tests {
             ),
             auth_available: true,
         };
-        let recap_base = tempfile::tempdir().expect("recap base");
+        // The owned-base check requires a canonical path; macOS $TMPDIR is a
+        // /var -> /private/var symlink, so canonicalize before probing.
+        let recap_dir = tempfile::tempdir().expect("recap base");
+        let recap_base = recap_dir.path().canonicalize().expect("canonical base");
 
         let (tool_probe, hostile_state, hostile_process) =
-            run_hostile_phase(recap_base.path(), &executable, &selection)
+            run_hostile_phase(&recap_base, &executable, &selection)
                 .expect("hostile phase must complete");
         assert_eq!(tool_probe.probe_id, RECAP_TOOL_PROBE_ID);
         assert!(
@@ -908,14 +911,9 @@ mod tests {
             .expect("credential JSON shape");
         let gateway = HermesOneShotGateway::start_with_credential(credential, &model)
             .expect("forward gateway must bind");
-        let (adapter, forward_state, forward_process) = forwarded_probe(
-            recap_base.path(),
-            &executable,
-            &selection,
-            gateway,
-            tool_probe,
-        )
-        .expect("forwarded phase must complete");
+        let (adapter, forward_state, forward_process) =
+            forwarded_probe(&recap_base, &executable, &selection, gateway, tool_probe)
+                .expect("forwarded phase must complete");
         assert!(adapter.one_shot_completed());
         assert_eq!(adapter.effective_model(), model);
         assert_eq!(forward_state, RecapStateObservation::Unchanged);
