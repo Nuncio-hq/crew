@@ -133,12 +133,13 @@ test("the author path restores the private attempt and project wiki", async () =
   assert.equal(loadedOps[0].id, DISPATCH_ID);
   // projectId is a NIP-MP coordinate (`30621:<pk>:<d>`) — itself
   // colon-bearing; the parse must anchor on the repository coordinate's
-  // 64-hex owner pubkey or the route truncates to `30621`.
+  // 64-hex owner pubkey or the route truncates to `30621`. The route's
+  // validateSearch accepts only the `30617:`-prefixed coordinate form.
   assert.deepEqual(navigations, [
     {
       kind: "project",
       projectId: PROJECT_ID,
-      repositoryAddress: COORDINATE,
+      repositoryAddress: `30617:${COORDINATE}`,
     },
   ]);
   // The private attempt id was stashed for the composer to restore — it never
@@ -153,7 +154,7 @@ test("another viewer reaches only the coordinate's authorized wiki", async () =>
     React.createElement(WikiTaskOriginLine, {
       navigate: (target) => navigations.push(target),
       resolveProjects: async () => [
-        { id: "proj-9", repositoryAddresses: [COORDINATE] },
+        { id: "proj-9", repositoryAddresses: [`30617:${COORDINATE}`] },
       ],
       tags: TAGS,
     }),
@@ -165,12 +166,13 @@ test("another viewer reaches only the coordinate's authorized wiki", async () =>
   await act(async () => {});
 
   // The author's private attempt is never touched — the resolved project wiki
-  // is all the viewer's own access authorizes.
+  // is all the viewer's own access authorizes. repositoryAddresses carry the
+  // `30617:` kind prefix; the lookup must match on that form.
   assert.deepEqual(navigations, [
     {
       kind: "project",
       projectId: "proj-9",
-      repositoryAddress: COORDINATE,
+      repositoryAddress: `30617:${COORDINATE}`,
     },
   ]);
 });

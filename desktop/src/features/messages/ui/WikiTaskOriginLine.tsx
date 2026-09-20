@@ -80,6 +80,9 @@ export function WikiTaskOriginLine({
         ? parseWikiTaskDraftKey(loaded.value.payload.draftKey)
         : null;
       if (parsed) {
+        // The private stash keeps the bare `<pk>:<d>` the Ask composer
+        // scopes by; the project route's validateSearch contract requires
+        // the `30617:`-prefixed coordinate form.
         stashWikiAskFocus(parsed.attemptId, parsed.repositoryCoordinate);
         if (parsed.projectId === "library") {
           navigate({ kind: "library" });
@@ -87,7 +90,7 @@ export function WikiTaskOriginLine({
           navigate({
             kind: "project",
             projectId: parsed.projectId,
-            repositoryAddress: parsed.repositoryCoordinate,
+            repositoryAddress: `30617:${parsed.repositoryCoordinate}`,
           });
         }
         return;
@@ -97,14 +100,17 @@ export function WikiTaskOriginLine({
       // Other-viewer path: only the published coordinate can be followed.
       try {
         const projects = await resolveProjects();
+        // Project repositoryAddresses carry the `30617:` event-kind prefix;
+        // the origin tag publishes the bare `<pk>:<d>` coordinate.
+        const address = `30617:${origin.coordinate}`;
         const project = projects.find((candidate) =>
-          candidate.repositoryAddresses.includes(origin.coordinate),
+          candidate.repositoryAddresses.includes(address),
         );
         if (project) {
           navigate({
             kind: "project",
             projectId: project.id,
-            repositoryAddress: origin.coordinate,
+            repositoryAddress: address,
           });
         } else {
           navigate({ kind: "library" });
