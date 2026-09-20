@@ -150,6 +150,7 @@ macro_rules! desktop_invoke_handler {
             managed_agents::recap_commands::get_thread_recap,
             managed_agents::recap_commands::generate_thread_recap,
             managed_agents::recap_commands::cancel_thread_recap,
+            managed_agents::recap_observer::verify_recap_runtime,
             sign_event,
             sign_nostr_identity_binding,
             sign_out,

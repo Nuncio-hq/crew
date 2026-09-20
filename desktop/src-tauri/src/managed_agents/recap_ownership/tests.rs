@@ -93,30 +93,19 @@ fn write_runtime_grant(
 
 fn certification(executable: &std::path::Path, auth_service: &str) -> RecapRuntimeCertification {
     let executable_bytes = std::fs::read(executable).unwrap();
-    let plan = super::super::recap_adapter::claude_recap_plan(
-        std::path::Path::new("/staging/claude"),
-        std::path::Path::new("/staging/recap-runs/probe"),
+    let adapter = super::super::recap_adapter::RecapAdapterObservation::for_test(
+        b"fixture recap output".to_vec(),
         "fixture-model",
-        b"probe",
-    )
-    .unwrap();
-    let envelope = serde_json::json!({
-        "type": "recap_probe",
-        "result": "fixture recap output",
-        "effectiveModel": "fixture-model",
-        "oneShotCompleted": true,
-        "toolProbe": {
-            "probeId": "crew-recap-hostile-tool-v1",
-            "toolName": "context_engine",
-            "requestObserved": true,
-            "deniedBeforeEffect": true,
-            "sentinelBefore": "a".repeat(64),
-            "sentinelAfter": "a".repeat(64)
-        }
-    });
-    let adapter = plan
-        .parse_probe_output(true, &serde_json::to_vec(&envelope).unwrap(), b"")
-        .unwrap();
+        true,
+        super::super::recap_capability::RecapToolProbeEvidence {
+            probe_id: "crew-recap-hostile-tool-v1".into(),
+            tool_name: "context_engine".into(),
+            request_observed: true,
+            denied_before_effect: true,
+            sentinel_before: "a".repeat(64),
+            sentinel_after: "a".repeat(64),
+        },
+    );
     let executable = RecapExecutableIdentity {
         resolved_path: executable.to_owned(),
         version: "fixture-1".into(),

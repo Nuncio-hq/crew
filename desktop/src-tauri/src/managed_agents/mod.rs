@@ -56,6 +56,10 @@ pub(crate) mod recap_adapter;
 pub(crate) mod recap_capability;
 pub(crate) mod recap_commands;
 #[allow(dead_code)]
+mod recap_hermes_gateway;
+#[allow(dead_code)]
+pub(crate) mod recap_observer;
+#[allow(dead_code)]
 pub(crate) mod recap_ownership;
 #[allow(dead_code)]
 #[path = "recap_ownership/native.rs"]
