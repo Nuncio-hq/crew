@@ -145,17 +145,20 @@ export function parseWikiTaskDraftKey(key: string): {
 } | null {
   if (!key.startsWith("wiki:task:")) return null;
   const rest = key.slice("wiki:task:".length);
-  const separator = rest.indexOf(":");
-  if (separator <= 0) return null;
-  const projectId = rest.slice(0, separator);
-  const tail = rest.slice(separator + 1);
-  // `<coordinate>` is `<owner-hex>:<repo-d>` — the last colon separates the
-  // attempt id the key was minted for.
-  const lastColon = tail.lastIndexOf(":");
+  const lastColon = rest.lastIndexOf(":");
   if (lastColon <= 0) return null;
-  const repositoryCoordinate = tail.slice(0, lastColon);
-  const attemptId = tail.slice(lastColon + 1);
-  if (!projectId || !repositoryCoordinate.includes(":") || !attemptId) {
+  const attemptId = rest.slice(lastColon + 1);
+  const head = rest.slice(0, lastColon);
+  // Both projectId (`30621:<pk>:<d>`) and repositoryCoordinate
+  // (`<owner-hex>:<d>`) can carry colons, so the split anchors on the
+  // coordinate's fixed-width owner pubkey: the LAST `:<64-hex>:` boundary.
+  // A `d` tag containing that exact boundary would misparse — bounded and
+  // documented, not silent.
+  const coordinateStart = /^(.*):([0-9a-f]{64}):(.+)$/s.exec(head);
+  if (!coordinateStart) return null;
+  const [, projectId, owner, repoD] = coordinateStart;
+  const repositoryCoordinate = `${owner}:${repoD}`;
+  if (!projectId || !attemptId) {
     return null;
   }
   return { attemptId, projectId, repositoryCoordinate };

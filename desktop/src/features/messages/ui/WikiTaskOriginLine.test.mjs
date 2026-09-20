@@ -28,6 +28,8 @@ const COORDINATE = `${OWNER}:crew`;
 const DISPATCH_ID = "55555555-5555-4555-8555-555555555555";
 const ATTEMPT_ID = "22222222-2222-4222-8222-222222222222";
 
+const PROJECT_ID = `30621:${OWNER}:crew`;
+
 const SCOPE = {
   scope: { owner: OWNER, community: "ws://relay" },
   workspace_generation: 1,
@@ -81,7 +83,7 @@ beforeEach(() => {
       id: DISPATCH_ID,
       kind: "thread-handoff",
       payload: {
-        draftKey: `wiki:task:proj-1:${COORDINATE}:${ATTEMPT_ID}`,
+        draftKey: `wiki:task:${PROJECT_ID}:${COORDINATE}:${ATTEMPT_ID}`,
       },
     },
   };
@@ -129,10 +131,13 @@ test("the author path restores the private attempt and project wiki", async () =
 
   assert.equal(loadedOps.length, 1);
   assert.equal(loadedOps[0].id, DISPATCH_ID);
+  // projectId is a NIP-MP coordinate (`30621:<pk>:<d>`) — itself
+  // colon-bearing; the parse must anchor on the repository coordinate's
+  // 64-hex owner pubkey or the route truncates to `30621`.
   assert.deepEqual(navigations, [
     {
       kind: "project",
-      projectId: "proj-1",
+      projectId: PROJECT_ID,
       repositoryAddress: COORDINATE,
     },
   ]);
