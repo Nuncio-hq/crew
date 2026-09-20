@@ -270,6 +270,9 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     ("src/commands/personas/snapshot/import.rs", 2, 1), // boundary 7 + its in-file injection-test fixture URL
     ("src/native_websocket.rs", 0, 2),                  // boundary 8 (WS frames; no events URL)
     ("src/commands/owner_operation_transport.rs", 2, 1), // boundary 9; injection in sibling tests
+    // The private Ask zero-publish proof: it calls the guard once, in a
+    // self-test that proves the egress counter is live. No production egress.
+    ("src/managed_agents/private_ask/privacy_tests.rs", 0, 1),
     // Test-only fixtures — no production egress, no guard:
     ("src/relay_admission.rs", 1, 0),
     ("src/archive/mod_tests.rs", 1, 0),

@@ -2365,3 +2365,359 @@ name their session and turn, and they must differ. A receipt that cannot be
 placed against a run keeps the `stopped` reading, because presenting cancelled
 work as reviewable is the worse error. The conversation outcome ledger's own
 precedence is unchanged — this decision governs presentation only.
+
+## D-083 — A private Wiki Ask runs as a local one-shot, never as a relay event
+
+- **Status:** Accepted, not user-enabled
+- **Date:** 2026-09-17
+- **Issue:** #365
+
+A viewer asking a named employee a question about a repository must be able to
+ask it privately. Crew answers by invoking the selected agent's own runtime CLI
+directly from the desktop as a bounded one-shot: `env_clear()`, an isolated
+`HOME`/`CLAUDE_CONFIG_DIR`/`HERMES_HOME`, a disposable run root as working
+directory, and a Seatbelt policy wrapped around the launch. No Nostr event of
+any kind is published, no session ledger entry is written, no worktree lease is
+taken and no channel subscription is created. The child holds no Nostr key.
+
+**Rejected alternative: a second `buzz-acp` process.** It would reuse the
+existing agent kernel, but an ACP session reaches the agent over the relay, so
+the viewer's private question would be published as a relay event and visible
+to the relay operator and to anyone the event's scope admits. That defeats the
+only requirement the feature exists to meet. The one-shot lineage (#351 recap →
+`managed_agents/wiki_runtime.rs`) already establishes that a bounded, disposable
+native invocation is an acceptable Crew seam.
+
+The developer-only command surface is a gate, not a feature: `private_ask_run`
+returns whatever the production path returns — an answer or a typed refusal —
+and chooses no reason of its own.
+
+Three properties of that surface are now enforced rather than intended. The
+attempt id is **minted by the caller and registered before the run starts**, so
+`private_ask_cancel` can reach a run that has not spawned yet; it raises the same
+flag the attempt and its capability probe already poll, so cancellation travels
+through the bounded runner rather than through a second teardown path, and a
+withdrawn attempt is reported and recorded as cancelled rather than as a process
+that "did not complete safely". A refusal comes back as a **completed attempt**
+carrying its own `historyRecorded` flag, so a refusal whose owner-local record
+could not be written is visible on screen instead of silently dropped — an
+`Err(String)` had room for only one of the two signals. And
+`private_ask_dev_status`, which the composer polls on every mount, stops at the
+dev gate and the owned staging tree; it no longer calls the production entry
+point, which would start a contained probe child each time the composer
+appeared.
+
+A private Ask citation opens the same source pane an in-page citation opens, so
+the cited path is resolved against the shown page's signed source references
+rather than by the answer; a citation to a file the shown revision does not
+carry surfaces the pane's existing "unavailable for this revision" notice, and
+where no opener is supplied the citation renders as plain text rather than as a
+control that goes nowhere.
+
+**The answering path is now real.** Given a resolved selection — the selected
+agent's effective configuration and persona, its executable identity, a verified
+snapshot and the owned staging tree — the desktop takes the retained capability
+probe for that exact selection or captures a fresh one, projects it, admits it
+against every fence, runs the bounded contained one-shot, and returns the
+answer. What it returns is bounded by the answer's own citations: the runtime
+prints them in a fixed Markdown footnote form stated in the prompt, and every
+cited path must be a path in the verified grounding. An answer citing anything
+else is refused outright and recorded as refused — previously `citations` was a
+copy of the request's grounding, which said nothing about the answer at all. An
+answer that cites nothing is accepted with no citations; not every answer cites,
+and refusing silence would make an honest "the source does not say" look
+hostile.
+
+**The resolver in front of that path is now real too.** A private Ask names
+three things and nothing else: which agent, which repository, and the question.
+Everything admission checks is observed on this machine:
+
+- the agent's own record, and its effective configuration — persona and model —
+  through `resolve_effective_config`, so an orphaned instance is `AgentUnbound`
+  rather than an Ask answered with a persona nobody configured;
+- the runtime CLI's executable identity, hashed from the file itself and
+  re-hashed immediately before the launch;
+- the effective model, which for Hermes is read from the profile that owns it;
+- `acl_fingerprint`, hashed from the agent's own effective access projection
+  together with the scope, so a widened access policy changes it and admission
+  reports `AccessRevoked` rather than answering under yesterday's permissions;
+- `session_generation`, hashed from the running harness generation's start
+  nonce. The nonce is a secret shared with that generation, and the generation
+  string travels into the response and the owner-local record, so what travels
+  is its digest;
+- the snapshot, read natively: the resolver performs one scoped kind-30623 read
+  — the same read the Wiki pane already makes — and verifies the complete v1
+  graph itself, instead of accepting events from a renderer. It is a read; a
+  private Ask still publishes nothing;
+- the grounding, read through the `wiki_source` grant the viewer already chose.
+  An install with no chosen source folder asks a zero-grounding question rather
+  than being refused, and references are taken in the snapshot's own page order.
+
+  The prompt budget is the envelope first and grounding second. An earlier
+  revision collected grounding against the 128 KiB input bound and then measured
+  the *assembled* prompt against the same bound, so any repository with enough
+  readable source was refused as though the viewer's question were too long.
+  Now the envelope — persona, run policy, citation instruction, scope,
+  delimiters and the question — is measured, and grounding is kept as a prefix
+  of what fits the remainder, priced at the exact rendered cost of each source.
+  Grounding is trimmed, never refused; a refusal that names the input means the
+  question or persona alone did not fit, and says so as a distinct reason.
+
+An earlier revision of this entry said the resolver was blocked because the
+recap runtime-ready grant has no in-app writer. That remains true of the grant
+(`certify_runtime_probe_for_app` refuses unconditionally, by design) — and it is
+not a blocker, because a private Ask does not depend on it. That grant belongs
+to the recap lineage; a private Ask's runtime identity comes from its own
+sources: the selected agent's effective configuration, the resolved executable,
+and the private Ask's own probe receipt, which already binds the executable
+hash, the policy text and the probe-program digest.
+
+**The session-isolation fence is reduced, deliberately.** It previously required
+an observer sequence as well as a ledger digest and the owned PID. There is no
+native observer-sequence source: observer frames are ephemeral kind 24200 and
+are not archived unconditionally, and the desktop writing a sequence file and
+reading it back would make the evidence a statement about itself — the same
+defect that was removed from `child_parent_pid`. The fence is now the
+harness's own **ACP session-ledger directory** for this exact (relay, agent)
+pair — at least one entry is required, the digest binds each entry's name,
+length and bytes in sorted order, and a missing, empty, oversized or unreadable
+directory is `SessionObservationUnavailable` before any child starts — together
+with the PID of the harness child this process owns a handle to. The desktop
+cannot depend on `buzz-acp`, so the directory derivation is mirrored and the
+mirror is pinned by a test rather than assumed.
+
+The consequence is stated rather than hidden: an agent with no live harness
+generation cannot be asked. It has no ledger to be shown to have been left
+alone. That is `SessionObservationUnavailable`; `AgentUnbound` means there is no
+such agent.
+
+**Independence is observed around the answer, not around the probe.** It is not
+a property of this machine and therefore not a thing a receipt can carry: it is
+a statement about one contained run beside one live session. The desktop reads
+the session's ledger digest, entry count and owning PID immediately before and
+immediately after the answering run, and refuses the answer if any of them
+moved. An earlier revision required the dimension at *admission*, which a
+retained trace could never satisfy, so every Ask for an agent with a live
+session captured a fresh probe child — the common case paid for the probe every
+time. Now a fresh, valid receipt restores the containment dimensions and a probe
+is captured only when the receipt is missing, stale, or does not project onto
+this selection. A busy agent is no longer refused before it is observed; the
+`AgentBusy` refusal is gone, because nothing could produce it once the check
+moved to where the observation is — and the cheap up-front half is kept where
+it belongs. `refuse_busy_selection` refuses an agent whose own session is
+mid-turn from the desktop's own lifecycle signal (the live harness generation's
+state, what `lifecycle_of` derives), before any probe child or runtime child is
+started. It is deliberately not the ledger digest: the digest can only be
+compared after the answer has been paid for. One predicate, enforced at the top
+of `binding::answer` and again in `admit_private_ask`, so the two points cannot
+drift.
+
+NAMED LIMIT of that move: the answering child is spawned by the desktop, so its
+parentage is true by construction rather than observed, unlike the probe path
+where the child reports its own `getppid`. What is genuinely observed on this
+path is the session's own bytes and owning PID either side of the run.
+
+SECOND NAMED LIMIT: **the bracket assumes the session stays quiescent for the
+duration of the Ask.** The busy fence above rejects an agent that is mid-turn
+*when the Ask starts*, but `buzz-acp` rewrites its ledger entry on every
+completed turn (`record_session_turn` bumps the turn count and `last_used_at`),
+and the digest cannot distinguish "the Ask touched the ledger" from "the
+employee started and finished a turn of its own while it ran". A turn that
+begins after the fence and lands before the bracket closes therefore refuses the
+Ask as `IndependentInvocationUnverified` *after* the model call. That window is
+narrow and the refusal is fail-closed rather than a silent pass; a later
+revision should narrow the digest to the parts of an entry a private Ask could
+plausibly disturb, so a turn the employee took on its own stops reading as
+interference.
+
+**A capability is minted from one real contained run.** The probe launches under
+byte-identical policy text to a production answer, with the proxy serving, and
+every dimension is measured from the desktop's side: a sentinel file it owns and
+digests either side of the run, a control listener it owns whose accept count is
+the direct-connection figure, the proxy's own record, and a surviving descendant
+detected by taking a lock such a descendant would still hold — which needs no
+PID, so a recycled one cannot answer for a process that already exited. Only the
+*attempts* are self-reported, because only the probe can see the return value of
+its own syscall.
+
+The probe also attempts a **hard link** of a file outside the run root into it.
+The desktop's hard-link fence runs before spawn and can only inspect the run
+root as it stands then; a link created during the run would give the child a
+writable name inside its own tree pointing at an outside inode. Measured on
+macOS 25.5: that `link()` succeeds without the policy and is refused with it, so
+the existing profile already covers the vector and the probe records it rather
+than the policy growing a rule. The probe likewise attempts the IPv6 loopback —
+against a second desktop-owned control listener bound for the purpose, since the
+policy names `localhost:<port>` — and a UNIX-domain connect to a system socket.
+All three fold into the refusal the tool-isolation dimension reads.
+
+What runs is a small probe program Crew ships, not the selected runtime. Every
+dimension the projection can mint is a property of the envelope — the Seatbelt
+text plus the loopback proxy — and the kernel denies an effect regardless of who
+attempts it; asking the runtime to attempt the hostile acts would make the
+subject under test its own witness, and would need a model call and a provider
+credential before either is certified. This costs no policy delta: the read
+allow-list already carries `/usr` and `/bin` for every runtime, so the shipped
+interpreter starts under the policy built for the selected binary. A widened
+policy would no longer match the profile the projection rebuilds, and would
+certify nothing. The trace records both the runtime the policy was derived from
+and the digest of the probe program that actually ran, and a trace from a probe
+program this release does not ship is refused rather than reinterpreted.
+
+The trace is retained as a receipt in an owned, uid-validated directory, written
+0o600 through a temporary file and a rename, and bound to this install's
+ownership digest the same way the runtime-ready grant is. It is deliberately not
+kept under the disposable-run base, which startup recovery sweeps. Expiry
+against `PROBE_MAX_AGE` forces a fresh probe, a receipt keyed to a different
+executable fingerprint is missed rather than inherited, and the evidence types
+carry no `Deserialize` — the receipt module owns plain data-transfer structs and
+rebuilds through named constructors, so a file on disk cannot become whatever
+capability a caller cares to describe. Loading a receipt yields a probe, not a
+capability: every fence that applies to a trace captured moments ago applies
+unchanged to one read from disk.
+
+Authentication is its own dimension with its own evidence, taken from the
+outcome of the same credential staging a launch performs — already gated on the
+proxy serving. It is deliberately not folded into the containment verdict: doing
+so was tried and reverted, because it reported a broken sandbox as an
+authentication failure and sent the reader to the wrong problem.
+
+**Egress is bounded by a desktop-owned loopback proxy.** Seatbelt matches
+addresses, not names, so a policy broad enough to keep HTTPS working is broad
+enough to reach anything. The boundary therefore moves up one layer: the desktop
+starts a loopback CONNECT proxy for the life of one attempt, the policy allows
+exactly that one loopback port and no resolver, and the proxy speaks one verb to
+one `host:443` derived from the selected runtime's own configuration. Because
+the child cannot resolve a name or open any other socket, the set of
+destinations the proxy recorded is the complete set the child asked for, and the
+capability's `egress_bounded` dimension is projected only from that record: the
+provider was reached, every accepted target was the provider, something else was
+attempted and refused, nothing bypassed the proxy, and the record is complete —
+a record that hit its own recorded-target cap certifies nothing, and that
+truncation flag now survives the receipt round trip instead of being written as
+a constant `false`. A record with an empty refusal list, or an empty accepted
+list, certifies nothing either — an untested proxy and a proxy that blocked
+everything must not look like a bounded one.
+
+The CONNECT line is the client's claim about where it is going; the TLS
+ClientHello is what the far side is actually asked for. The proxy therefore
+reads the handshake, matches its server name against the allowed target, and
+refuses a mismatch or a non-handshake with its own recorded reason before a byte
+is forwarded — the fronting move, where the CONNECT names the provider and the
+handshake asks a shared front end for somebody else's site. No TLS is
+terminated: the bytes are read, matched and passed through unmodified. The
+concurrency cap is applied at accept rather than after the request head is
+parsed, so a child cannot hold an unbounded number of desktop descriptors inside
+the head-read timeout.
+
+A provider credential is created only while that proxy is serving, travels in
+the child's environment alone, and never renders its own value.
+
+The privacy claim is enforced, not asserted: relay-bound egress is counted at
+the guard every publish boundary in the desktop already calls, and a complete
+attempt through the production launch path must move that count by zero.
+
+**Named limits.** These are the reasons the feature is not user-enabled.
+
+- The model provider sees the prompt. This is inherent to route 2 — the question
+  and the grounded source excerpts travel to the provider's API. Route 2 removes
+  the *relay operator* from the trust set, not the provider.
+- The proxy speaks only `CONNECT` to a single `host:443`. A provider that is not
+  reachable that way — for example a Hermes profile configured against a
+  plain-HTTP endpoint on loopback — is refused rather than accommodated by
+  widening the proxy into a general HTTP forwarder. Only providers in the
+  explicit host table can be bound today.
+- Hermes owns its authentication inside the profile copy staged into the run
+  root, exactly as `wiki_runtime_auth` documents. A profile whose own config
+  carries a provider key therefore puts that key inside the run root; that is
+  Hermes' model, not something this boundary introduces, and the run root is
+  still removed with the finished generation.
+- The prompt reaches Hermes on argv, not on stdin, so it is visible in `ps`
+  output to the same user for the life of the run. Hermes' value-taking
+  `-z/--oneshot` has no stdin form; `hermes chat --query-file - --oneshot` does
+  read stdin, but it dispatches through a path that never writes the usage file
+  the effective-model check reads. Moving to stdin would trade a real
+  model-substitution fence for `ps` hygiene.
+- The read set a real `claude` or `hermes` needs is only partly established. An
+  interpreted runtime's interpreter is canonicalized through its symlinks and
+  its installation prefix is allowed, which covers a Homebrew `node` and a
+  virtualenv interpreter; a runtime launched through a shell wrapper still needs
+  the wrapper's target named directly. `mach-lookup` is denied outright, which
+  perl, `node` and the Hermes CPython interpreter all start under — measured at
+  startup, not across a whole answered run. Installed acceptance must confirm
+  both against the real runtimes.
+- The probe's staging base is carried by the trace rather than re-derived, since
+  a capability does not retain its probe. It rejects a trace captured in an
+  unrelated directory; it does not by itself prove the base was the owned one.
+- The probe proves that the *envelope* denies an effect. It does not prove the
+  selected runtime has no in-process capability the envelope permits. That is
+  the Seatbelt model rather than a gap this boundary introduces, but installed
+  acceptance is what confirms a real runtime behaves inside it.
+- A receipt carries no session-isolation evidence, and never will: independence
+  is observed around the answering run instead. The receipt now does save the
+  probe run in the common case — a second Ask on the same selection answers from
+  it without spawning a probe child.
+- The proxy checks the handshake's OUTER server name. A client sending an
+  encrypted ClientHello chooses its own outer name and this check sees that one.
+  No runtime a private Ask runs does so today, and the only alternative is
+  terminating TLS, which this boundary deliberately does not do.
+- The proxy's concurrency cap is applied at accept, so a runtime that opens more
+  than four simultaneous connections (API plus telemetry, say) has the extra
+  ones closed silently rather than answered with 429. Installed acceptance is
+  what would surface that against a real runtime.
+- The probe's IPv6 leg is only evidence on a machine that has IPv6: without it
+  there is no second control listener to reach, and the leg reports denied
+  because there was nothing there. The IPv4 control remains the load-bearing
+  one.
+- A runtime installed in a directory that *contains* the run roots is now
+  refused before any policy text is built, for the runtime's own directory and
+  for every interpreter read root, since that read allowance would otherwise
+  expose every other attempt's run root. The comparison is component-wise on
+  canonical paths, so a sibling sharing a name prefix is unaffected, and a read
+  root that cannot be resolved is refused rather than assumed unrelated. Only
+  the ancestor direction is refused; a directory inside the run roots discloses
+  no sibling attempt.
+- The owner-local Ask history is persisted on this machine only, on the owned-run
+  retention pattern: a bounded newest-first window capped by count and by age, in
+  a 0o700 directory this uid owns, written 0o600 through a temporary file and a
+  rename. Refusals are kept alongside answers, because a list holding only the
+  answers would omit exactly the attempts a developer needs to see. It stores the
+  citation paths and line ranges, never the source text. Each entry's question
+  and answer are capped, and the writer prunes oldest-first until the serialized
+  document fits the size its own reader accepts — without that, fifty long
+  questions exceeded the reader's bound and the viewer's entire private record
+  vanished on the next read. A file that cannot be read is moved aside under a
+  name that says so rather than being overwritten by the next attempt. A history
+  that cannot be written does not change the answer or the refusal the viewer is
+  given; the screen says the attempt was not kept.
+- The runtime CLI is resolved from this machine's `PATH`, so what the selection
+  binds to is whatever `claude` or `hermes` resolves to there. A shell wrapper
+  resolves as the executable, and the read allow-list is then derived from the
+  wrapper rather than from the interpreter behind it, so the run dies in the
+  dynamic loader. The path must point at the real binary; this is checked by
+  installed acceptance, not by a fence.
+- A retained probe receipt no longer projects onto a selection whose harness
+  generation changed, since `session_generation` is that generation's digest.
+  That is a cache miss — a fresh probe — not a refusal: an agent restart must
+  not tell the viewer their configuration changed.
+- A repository with no published Wiki snapshot cannot ground an Ask, and the
+  refusal reads `private Ask grounding is invalid`. It is accurate but blunt;
+  a later revision should distinguish "no snapshot published yet" from "the
+  snapshot did not verify".
+- A private Ask's scope carries a `project_id`, and there is no native project
+  registry to resolve one from, so the repository coordinate is used as that
+  identity. It is derived natively rather than accepted from a caller, but it
+  does not prove membership of a project the way the repository half is proved
+  against the snapshot's signed manifest.
+- The developer surface offers only agents with a live harness generation,
+  because the resolver refuses any other. An agent that is merely configured is
+  therefore absent from the picker rather than present and always refused.
+- Session-isolation evidence certifies only a session that was idle across the
+  window: it requires the employee's ledger digest to be unchanged, whereas a
+  genuinely busy `buzz-acp` advances its own ledger. The criterion is therefore
+  fail-closed — it refuses a busy session rather than passing one — and a
+  later revision should restate it as "no Ask-attributable entry appears".
+
+Every dimension above fails closed: an unverified property refuses the request
+and names its own reason. Discovery is not certification, and a flag is not a
+denial.
