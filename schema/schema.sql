@@ -507,6 +507,9 @@ CREATE TRIGGER contact_claim_transition_v1
 CREATE FUNCTION contact_claim_no_delete_v1() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF contact_purge_executor_exempt_v1(OLD.community_id) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'contact claim rows are evidence and are never deleted'
         USING ERRCODE = 'check_violation';
 END
@@ -710,10 +713,36 @@ CREATE CONSTRAINT TRIGGER contact_check_quota_v1
     AFTER INSERT OR UPDATE ON contact_quota DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION contact_check_quota_v1();
 
--- Route and quota rows are evidence too: no DELETE on either table.
+-- Route, quota, and claim rows are evidence: no DELETE except the fenced
+-- whole-community purge executor — the same exemption
+-- contact_guard_original_v1 grants kind-9 originals and 46044 proofs.
+CREATE FUNCTION contact_purge_executor_exempt_v1(p_community uuid)
+RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    executor_community TEXT;
+    executor_generation TEXT;
+    lifecycle TEXT;
+    expected_generation BIGINT;
+BEGIN
+    executor_community := current_setting('buzz.deletion_executor_community', true);
+    executor_generation := current_setting('buzz.deletion_fence_generation', true);
+    SELECT deletion_state, deletion_fence_generation
+      INTO lifecycle, expected_generation
+      FROM communities
+     WHERE id = p_community;
+    RETURN executor_community = p_community::TEXT
+       AND executor_generation ~ '^[0-9]+$'
+       AND executor_generation::BIGINT = expected_generation
+       AND lifecycle IN ('fenced', 'tombstone');
+END
+$$;
+
 CREATE FUNCTION contact_route_no_delete_v1() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF contact_purge_executor_exempt_v1(OLD.community_id) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'contact decision routes are never deleted'
         USING ERRCODE = 'check_violation';
 END
@@ -725,6 +754,9 @@ CREATE TRIGGER contact_route_no_delete_v1
 CREATE FUNCTION contact_quota_no_delete_v1() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF contact_purge_executor_exempt_v1(OLD.community_id) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'contact quota rows are never deleted'
         USING ERRCODE = 'check_violation';
 END

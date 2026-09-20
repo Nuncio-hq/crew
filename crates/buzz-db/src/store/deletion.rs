@@ -4451,39 +4451,86 @@ mod postgres_tests {
         .expect("insert guarded NIP-RS row");
         // Keep a signed kind-9 original in the real purge fixture so the
         // contact guard's fenced whole-community exception is exercised.
+        // Migration 0047 enforces the decision seam end to end: a routed row
+        // needs its classified original, relay proof, claim, and quota to
+        // commit in one transaction under the decision-path setting.
+        let mut evidence = db.pool.begin().await.expect("begin contact evidence");
+        sqlx::query("SELECT set_config('buzz.contact_decision_v1', 'on', true)")
+            .execute(&mut *evidence)
+            .await
+            .expect("permit contact classification");
         sqlx::query(
             "INSERT INTO events \
-             (community_id, id, pubkey, created_at, kind, tags, content, sig) \
-             VALUES ($1, $2, $3, now(), 9, $4, 'contact-original', $5)",
+             (community_id, id, pubkey, created_at, kind, tags, content, sig, \
+              channel_id, contact_class) \
+             VALUES ($1, $2, $3, now(), 9, $4, 'contact-original', $5, $6, 1)",
         )
         .bind(request.community_id.as_uuid())
         .bind(vec![21_u8; 32])
         .bind(vec![22_u8; 32])
         .bind(serde_json::json!([]))
         .bind(vec![23_u8; 64])
-        .execute(&db.pool)
+        .bind(request.community_id.as_uuid())
+        .execute(&mut *evidence)
         .await
         .expect("insert fenced kind-9 original row");
+        sqlx::query(
+            "INSERT INTO events \
+             (community_id, id, pubkey, created_at, kind, tags, content, sig, \
+              channel_id) \
+             VALUES ($1, $2, $3, now(), 46044, $4, 'contact-decision', $5, $6)",
+        )
+        .bind(request.community_id.as_uuid())
+        .bind(vec![14_u8; 32])
+        .bind(vec![13_u8; 32])
+        .bind(serde_json::json!([
+            ["h", request.community_id.as_uuid().to_string()],
+            ["p", hex::encode(vec![12_u8; 32])],
+            ["original", hex::encode(vec![21_u8; 32])],
+            ["phase", "decision"],
+        ]))
+        .bind(vec![24_u8; 64])
+        .bind(request.community_id.as_uuid())
+        .execute(&mut *evidence)
+        .await
+        .expect("insert contact decision proof row");
         sqlx::query("INSERT INTO contact_quota (community_id, stripe, used) VALUES ($1, 0, 1)")
             .bind(request.community_id.as_uuid())
-            .execute(&db.pool)
+            .execute(&mut *evidence)
             .await
             .expect("insert contact quota row");
         sqlx::query(
             "INSERT INTO contact_routes \
              (community_id, original_id, original_created_at, channel_id, contact_pubkey, \
               relay_pubkey, decision_id, decision_created_at, stripe) \
-             VALUES ($1, $2, now(), $3, $4, $5, $6, now(), 0)",
+             VALUES ($1, $2, \
+              (SELECT created_at FROM events WHERE community_id = $1 AND id = $2), \
+              $3, $4, $5, $6, \
+              (SELECT created_at FROM events WHERE community_id = $1 AND id = $6), 0)",
         )
         .bind(request.community_id.as_uuid())
-        .bind(vec![11_u8; 32])
+        .bind(vec![21_u8; 32])
         .bind(request.community_id.as_uuid())
         .bind(vec![12_u8; 32])
         .bind(vec![13_u8; 32])
         .bind(vec![14_u8; 32])
-        .execute(&db.pool)
+        .execute(&mut *evidence)
         .await
         .expect("insert contact route row");
+        sqlx::query(
+            "INSERT INTO contact_claims \
+             (community_id, decision_id, original_id, channel_id, contact_pubkey) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(request.community_id.as_uuid())
+        .bind(vec![14_u8; 32])
+        .bind(vec![21_u8; 32])
+        .bind(request.community_id.as_uuid())
+        .bind(vec![12_u8; 32])
+        .execute(&mut *evidence)
+        .await
+        .expect("insert contact claim row");
+        evidence.commit().await.expect("commit contact evidence");
         store
             .approve(request.id, "approver", None)
             .await
@@ -4550,9 +4597,10 @@ mod postgres_tests {
             .expect("bindings");
         let first = store.purge_postgres(&token).await.expect("purge postgres");
         assert_eq!(first.len(), EXPECTED_SCOPED_TABLES.len());
-        assert_eq!(first.get("events"), Some(&2));
+        assert_eq!(first.get("events"), Some(&3));
         assert_eq!(first.get("contact_quota"), Some(&1));
         assert_eq!(first.get("contact_routes"), Some(&1));
+        assert_eq!(first.get("contact_claims"), Some(&1));
         assert!(
             store.purge_postgres(&token).await.is_err(),
             "completed stage cannot be replayed under stale checkpoint state"

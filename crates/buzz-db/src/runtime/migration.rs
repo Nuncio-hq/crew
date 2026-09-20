@@ -1321,9 +1321,11 @@ mod postgres_tests {
         assert!(seam.contains("CREATE FUNCTION contact_cancel_claim_on_original_delete_v1()"));
         assert!(seam.contains("CREATE FUNCTION contact_install_leaf_guards_v1(leaf regclass)"));
         assert!(seam.contains("CREATE FUNCTION contact_verify_catalog_v1()"));
+        assert!(seam.contains("CREATE FUNCTION contact_purge_executor_exempt_v1"));
         assert!(seam.contains("REFERENCES contact_routes (community_id, decision_id)"));
         assert!(desired_schema.contains("CREATE TABLE contact_claims"));
         assert!(desired_schema.contains("CREATE FUNCTION contact_verify_catalog_v1()"));
+        assert!(desired_schema.contains("CREATE FUNCTION contact_purge_executor_exempt_v1"));
         assert!(desired_schema.contains("canvas_id"));
     }
 
