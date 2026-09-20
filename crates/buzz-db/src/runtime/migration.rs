@@ -1852,6 +1852,7 @@ mod postgres_tests {
         let mut schema_fences = schema.fence_attachments.clone();
         schema_fences.remove("contact_routes");
         schema_fences.remove("contact_quota");
+        schema_fences.remove("contact_claims");
         assert_eq!(
             expected_fences, schema_fences,
             "write-fence attachment targets differ after recovery policy"
@@ -2818,21 +2819,21 @@ mod postgres_tests {
             "all NIP-FI tables must be absent after migration 0045: {present:?}"
         );
 
-        // Migration 0045 predates the contact-retention tables that are part of
-        // the current deletion manifest. Advance through that additive
-        // migration before validating the head catalog; validating at 0045
+        // Migration 0045 predates the contact evidence tables that are part of
+        // the current deletion manifest. Advance through the additive contact
+        // migrations before validating the head catalog; validating at 0045
         // would correctly report those not-yet-created relations as drift.
         MIGRATOR
-            .run_to(46, &pool)
+            .run_to(47, &pool)
             .await
-            .expect("migration 0046 must apply after ledger removal");
+            .expect("migrations through 0047 must apply after ledger removal");
 
         // The deletion catalog must validate with ledger relations gone and
-        // the current contact-retention surface present.
+        // the current contact evidence surface present.
         crate::deletion::DeletionStore::new(pool.clone())
             .validate_catalog()
             .await
-            .expect("deletion catalog validates after migration 0046");
+            .expect("deletion catalog validates after migration 0047");
     }
 
     #[tokio::test]

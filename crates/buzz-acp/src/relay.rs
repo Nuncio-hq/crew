@@ -117,8 +117,8 @@ const GATED_OBSERVER_QUEUE_CAP: usize = 256;
 use std::time::Instant;
 
 use buzz_core::kind::{
-    KIND_AGENT_OBSERVER_FRAME, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_TYPING_INDICATOR,
+    KIND_AGENT_OBSERVER_FRAME, KIND_CONTACT_CONTROL, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_TYPING_INDICATOR,
 };
 use buzz_core::transport_status::TransportAuthClassification;
 use futures_util::{SinkExt, StreamExt};
@@ -888,6 +888,17 @@ enum RelayCommand {
     SubscribeObserverControls,
     /// Publish a signed event to the relay (for typing indicators, etc.).
     PublishEvent { event: Box<Event> },
+    /// Publish a signed event and resolve the caller's waiter with the
+    /// relay's `OK` (accepted, message) once it arrives. Contact-control
+    /// commands need this correlation: a claim verb that never lands must not
+    /// look like a claim that was granted.
+    PublishEventAcked {
+        event: Box<Event>,
+        /// Shared waiter: the command enum is cloned for intent tracking, but
+        /// the OK resolves the first taker only.
+        ack_tx:
+            std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<(bool, String)>>>>,
+    },
     /// Floor `since` for membership notification replay; events before startup are never re-delivered.
     SetStartupWatermark { ts: u64 },
 }
@@ -939,6 +950,73 @@ impl RelayEventPublisher {
             })
             .await
             .map_err(|_| RelayError::ConnectionClosed)
+    }
+
+    /// Publish a signed event and await the relay's `OK` for it. Unlike
+    /// [`publish_event`](Self::publish_event), the caller learns the relay's
+    /// verdict — required for the contact-control verbs, where a dropped or
+    /// rejected frame must not look like a granted claim.
+    ///
+    /// The waiter is keyed by event id in the background task; it survives a
+    /// rate-limit park (the frame is durable) and resolves as
+    /// `ConnectionClosed` if the background task drops it.
+    pub async fn publish_event_acked(&self, event: Event) -> Result<(bool, String), RelayError> {
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        self.cmd_tx
+            .send(RelayCommand::PublishEventAcked {
+                event: Box::new(event),
+                ack_tx: std::sync::Arc::new(std::sync::Mutex::new(Some(ack_tx))),
+            })
+            .await
+            .map_err(|_| RelayError::ConnectionClosed)?;
+        let ack = tokio::time::timeout(std::time::Duration::from_secs(15), ack_rx)
+            .await
+            .map_err(|_| RelayError::Timeout)?
+            .map_err(|_| RelayError::ConnectionClosed)?;
+        Ok(ack)
+    }
+
+    /// Send a kind:24210 contact-control verb (`claim`/`start`/`cancel`) and
+    /// return the relay's `OK` verdict. The holder is always the signer — the
+    /// relay rejects a verb whose tags name another key's claim.
+    ///
+    /// `generation` is required for `start`/`cancel` and must be omitted for
+    /// `claim`; `ttl_secs` applies to `claim` only. The accepted reply carries
+    /// `<verb>:<generation>`; rejected replies surface the relay's reason.
+    pub async fn contact_control(
+        &self,
+        keys: &Keys,
+        verb: &str,
+        decision_hex: &str,
+        channel_id: Uuid,
+        generation: Option<i64>,
+        ttl_secs: Option<i64>,
+    ) -> Result<(bool, String), RelayError> {
+        let mut tag_vecs = vec![
+            vec!["verb".to_string(), verb.to_string()],
+            vec!["decision".to_string(), decision_hex.to_string()],
+            vec!["h".to_string(), channel_id.to_string()],
+        ];
+        if let Some(generation) = generation {
+            tag_vecs.push(vec!["generation".to_string(), generation.to_string()]);
+        }
+        if let Some(ttl) = ttl_secs {
+            tag_vecs.push(vec!["ttl".to_string(), ttl.to_string()]);
+        }
+        let mut tags = Vec::with_capacity(tag_vecs.len());
+        for tag_vec in tag_vecs {
+            tags.push(
+                Tag::parse(tag_vec.iter().map(String::as_str))
+                    .map_err(|e| RelayError::AuthFailed(e.to_string()))?,
+            );
+        }
+        let event = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_CONTACT_CONTROL as u16),
+            "",
+        )
+        .tags(tags)
+        .sign_with_keys(keys)?;
+        self.publish_event_acked(event).await
     }
 
     /// Test-only publisher pair: published events are forwarded to the
@@ -1471,6 +1549,14 @@ struct BgState {
     /// Frames evicted from the bounded pending/in-flight observer buffers since
     /// summary log. Makes overflow loss visible instead of silent.
     gated_observer_dropped: u64,
+    /// OK waiters keyed by published event id (PublishEventAcked). A parked
+    /// control frame's waiter survives until the frame is sent and the relay
+    /// acknowledges it; a dropped waiter resolves the caller as
+    /// ConnectionClosed.
+    pending_ok: HashMap<
+        String,
+        std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<(bool, String)>>>>,
+    >,
     /// Channels whose REQ failed during `resubscribe_after_reconnect`.
     ///
     /// A single failed channel REQ is parked here instead of aborting the whole
@@ -1514,6 +1600,7 @@ impl BgState {
             gated_observer_pending: VecDeque::new(),
             observer_in_flight: VecDeque::new(),
             gated_observer_dropped: 0,
+            pending_ok: HashMap::new(),
             resubscribe_retry: HashSet::new(),
             connection_generation: 0,
             backoff_step: 0,
@@ -1794,6 +1881,16 @@ fn apply_command_to_state(state: &mut BgState, cmd: RelayCommand) {
                 state.park_gated_observer_frame(event);
             }
         }
+        RelayCommand::PublishEventAcked { event, ack_tx } => {
+            // Contact-control commands are durable: park while offline and
+            // keep the waiter — the OK can only arrive after a reconnect.
+            if event.kind.as_u16() as u32 == KIND_CONTACT_CONTROL {
+                state.pending_ok.insert(event.id.to_hex(), ack_tx);
+                state.park_gated_observer_frame(event);
+            }
+            // Anything else asked for an ack while offline: drop the sender
+            // so the caller resolves as ConnectionClosed.
+        }
         // Already reconnecting — redundant.
         RelayCommand::Reconnect => {}
         // Callers MUST handle Shutdown before calling this function.
@@ -1853,6 +1950,13 @@ fn retain_failed_command_intent(state: &mut BgState, cmd: RelayCommand) {
             state.park_gated_observer_frame(event);
         }
         RelayCommand::PublishEvent { .. } => {}
+        RelayCommand::PublishEventAcked { event, ack_tx }
+            if event.kind.as_u16() as u32 == KIND_CONTACT_CONTROL =>
+        {
+            state.pending_ok.insert(event.id.to_hex(), ack_tx);
+            state.park_gated_observer_frame(event);
+        }
+        RelayCommand::PublishEventAcked { .. } => {}
         cmd => apply_command_to_state(state, cmd),
     }
 }
@@ -2050,11 +2154,12 @@ async fn execute_connected_command(
             // indicators are worthless and sending them would consume admission
             // budget the relay already rejected us on.
             //
-            // INVARIANT: apart from observer frames (parked above), the WS publish
-            // path carries only ephemeral kinds (typing indicators). The silent
-            // drop-while-gated relies on that invariant. If a future caller
-            // publishes durable events through this path, it must extend the
-            // kind guard above to avoid silently discarding user data.
+            // INVARIANT: apart from observer frames (parked above) and contact
+            // control (acked below), the WS publish path carries only ephemeral
+            // kinds (typing indicators). The silent drop-while-gated relies on
+            // that invariant. If a future caller publishes durable events
+            // through this path, it must extend the kind guard above to avoid
+            // silently discarding user data.
             if state.check_rate_gate().is_some() {
                 debug!("rate-gated: dropping ephemeral PublishEvent (typing indicator)");
                 return true;
@@ -2069,6 +2174,32 @@ async fn execute_connected_command(
                 }
             } else if is_observer {
                 state.park_gated_observer_frame(event);
+            }
+            true
+        }
+        RelayCommand::PublishEventAcked { event, ack_tx } => {
+            if event.kind.as_u16() as u32 != KIND_CONTACT_CONTROL {
+                // Only the contact-control kind carries an OK waiter today.
+                if let Ok(mut slot) = ack_tx.lock() {
+                    if let Some(tx) = slot.take() {
+                        let _ = tx.send((false, "ack waiters only support contact control".into()));
+                    }
+                }
+                return true;
+            }
+            state.pending_ok.insert(event.id.to_hex(), ack_tx);
+            // Contact-control frames are durable commands, not droppable
+            // ephemera: same park/in-flight treatment as observer frames so a
+            // rate gate or dead socket cannot silently lose a claim verb.
+            if state.check_rate_gate().is_some() || !state.gated_observer_pending.is_empty() {
+                debug!("rate-gated: parking contact control frame for paced drain");
+                state.park_gated_observer_frame(event);
+                return true;
+            }
+            if !send_publish_event_frame(ws, &event).await {
+                state.park_gated_observer_frame(event);
+            } else {
+                state.track_observer_in_flight(event);
             }
             true
         }
@@ -3016,6 +3147,13 @@ async fn handle_ws_message(
                                 .as_secs_f64()
                         );
                         return true;
+                    }
+                    if let Some(waiter) = state.pending_ok.remove(&event_id) {
+                        if let Ok(mut slot) = waiter.lock() {
+                            if let Some(ack_tx) = slot.take() {
+                                let _ = ack_tx.send((accepted, message.clone()));
+                            }
+                        }
                     }
                     state.acknowledge_observer_frame(&event_id);
                     debug!("OK for event {event_id}: accepted={accepted} message={message}");

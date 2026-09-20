@@ -474,6 +474,16 @@ pub const KIND_AGENT_INSTRUMENT_OVERLAY: u32 = 24201;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
+/// Crew contact-fallback claim control (ephemeral, never stored).
+///
+/// Signed by the configured contact agent to claim/start/cancel a stored
+/// kind:46044 decision. Tags: `h` = channel UUID, `contact-control` =
+/// `"claim" | "start" | "cancel"`, `decision` = the 46044 event id,
+/// `generation` (required for start/cancel), optional `ttl` seconds (claim
+/// only, clamped to 5..=3600). The relay answers via `OK` — accepted=true
+/// means the fenced transition committed; the message carries the granted
+/// generation ("claimed generation=<n>").
+pub const KIND_CONTACT_CONTROL: u32 = 24210;
 // Stream messaging
 /// NIP-29 group chat message kind. V1 used kind:10001 (replaceable range — wrong), then 40001.
 ///
@@ -601,6 +611,17 @@ pub const KIND_AGENT_USER_INPUT_RESOLVED: u32 = 46042;
 /// root — so they land in thread-replies queries and thread counters like any
 /// reply. They are authored by the agent that completed the turn.
 pub const KIND_AGENT_RECEIPT: u32 = 46043;
+/// Crew contact-fallback routing decision (relay-signed, durable).
+///
+/// Written by the relay in the same transaction as the mention-less kind:9
+/// original it routes. Exactly one decision per `(community_id, original_id)`
+/// (see `contact_routes`). Tags: `h` = channel UUID, `p` = the configured
+/// contact agent (the only pubkey that may claim it), `original` = routed
+/// event id, `canvas` = winning canvas event id, `phase` = `"decision"`,
+/// plus NIP-10 `e` markers (`reply` → original, `root` → thread root when the
+/// original is itself a reply) so a kind:46043 receipt parents it cleanly.
+/// Clients can never submit it (`is_relay_only_kind`).
+pub const KIND_CONTACT_DECISION: u32 = 46044;
 
 // User groups (47000–47999)
 
@@ -788,6 +809,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_AGENT_USER_INPUT_ANSWER,
     KIND_AGENT_USER_INPUT_RESOLVED,
     KIND_AGENT_RECEIPT,
+    KIND_CONTACT_DECISION,
+    KIND_CONTACT_CONTROL,
     KIND_AUDIT_ENTRY,
     KIND_HUDDLE_STARTED,
     KIND_HUDDLE_PARTICIPANT_JOINED,
@@ -882,6 +905,7 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
             | KIND_DM_VISIBILITY
             | KIND_THREAD_SUMMARY
             | KIND_WINDOW_BOUNDS
+            | KIND_CONTACT_DECISION
     )
 }
 
@@ -941,6 +965,11 @@ const _: () = assert!(KIND_MODERATION_RESOLVE_REPORT <= u16::MAX as u32);
 const _: () = assert!(!is_ephemeral(KIND_REPORT));
 const _: () = assert!(is_moderation_command_kind(KIND_MODERATION_BAN));
 const _: () = assert!(is_moderation_command_kind(KIND_MODERATION_RESOLVE_REPORT));
+// Contact-fallback kinds: decision is durable + relay-only; control is ephemeral.
+const _: () = assert!(!is_ephemeral(KIND_CONTACT_DECISION));
+const _: () = assert!(is_relay_only_kind(KIND_CONTACT_DECISION));
+const _: () = assert!(is_ephemeral(KIND_CONTACT_CONTROL));
+const _: () = assert!(!is_relay_only_kind(KIND_CONTACT_CONTROL));
 const _: () = assert!(!is_moderation_command_kind(KIND_REPORT));
 
 #[cfg(test)]

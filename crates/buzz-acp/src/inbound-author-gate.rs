@@ -125,6 +125,14 @@ impl InboundAuthorGate {
 
     #[cfg(test)]
     pub(crate) fn relay_identity_for_test(&self) -> Option<&str> {
+        self.relay_identity()
+    }
+
+    /// The currently verified relay identity (NIP-11 `self`), when known.
+    ///
+    /// Contact-decision verification binds the decision proof to this key; a
+    /// missing identity is fail-closed (`None` → no routing authority).
+    pub(crate) fn relay_identity(&self) -> Option<&str> {
         self.relay_self.as_deref()
     }
 

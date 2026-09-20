@@ -2721,3 +2721,42 @@ attempt through the production launch path must move that count by zero.
 Every dimension above fails closed: an unverified property refuses the request
 and names its own reason. Discovery is not certification, and a flag is not a
 denial.
+
+## D-084 — Contact-fallback routing commits beside the original
+
+- **Status:** Accepted (contract v4, founder-approved 2026-09-17); staging-relay acceptance pending
+- **Date:** 2026-09-20
+- **Issue:** #412 (successor of #355; refs #344)
+
+A mention-less stream message that carries the `crew-contact-fallback`
+capability tag triggers exactly one routing decision per
+`(community_id, original_event_id)`, committed in the same Postgres
+transaction as the original event, its thread metadata, the `contact_routes`
+row, the `contact_claims` row, and the quota spend. The decision is durable:
+a relay-signed kind `46044` (`KIND_CONTACT_DECISION`, relay-only) proof event
+whose tags carry `outcome routed|no_route`, the original, the winning canvas
+id and signer, and the selected contact. Duplicate ingest replays the stored
+decision without spending quota or emitting a second proof.
+
+Eligibility is the registered owner of the configured contact (founder
+decision 2026-09-17): the contact canvas (kind 40100) must be signed by the
+contact's registered owner, and the contact must be a channel member or the
+channel `open`. Invariant #1 is unchanged — the receipt's raw signer must
+equal the registered owner.
+
+Claim fencing lives in `contact_claims` driven by ephemeral kind `24210`
+(`KIND_CONTACT_CONTROL`) control events over WS: `claim` grants the holder a
+generation + lease, `start`/`cancel`/`complete` transition it, expired claims
+fence to `unknown`, and terminal states never reopen. The kind `46043` agent
+receipt bound via its `claim` tag (`<decision>:<generation>`) completes the
+claim in the receipt's own insert transaction. Proof delivery is at least
+once: ingest re-dispatches the stored proof on replay. Deletion before start
+fences the claim; after start it records cancellation. Quota exhaustion is
+`no_route`/`quota_exhausted`; missing authority/catalog/storage fails the
+decision closed. The latest overall canvas wins and server commit ordering is
+authoritative. Explicit `p` tags on the original suppress fallback. Older
+clients ignore the proof kind.
+
+What remains gated on the real staging relay (`ws://100.86.143.13:3348`) is
+recorded on #412; the production seam and its crash/replay matrix are proven
+against a local `buzz-relay` + real Postgres/Redis.

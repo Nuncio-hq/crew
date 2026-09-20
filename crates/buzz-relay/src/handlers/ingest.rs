@@ -13,13 +13,14 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use buzz_auth::Scope;
+use buzz_core::event::StoredEvent;
 use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_RECEIPT,
     KIND_AGENT_TURN_METRIC, KIND_AGENT_USER_INPUT_ANSWER, KIND_AGENT_USER_INPUT_REQUESTED,
     KIND_AGENT_USER_INPUT_RESOLVED, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH,
-    KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET, KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION,
-    KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
+    KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET, KIND_CANVAS, KIND_CONTACT_DECISION, KIND_CONTACT_LIST,
+    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
     KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
     KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
@@ -3310,6 +3311,10 @@ async fn ingest_event_inner(
     }
 
     let mut validated_receipt_thread_meta = None;
+    let mut contact_claim_ref = None;
+    // The relay-signed kind:46044 proof committed alongside a routed kind:9
+    // original; dispatched after the original's own post-commit fan-out.
+    let mut contact_proof_stored: Option<StoredEvent> = None;
     if kind_u32 == KIND_AGENT_RECEIPT {
         let (receipt_channel_id, root_event_id, parent_event_id) =
             validate_agent_receipt_envelope(&event)
@@ -3370,6 +3375,32 @@ async fn ingest_event_inner(
         if !receipt_parent_targets_agent(&parent_event.event, &agent_hex) {
             return Err(IngestError::AuthFailed(
                 "restricted: receipt signer was not targeted by the triggering event".into(),
+            ));
+        }
+
+        // A receipt replying to a kind:46044 contact decision completes the
+        // fenced claim it names; the claim reference is bound to the parent
+        // here and enforced at insert time against the committed claim row.
+        if parent_event.event.kind.as_u16() as u32 == KIND_CONTACT_DECISION {
+            let claim = buzz_db::contact::parse_claim_tag(&event)
+                .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?
+                .ok_or_else(|| {
+                    IngestError::Rejected(
+                        "invalid: receipt to a contact decision requires a claim tag".into(),
+                    )
+                })?;
+            if claim.decision_id != parent_event.event.id.to_bytes() {
+                return Err(IngestError::Rejected(
+                    "invalid: receipt claim tag does not name its decision parent".into(),
+                ));
+            }
+            contact_claim_ref = Some(claim);
+        } else if buzz_db::contact::parse_claim_tag(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?
+            .is_some()
+        {
+            return Err(IngestError::Rejected(
+                "invalid: claim tag is only valid on receipts to a contact decision".into(),
             ));
         }
     }
@@ -3961,17 +3992,64 @@ async fn ingest_event_inner(
             }
         }
     } else {
-        let thread_params = thread_meta.as_ref().map(|m| m.as_params());
-        match state
-            .db
-            .insert_event_with_thread_metadata(
-                tenant.community(),
-                &event,
-                channel_id,
-                thread_params,
-            )
-            .await
-        {
+        let insert_result = if kind_u32 == KIND_STREAM_MESSAGE {
+            match channel_id {
+                // Contact fallback v4: channel-scoped chat goes through the
+                // decision seam so the original, the contact classification,
+                // and (on a win) the relay-signed proof + route + claim row
+                // commit in one transaction. A replay returns the stored
+                // decision instead of re-deciding.
+                Some(ch_id) => state
+                    .db
+                    .decide_contact_route(
+                        tenant.community(),
+                        &event,
+                        ch_id,
+                        thread_meta.as_ref().map(|m| m.as_params()),
+                        &state.relay_keypair,
+                    )
+                    .await
+                    .map(|outcome| {
+                        if outcome.was_inserted {
+                            contact_proof_stored = outcome.proof;
+                        }
+                        (outcome.stored, outcome.was_inserted)
+                    }),
+                None => {
+                    state
+                        .db
+                        .insert_event_with_thread_metadata(
+                            tenant.community(),
+                            &event,
+                            channel_id,
+                            thread_meta.as_ref().map(|m| m.as_params()),
+                        )
+                        .await
+                }
+            }
+        } else if let Some(claim) = contact_claim_ref {
+            state
+                .db
+                .insert_contact_receipt(
+                    tenant.community(),
+                    &event,
+                    channel_id,
+                    thread_meta.as_ref().map(|m| m.as_params()),
+                    claim,
+                )
+                .await
+        } else {
+            state
+                .db
+                .insert_event_with_thread_metadata(
+                    tenant.community(),
+                    &event,
+                    channel_id,
+                    thread_meta.as_ref().map(|m| m.as_params()),
+                )
+                .await
+        };
+        match insert_result {
             Ok(result) => result,
             Err(e) => {
                 // Compensate: if we pre-created a channel for kind:9007,
@@ -3997,6 +4075,35 @@ async fn ingest_event_inner(
     };
 
     if !was_inserted {
+        // At-least-once proof delivery: a replayed kind:9 re-emits the stored
+        // kind:46044 decision proof, because the post-commit fan-out is not
+        // part of the decision transaction (a crash can lose the first one).
+        if kind_u32 == KIND_STREAM_MESSAGE {
+            match state
+                .db
+                .contact_proof_for_original(tenant.community(), event.id.as_bytes())
+                .await
+            {
+                Ok(Some(proof)) => {
+                    let relay_pub = state.relay_keypair.public_key().to_hex();
+                    dispatch_persistent_event(
+                        tenant,
+                        state,
+                        &proof,
+                        KIND_CONTACT_DECISION,
+                        &relay_pub,
+                        threaded_visibility.clone(),
+                    )
+                    .await;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Err(IngestError::Internal(format!(
+                        "error: contact proof readback failed: {e}"
+                    )))
+                }
+            }
+        }
         // A conditional repository replay is an operational retry, not a
         // no-op: rerun the existing idempotent name/pointer ensure before
         // acknowledging it. This also repairs a prior post-commit side-effect
@@ -4117,6 +4224,22 @@ async fn ingest_event_inner(
         threaded_visibility.clone(),
     )
     .await;
+
+    // The decision proof fans out under the same channel visibility as the
+    // original; it is signed by the relay key, so the author pubkey is the
+    // relay's own.
+    if let Some(proof) = contact_proof_stored {
+        let relay_pub = state.relay_keypair.public_key().to_hex();
+        dispatch_persistent_event(
+            tenant,
+            state,
+            &proof,
+            KIND_CONTACT_DECISION,
+            &relay_pub,
+            threaded_visibility.clone(),
+        )
+        .await;
+    }
 
     info!(event_id = %event_id_hex, kind = kind_u32, "Event ingested via pipeline");
 

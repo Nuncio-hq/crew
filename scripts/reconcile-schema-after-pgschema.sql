@@ -22,6 +22,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p_past;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p_past;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p_past;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p_past;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p_past;
         ALTER TABLE events ATTACH PARTITION events_p_past
             FOR VALUES FROM (MINVALUE) TO ('2026-01-01');
@@ -38,6 +39,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_01;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p2026_01;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p2026_01;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p2026_01;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_01;
         ALTER TABLE events ATTACH PARTITION events_p2026_01
             FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
@@ -54,6 +56,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_02;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p2026_02;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p2026_02;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p2026_02;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_02;
         ALTER TABLE events ATTACH PARTITION events_p2026_02
             FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
@@ -70,6 +73,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_03;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p2026_03;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p2026_03;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p2026_03;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_03;
         ALTER TABLE events ATTACH PARTITION events_p2026_03
             FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');
@@ -86,6 +90,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_04;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p2026_04;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p2026_04;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p2026_04;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_04;
         ALTER TABLE events ATTACH PARTITION events_p2026_04
             FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
@@ -102,6 +107,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_05;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p2026_05;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p2026_05;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p2026_05;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_05;
         ALTER TABLE events ATTACH PARTITION events_p2026_05
             FOR VALUES FROM ('2026-05-01') TO ('2026-06-01');
@@ -118,6 +124,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_06;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p2026_06;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p2026_06;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p2026_06;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_06;
         ALTER TABLE events ATTACH PARTITION events_p2026_06
             FOR VALUES FROM ('2026-06-01') TO ('2026-07-01');
@@ -134,6 +141,7 @@ BEGIN
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p_future;
         DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events_p_future;
         DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events_p_future;
+        DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON events_p_future;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p_future;
         ALTER TABLE events ATTACH PARTITION events_p_future
             FOR VALUES FROM ('2026-07-01') TO (MAXVALUE);
@@ -212,6 +220,22 @@ BEGIN
             FOR VALUES FROM ('2026-07-01') TO (MAXVALUE);
     END IF;
 END $$;
+
+-- Deferred contact-decision guards live only on events leaves, never the
+-- parent. pgschema does not express per-leaf constraint triggers declaratively,
+-- so each attached leaf gets the production installer here (idempotent), and
+-- runtime partition management calls the same function for future leaves.
+DO $$
+DECLARE
+    leaf regclass;
+BEGIN
+    FOR leaf IN
+        SELECT inhrelid::regclass FROM pg_inherits WHERE inhparent = 'events'::regclass
+    LOOP
+        PERFORM contact_install_leaf_guards_v1(leaf);
+    END LOOP;
+END
+$$;
 
 -- pgschema reconciles DDL but does not apply seed DML or table storage
 -- parameters from schema/schema.sql. Restore those parts of the desired-state

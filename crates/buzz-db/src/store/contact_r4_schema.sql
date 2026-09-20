@@ -56,6 +56,30 @@ CREATE TABLE IF NOT EXISTS contact_quota (
     CHECK (used BETWEEN 0 AND 8192)
 );
 
+-- #412 production seam triggers are part of the fixture's replacement
+-- catalog surface: the fixture drops them so its own reviewed guards are the
+-- contract under test, exactly as with the R4 foundation triggers.
+DO $$
+DECLARE
+    relation_name regclass;
+BEGIN
+    FOR relation_name IN
+        SELECT c.oid::regclass
+        FROM pg_class c
+        WHERE c.oid = 'events'::regclass
+           OR c.oid IN (SELECT inhrelid FROM pg_inherits WHERE inhparent = 'events'::regclass)
+    LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS contact_check_original_v1 ON %s', relation_name);
+        EXECUTE format('DROP TRIGGER IF EXISTS contact_check_proof_delete_v1 ON %s', relation_name);
+        EXECUTE format('DROP TRIGGER IF EXISTS contact_cancel_claim_on_original_delete_v1 ON %s', relation_name);
+    END LOOP;
+END
+$$;
+DROP TRIGGER IF EXISTS contact_check_route_v1 ON contact_routes;
+DROP TRIGGER IF EXISTS contact_route_no_delete_v1 ON contact_routes;
+DROP TRIGGER IF EXISTS contact_check_quota_v1 ON contact_quota;
+DROP TRIGGER IF EXISTS contact_quota_no_delete_v1 ON contact_quota;
+
 -- GREEN implementation below, installed only in the disposable test database.
 DO $$
 BEGIN

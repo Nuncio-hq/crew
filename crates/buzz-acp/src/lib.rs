@@ -48,9 +48,9 @@ use std::time::Duration;
 use acp::{AcpClient, EnvVar, McpServer};
 use anyhow::{ensure, Context, Result};
 use buzz_core::kind::{
-    KIND_AGENT_USER_INPUT_ANSWER, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_ORG_ROSTER, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_REMINDER,
-    KIND_WORKFLOW_APPROVAL_REQUESTED,
+    KIND_AGENT_USER_INPUT_ANSWER, KIND_CONTACT_DECISION, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_ORG_ROSTER, KIND_STREAM_MESSAGE,
+    KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::observer::{
     decrypt_observer_payload, encrypt_observer_payload, OBSERVER_FRAME_TELEMETRY,
@@ -267,6 +267,7 @@ async fn is_owner_or_sibling(
 }
 
 include!("workflow-attribution.rs");
+include!("contact-decision.rs");
 
 // Keep relay identity private so both listeners must cross the verified gate.
 #[path = "inbound-author-gate.rs"]
@@ -2126,6 +2127,7 @@ async fn tokio_main() -> Result<()> {
     tracing::info!("subscribed to membership notifications");
 
     let presence_publisher = relay.event_publisher();
+    let contact_publisher = relay.event_publisher();
     let presence_keys = config.keys.clone();
 
     // Priority: BUZZ_AUTH_TAG (NIP-OA attestation) → --agent-owner flag.
@@ -2352,6 +2354,7 @@ async fn tokio_main() -> Result<()> {
         ),
         org_roster_cache: crate::org_roster::empty_roster_cache(),
         org_budget: Arc::new(crate::org_roster::OrgBudgetTracker::default()),
+        contact_claims: std::sync::Mutex::new(HashMap::new()),
     });
     pool::prepare_receipt_outbox(&ctx)
         .await
@@ -2873,6 +2876,35 @@ async fn tokio_main() -> Result<()> {
                             let kind_u32 = buzz_event.event.kind.as_u16() as u32;
                             if kind_u32 == KIND_AGENT_USER_INPUT_ANSWER {
                                 user_input_runtime.handle_event(&buzz_event).await;
+                                continue;
+                            }
+
+                            if kind_u32 == KIND_CONTACT_DECISION {
+                                // Routed fallback: only the proven decision is
+                                // consumed — claim → start over kind:24210,
+                                // then queue the decision as the trigger with
+                                // the original's content.
+                                if consume_contact_decision(
+                                    &ctx,
+                                    &mut author_gate_ctx,
+                                    &buzz_event,
+                                    &config.respond_to,
+                                    &config.respond_to_allowlist,
+                                    &owner_cache,
+                                    &contact_publisher,
+                                    &mut queue,
+                                )
+                                .await
+                                {
+                                    for (channel_id, thread_tags) in dispatch_pending(
+                                        &mut pool,
+                                        &mut queue,
+                                        &ctx,
+                                        &mut last_activity,
+                                    ) {
+                                        typing_channels.insert(channel_id, thread_tags);
+                                    }
+                                }
                                 continue;
                             }
 
