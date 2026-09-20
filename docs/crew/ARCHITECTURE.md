@@ -773,16 +773,25 @@ Exact local path observations and one-run logs belong to #351/task evidence.
 
 ### Certification contract (2026-09-20)
 
-`verify_recap_runtime` is wired but this executor VM cannot satisfy the gates:
-no catalogued recap runtime is installed on Linux and the seatbelt/Job Object
-containment is unavailable, so every combination below stays unproven here.
+`verify_recap_runtime` is wired; the founder-staging macOS host ran the real
+Hermes probe end to end (ignored test `managed_agents::recap_observer::tests::
+live_hermes_probe_observes_tool_denial_and_effective_model`, gated to hosts
+with `RECAP_LIVE_*` env). The executor VM still fails closed
+`unsupported_process_containment` on Linux.
 
 | Runtime / contract | Probeable on | Current result |
 | --- | --- | --- |
-| `hermes` (`StagingProfile`, `-p <profile>` + locked gateway profile) | macOS (seatbelt), Windows (Job Object) | INCONCLUSIVE on this VM (`unsupported_process_containment` on Linux); requires founder-machine run with `recap-provider-v1:hermes` keyring credential |
+| `hermes` v0.21.3 (`StagingProfile`, `-p <profile>` + locked gateway profile; resolved binary `~/.hermes/hermes-agent/venv/bin/hermes`, sha256 `c601ddf3…6bb8f`) | macOS (seatbelt) | PASS on macos-aarch64 — hostile phase terminally rejected `crew-recap-hostile-tool-v1` before effect (sentinel untouched, process reaped+contained); forwarded phase observed `effective_model=gpt-5.6-sol` on `POST /responses` via OAuth; `unsupported_process_containment` on Linux VM |
 | `claude` (`ExplicitModel`) | n/a | `unsupported_tool_isolation` — no profile rewiring seam, so wire-observed model/tool evidence is impossible |
 | `buzz-agent`, other catalog entries without `recap_contract` | n/a | `unsupported_one_shot` |
 | `pi` | n/a | not in `KnownAcpRuntime`; `runtime_mismatch` — BLOCKED |
+
+Probe host contract: the executable must be the concrete venv binary (a shallow
+`~/.local/bin` launcher fails `sandbox_install_root` by design); the staging
+profile must be `profiles/<name>`-shaped and inside the profile copy budget
+(the ~41 MB working profile needs trimming to the owned subset); `$TMPDIR`
+must resolve to a canonical path because `validate_owned_base` rejects
+symlinked bases.
 
 Cache key: `capability_fingerprint` hashes the exact resolved path, executable
 content SHA-256, model and profile — any binary or selection change forces a
