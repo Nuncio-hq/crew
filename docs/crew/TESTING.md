@@ -1087,6 +1087,15 @@ after observed root reap, and cleanup failures. The existing escaped-descendant
 test deliberately proves the limit of Unix process groups and cleans its own
 fixture; it must never be reported as whole-tree containment.
 
+The frontend seam is covered by `desktop/src/features/recap/*.test.mjs`
+(default-Off save validation mirroring `validate_settings`, label honesty) and
+`desktop/tests/e2e/companyos-recap.spec.ts` in the smoke `testMatch`, which
+drives the registered commands through the E2E mock bridge: Off → configure →
+Generate → current → source edit → stale → failed regenerate preserving the
+prior artifact → retry; uncatalogued and unsupported runtimes; cancellation;
+keyboard and narrow layouts. The mock mirrors the production validation order
+and revision-based staleness; fake recap text stays `[fixture]`-labeled.
+
 Keep RED, mutation and restored-GREEN evidence separate. Removing the fixed
 no-tool Claude/Hermes recipe arguments, prompt cap, pending-process cleanup
 guard, source overflow watermark, or EPERM reap condition must fail the

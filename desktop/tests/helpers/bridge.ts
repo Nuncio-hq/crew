@@ -484,6 +484,15 @@ type MockBridgeOptions = {
     kinds: string; // JSON-encoded integer array, e.g. "[9,40002]"
   }>;
   /**
+   * Thread-recap fixtures (#356) consumed by the mocked recap Tauri commands.
+   * `runtimes` overrides listed ids in the fail-closed inventory; `settings`
+   * seeds the owner-local snapshot; `artifacts` seeds `${channelId}:${rootEventId}`
+   * lookups; `generateResults` sequences `generate_thread_recap` outcomes
+   * (`{error}` rejects); `holdGenerateUntilCancel` parks generate until the
+   * matching `cancel_thread_recap`; `settingsError` fails `get_recap_settings`.
+   */
+  recap?: import("../../src/testing/e2eBridge").MockRecapConfig;
+  /**
    * Event IDs that `get_event` should report as definitively not found.
    * Causes `useDraftRootStatus` to map the draft to `deleted` state so specs
    * can exercise the "Thread deleted" label / disabled-send path.

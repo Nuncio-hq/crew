@@ -681,6 +681,12 @@ grant loader/producer, and the existing bounded discovery process helper
 extended with caller-owned stdin, cancellation and per-stream budgets. The
 registered recap service binds those pieces at one production seam and keeps
 its command unavailable without the grant and matching retention row.
+The desktop frontend under `desktop/src/features/recap/` consumes only that
+command seam: a Thread recap section in Settings and a lazy Context panel call
+`get_recap_settings`/`save_recap_settings`/`get_thread_recap`/
+`generate_thread_recap`/`cancel_thread_recap`, render the backend-reported
+`availability` and `settings_error` verbatim, and keep every uncertified or
+unsupported selection visible-but-disabled rather than fabricating support.
 Hermes binds the selected profile path, canonical directory device/inode
 identity and bounded content digest. Plan construction copies the selected
 profile into the disposable run; immediately before launch, the source and
