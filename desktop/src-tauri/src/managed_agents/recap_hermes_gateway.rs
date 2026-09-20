@@ -159,18 +159,20 @@ pub(crate) fn write_locked_profile(
         },
         "platform_toolsets": {"cli": []}
     });
-    // Mirrors the installed Hermes credential_pool entry shape: its Codex
-    // fallback takes the first openai-codex entry with a non-empty
-    // `access_token` whose `last_error_reset_at` is absent or in the past;
-    // `auth_type` is ignored there. `base_url` is the provider client's
-    // route, so it carries the loopback gateway, not the real endpoint.
+    // Mirrors the installed Hermes credential_pool entry shape: openai-codex
+    // is oauth-only, so api_key entries are stripped on load. The Codex
+    // fallback takes the first entry with a non-empty `access_token` whose
+    // `last_error_reset_at` is absent or in the past; the `providers`
+    // singleton tokens are the primary resolution slot, so both carry the
+    // gateway token. `base_url` is the provider client's route, so it
+    // carries the loopback gateway, not the real endpoint.
     let auth = serde_json::json!({
         "version": 1,
         "active_provider": "openai-codex",
         "credential_pool": {"openai-codex": [{
             "id": "crew-recap-one-shot",
             "label": "Crew recap one-shot gateway",
-            "auth_type": "api_key",
+            "auth_type": "oauth",
             "priority": 0,
             "source": "native",
             "last_status": null,
@@ -183,8 +185,16 @@ pub(crate) fn write_locked_profile(
             "request_count": 0,
             "model_cooldowns": {},
             "access_token": connection.token,
+            "refresh_token": connection.token,
         }]},
-        "providers": {}
+        "providers": {"openai-codex": {
+            "tokens": {
+                "access_token": connection.token,
+                "refresh_token": connection.token,
+            },
+            "auth_mode": "chatgpt",
+            "last_refresh": chrono::Utc::now().to_rfc3339(),
+        }}
     });
     write_private_json(&destination.join("config.yaml"), &config)?;
     write_private_json(&destination.join("auth.json"), &auth)
