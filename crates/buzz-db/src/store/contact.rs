@@ -544,7 +544,7 @@ pub async fn decide_contact_route(
                 .execute(&mut *tx)
                 .await?;
 
-            match eval_contact_candidate(&mut *tx, community_id, channel_id).await? {
+            match eval_contact_candidate(&mut tx, community_id, channel_id).await? {
                 None => class = ContactClass::NoContact,
                 Some(found) => {
                     if signer_bytes.as_slice() != found.owner_pubkey.as_slice() {
@@ -563,7 +563,7 @@ pub async fn decide_contact_route(
             .execute(&mut *tx)
             .await?;
         let stripe = i16::from(id_bytes[0] & 0x0f);
-        if !reserve_contact_quota(&mut *tx, community_id, stripe).await? {
+        if !reserve_contact_quota(&mut tx, community_id, stripe).await? {
             candidate = None;
             class = ContactClass::Quota;
         }
@@ -616,7 +616,7 @@ pub async fn decide_contact_route(
             community_id,
             channel_id,
             event,
-            &candidate,
+            candidate,
             root_event_id.clone(),
         )?;
         let proof_created_at = DateTime::from_timestamp(proof_event.created_at.as_secs() as i64, 0)

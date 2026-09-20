@@ -862,6 +862,12 @@ const MEMBERSHIP_NOTIF_SUB_ID: &str = "membership-notif";
 /// Subscription ID for encrypted owner-to-agent observer control frames.
 const OBSERVER_CONTROL_SUB_ID: &str = "agent-observer-control";
 
+/// Shared OK waiter for `PublishEventAcked`: a slot the relay loop resolves
+/// once the relay answers the frame, shared so cloned command intents don't
+/// duplicate the waiter.
+type EventAckWaiter =
+    std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<(bool, String)>>>>;
+
 /// Commands sent from `HarnessRelay` to the background WebSocket task.
 #[derive(Clone)]
 enum RelayCommand {
@@ -896,8 +902,7 @@ enum RelayCommand {
         event: Box<Event>,
         /// Shared waiter: the command enum is cloned for intent tracking, but
         /// the OK resolves the first taker only.
-        ack_tx:
-            std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<(bool, String)>>>>,
+        ack_tx: EventAckWaiter,
     },
     /// Floor `since` for membership notification replay; events before startup are never re-delivered.
     SetStartupWatermark { ts: u64 },
@@ -1553,10 +1558,7 @@ struct BgState {
     /// control frame's waiter survives until the frame is sent and the relay
     /// acknowledges it; a dropped waiter resolves the caller as
     /// ConnectionClosed.
-    pending_ok: HashMap<
-        String,
-        std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<(bool, String)>>>>,
-    >,
+    pending_ok: HashMap<String, EventAckWaiter>,
     /// Channels whose REQ failed during `resubscribe_after_reconnect`.
     ///
     /// A single failed channel REQ is parked here instead of aborting the whole

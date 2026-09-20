@@ -904,7 +904,7 @@ async fn contact_claim_fencing_wrong_generation_and_holder() {
         f.community,
         &decision,
         f.channel,
-        &stranger.public_key().to_bytes().to_vec(),
+        stranger.public_key().to_bytes().as_ref(),
         60,
     )
     .await
@@ -1296,12 +1296,7 @@ fn contact_claim_tag_parsing_is_strict() {
         .expect("signed");
     assert_eq!(parse_claim_tag(&without).expect("parse"), None);
 
-    for value in [
-        "not-a-pair",
-        &format!("{}", hex::encode(decision)),
-        "aa:bb",
-        "aa:1:2",
-    ] {
+    for value in ["not-a-pair", &hex::encode(decision), "aa:bb", "aa:1:2"] {
         let bad = EventBuilder::new(Kind::Custom(KIND_RECEIPT), "x")
             .tags([Tag::parse(["claim", value]).expect("tag")])
             .sign_with_keys(&signer)
