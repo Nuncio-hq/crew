@@ -159,6 +159,11 @@ pub(crate) fn write_locked_profile(
         },
         "platform_toolsets": {"cli": []}
     });
+    // Mirrors the installed Hermes credential_pool entry shape: its Codex
+    // fallback takes the first openai-codex entry with a non-empty
+    // `access_token` whose `last_error_reset_at` is absent or in the past;
+    // `auth_type` is ignored there. `base_url` is the provider client's
+    // route, so it carries the loopback gateway, not the real endpoint.
     let auth = serde_json::json!({
         "version": 1,
         "active_provider": "openai-codex",
@@ -166,12 +171,18 @@ pub(crate) fn write_locked_profile(
             "id": "crew-recap-one-shot",
             "label": "Crew recap one-shot gateway",
             "auth_type": "api_key",
-            "access_token": connection.token,
-            "base_url": connection.base_url,
             "priority": 0,
+            "source": "native",
+            "last_status": null,
+            "last_status_at": null,
+            "last_error_code": null,
+            "last_error_reason": null,
+            "last_error_message": null,
+            "last_error_reset_at": null,
+            "base_url": connection.base_url,
             "request_count": 0,
-            "last_status": "ok",
-            "source": "native"
+            "model_cooldowns": {},
+            "access_token": connection.token,
         }]},
         "providers": {}
     });
