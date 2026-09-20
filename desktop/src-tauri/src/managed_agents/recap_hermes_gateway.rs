@@ -61,7 +61,7 @@ pub(crate) enum HermesGatewayFailure {
 /// Strict value stored under the runtime grant's native keyring reference.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct HermesProviderCredential {
+pub(crate) struct HermesProviderCredential {
     version: u8,
     endpoint: String,
     bearer_token: String,
@@ -272,7 +272,7 @@ impl HermesOneShotGateway {
         parse_credential(value).map(|_| ())
     }
 
-    fn start_with_credential(
+    pub(crate) fn start_with_credential(
         credential: HermesProviderCredential,
         expected_model: &str,
     ) -> Result<Self, HermesGatewayFailure> {
@@ -766,7 +766,9 @@ fn contains_tool_output(value: &serde_json::Value) -> bool {
     }
 }
 
-fn parse_credential(value: &str) -> Result<HermesProviderCredential, HermesGatewayFailure> {
+pub(crate) fn parse_credential(
+    value: &str,
+) -> Result<HermesProviderCredential, HermesGatewayFailure> {
     let credential: HermesProviderCredential =
         serde_json::from_str(value).map_err(|_| HermesGatewayFailure::InvalidCredential)?;
     let endpoint =

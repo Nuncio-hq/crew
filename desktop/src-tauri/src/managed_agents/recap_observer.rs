@@ -375,6 +375,23 @@ fn run_forwarded_phase(
 > {
     let gateway = HermesOneShotGateway::start(&auth.service, &auth.reference, &selection.model)
         .map_err(gateway_failure_code)?;
+    forwarded_probe(recap_base, executable, selection, gateway, tool_probe)
+}
+
+fn forwarded_probe(
+    recap_base: &Path,
+    executable: &RecapExecutableIdentity,
+    selection: &RecapSelection,
+    gateway: HermesOneShotGateway,
+    tool_probe: RecapToolProbeEvidence,
+) -> Result<
+    (
+        RecapAdapterObservation,
+        RecapStateObservation,
+        RecapProcessObservation,
+    ),
+    String,
+> {
     let (outcome, evidence) = run_gateway_probe(recap_base, executable, selection, gateway)?;
     let HermesGatewayEvidence::Forwarded(exchange) = evidence else {
         return Err("unsupported_tool_isolation".to_string());
@@ -824,5 +841,92 @@ mod tests {
         let mut moved = identity("1.0.0", &"a".repeat(64));
         moved.resolved_path = PathBuf::from("/staging/bin/hermes-moved");
         assert_ne!(base, capability_fingerprint(&moved, &selection));
+    }
+
+    /// #351 live staging probe against a real installed Hermes runtime.
+    ///
+    /// Only meaningful on a host with `hermes` installed, a copied 0700
+    /// staging profile directory, and a provider credential — never runs in
+    /// CI; invoke explicitly with `--ignored`. The probe exercises the
+    /// production hostile/forwarded phases with no Tauri app handle, owner
+    /// scope, or keyring dependency.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires installed hermes and RECAP_LIVE_* env on the staging host"]
+    fn live_hermes_probe_observes_tool_denial_and_effective_model() {
+        let executable_path = PathBuf::from(
+            std::env::var("RECAP_LIVE_EXECUTABLE")
+                .expect("set RECAP_LIVE_EXECUTABLE to the resolved hermes binary"),
+        );
+        let model = std::env::var("RECAP_LIVE_MODEL").expect("set RECAP_LIVE_MODEL");
+        let profile = PathBuf::from(
+            std::env::var("RECAP_LIVE_PROFILE_DIR")
+                .expect("set RECAP_LIVE_PROFILE_DIR to a copied 0700 hermes profile dir"),
+        );
+        let credential_json = std::env::var("RECAP_LIVE_CREDENTIAL_JSON")
+            .expect("set RECAP_LIVE_CREDENTIAL_JSON to the provider credential");
+
+        let canonical = executable_path
+            .canonicalize()
+            .expect("live executable must canonicalize");
+        let executable = RecapExecutableIdentity {
+            version: probe_version(&canonical)
+                .expect("contained version probe must succeed on the host"),
+            fingerprint: hash_file(&canonical).expect("executable fingerprint"),
+            resolved_path: canonical,
+            platform: current_platform(),
+        };
+        let selection = RecapSelection {
+            model: model.clone(),
+            profile: Some(profile.clone()),
+            profile_digest: Some(
+                super::super::recap_adapter::profile_tree_digest(&profile).expect("profile digest"),
+            ),
+            profile_identity: Some(
+                super::super::recap_adapter::profile_identity(&profile).expect("profile identity"),
+            ),
+            auth_available: true,
+        };
+        let recap_base = tempfile::tempdir().expect("recap base");
+
+        let (tool_probe, hostile_state, hostile_process) =
+            run_hostile_phase(recap_base.path(), &executable, &selection)
+                .expect("hostile phase must complete");
+        assert_eq!(tool_probe.probe_id, RECAP_TOOL_PROBE_ID);
+        assert!(
+            tool_probe.request_observed,
+            "runtime must POST {RESPONSES_PATH}"
+        );
+        assert!(
+            tool_probe.denied_before_effect,
+            "runtime must terminally reject the injected tool call"
+        );
+        assert_eq!(hostile_state, RecapStateObservation::Unchanged);
+        assert_eq!(hostile_process, RecapProcessObservation::ReapedAndContained);
+
+        let credential = super::super::recap_hermes_gateway::parse_credential(&credential_json)
+            .expect("credential JSON shape");
+        let gateway = HermesOneShotGateway::start_with_credential(credential, &model)
+            .expect("forward gateway must bind");
+        let (adapter, forward_state, forward_process) = forwarded_probe(
+            recap_base.path(),
+            &executable,
+            &selection,
+            gateway,
+            tool_probe,
+        )
+        .expect("forwarded phase must complete");
+        assert!(adapter.one_shot_completed());
+        assert_eq!(adapter.effective_model(), model);
+        assert_eq!(forward_state, RecapStateObservation::Unchanged);
+        assert_eq!(forward_process, RecapProcessObservation::ReapedAndContained);
+
+        eprintln!(
+            "live probe: version={} fingerprint={} platform={} effective_model={}",
+            executable.version,
+            executable.fingerprint,
+            executable.platform,
+            adapter.effective_model()
+        );
     }
 }
