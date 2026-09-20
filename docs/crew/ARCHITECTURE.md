@@ -262,8 +262,12 @@ existing 120/min relay ceiling shared with chat. The plaintext frame cap,
 Priority cannot move a terminal past its own over-frame backlog or any
 null-channel barrier; fairness, relay quota and transport can also delay it.
 The three-channel deterministic regression reaches completion in slot one
-instead of slot three. This is queue/pacer evidence, not installed-runtime
-latency: baseline/candidate timing and real-data screenshots await #348/#338.
+instead of slot three, and a local real-relay baseline/candidate run (#352)
+measured a completion queued behind a two-channel backlog at ~7.6 s
+(front-channel) versus ~0.4 s (priority) with cadence and frame caps
+unchanged. This is queue/pacer evidence, not installed-runtime latency:
+the #348 staging remeasure and real-data installed-runtime screenshots
+under #338 remain open.
 
 Validated receipts already match the exact agent, triggering event, session
 and turn when projecting a healthy thread's Ready to review badge. This is
