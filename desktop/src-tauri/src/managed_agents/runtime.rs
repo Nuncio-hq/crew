@@ -436,23 +436,6 @@ pub(crate) fn spawn_with_effort_proof(
 /// publishes the triggering message before this spawn and passes its send
 /// timestamp here so the harness's first REQ replays past that message no
 /// matter how long the spawn takes. buzz-acp clamps stale floors to ~15 min.
-/// The relay URL the spawned child must dial for `record`: the caller's pair
-/// relay resolved through [`crate::relay::effective_agent_relay_url`], which
-/// keeps the configured authority verbatim and ignores the legacy per-record
-/// pin — the same contract the prospective spawn snapshot uses
-/// (`spawn_snapshot::prospective_spawn_config_snapshot`). This must NOT be the
-/// canonicalized [`ManagedAgentRuntimeKey::relay_url`]: the key collapses
-/// loopback spellings (`localhost` → `127.0.0.1`) for identity (runtime ids,
-/// receipts, log paths), while the relay binds communities on the HTTP `Host`
-/// header and treats the spellings as different tenants
-/// (`nip11_or_ws_handler` → `bind_community` → `normalize_host`). Handing the
-/// canonicalized authority to `BUZZ_RELAY_URL` pointed managed agents at a
-/// tenant that never matches the seeded workspace community, so the WS
-/// upgrade 404s and no agent could join a `just dev` relay at all.
-fn spawn_dial_relay_url(record: &ManagedAgentRecord, pair_relay_url: &str) -> String {
-    crate::relay::effective_agent_relay_url(&record.relay_url, pair_relay_url)
-}
-
 pub fn spawn_agent_child(
     app: &AppHandle,
     record: &ManagedAgentRecord,
@@ -551,8 +534,11 @@ pub fn spawn_agent_child(
 
     // The caller supplies the explicit canonical pair relay. This is the only
     // relay this child may connect to, regardless of the record/workspace
-    // default. The child must dial it verbatim — see `spawn_dial_relay_url`.
-    let effective_relay_url = spawn_dial_relay_url(record, relay_url);
+    // default. It must be dialed verbatim — never `runtime_key.relay_url`,
+    // which canonicalizes loopback (`localhost` → `127.0.0.1`) for identity;
+    // the relay binds communities on the Host header, so the rewritten
+    // authority is a different tenant and the WS upgrade 404s.
+    let effective_relay_url = crate::relay::effective_agent_relay_url(&record.relay_url, relay_url);
     // Augment PATH for DMG launches so child processes can find:
     //   - bundled CLI via ~/.local/bin symlink
     //   - nvm-managed node/npm (nvm initializes only in interactive shells)

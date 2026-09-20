@@ -799,28 +799,14 @@ pub(crate) async fn delete<R: tauri::Runtime>(
     pubkey: String,
     force_remote_delete: bool,
 ) -> Result<(), String> {
-    // Same bound as `delete_persona`/`retry`: `capture` + `begin` + `resume`
-    // in one future overflows the worker-thread stack under Tauri command
-    // dispatch, so the coordinator body lives in its own boxed future.
-    Box::pin(delete_inner(app, pubkey, force_remote_delete)).await
-}
-
-async fn delete_inner<R: tauri::Runtime>(
-    app: AppHandle<R>,
-    pubkey: String,
-    force_remote_delete: bool,
-) -> Result<(), String> {
-    let token = capture(app.clone()).await?.token;
-    let record =
-        current_record(&app, &pubkey)?.ok_or_else(|| format!("agent {pubkey} not found"))?;
-    let operation = begin(&app, token.clone(), record, force_remote_delete).await?;
-    match resume(app.clone(), token, operation, true).await {
-        Ok(()) => {
-            crate::managed_agents::try_regenerate_nest(&app);
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
+    // Same bound as `delete_persona`: the coordinator body is boxed so its
+    // chain stays out of this command's dispatched frame.
+    Box::pin(managed_agent_persona_delete::delete_inner(
+        app,
+        pubkey,
+        force_remote_delete,
+    ))
+    .await
 }
 
 /// Delete one persona and its exact linked managed-agent records through the
@@ -829,10 +815,8 @@ pub(crate) async fn delete_persona<R: tauri::Runtime>(
     app: AppHandle<R>,
     persona_id: String,
 ) -> Result<(), String> {
-    // Keep the cascade entry future out of this command's inline frame.
-    // `capture` + `begin_persona_cascade` + `resume` in one future overflows
-    // the worker-thread stack when polled inside a Tauri command dispatch —
-    // the same bound `resume` applies to `resume_persona_cascade` above.
+    // Keep the cascade entry chain out of this command's inline frame — it
+    // overflows the worker-thread stack under Tauri command dispatch.
     Box::pin(managed_agent_persona_delete::delete_persona(
         app, persona_id,
     ))
@@ -875,25 +859,9 @@ pub(crate) async fn retry<R: tauri::Runtime>(
     app: AppHandle<R>,
     operation_id: String,
 ) -> Result<(), String> {
-    // Keep the replay chain out of this command's inline frame — `capture` +
-    // `load_any_scope_operation` + `resume` in one future overflows the
-    // worker-thread stack when polled inside a Tauri command dispatch, the
-    // same bound `delete_persona` and the cascade branch in `resume` apply.
-    Box::pin(retry_inner(app, operation_id)).await
-}
-
-async fn retry_inner<R: tauri::Runtime>(
-    app: AppHandle<R>,
-    operation_id: String,
-) -> Result<(), String> {
-    let token = capture(app.clone()).await?.token;
-    let operation = load_any_scope_operation(&app, &operation_id).await?;
-    assert_current(app.clone(), &token).await?;
-    if operation.kind != OperationKind::ManagedAgentDelete {
-        return Err("operation is not a managed-agent deletion".into());
-    }
-    ensure_active_scope(&token, &operation)?;
-    resume(app, token, operation, true).await
+    // Same bound as `delete_persona`: box the replay chain so it stays out of
+    // this command's dispatched frame.
+    Box::pin(managed_agent_persona_delete::retry_inner(app, operation_id)).await
 }
 
 /// List unresolved managed-agent deletions across every local scope. The
