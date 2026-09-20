@@ -446,7 +446,7 @@ fn start_pair(
 
     // Pass the caller's verbatim pair relay — `key.relay_url` is
     // canonicalized for identity and would 404 the child's WS upgrade on
-    // loopback deployments (see `spawn_dial_relay_url`).
+    // loopback deployments (see the dial-site note in `spawn_agent_child`).
     let mut process = spawn_agent_child(&app, record, &relay_url, lazy, owner.as_deref(), None)?;
     let now = crate::util::now_iso();
     let receipt = ManagedAgentRuntimeReceipt {
