@@ -25,9 +25,11 @@ use super::attempt::AttemptIdentity;
 use super::binding::{self, PrivateAskBinding};
 use super::retrieval::{Retrieval, RetrievalManifest};
 use super::session_evidence::{SessionObservation, SessionSnapshot};
+#[cfg(test)]
+use super::GroundedSource;
 use super::{
-    AgentLifecycle, GroundedSource, PriorTurn, PrivateAskFailure, PrivateAskRequest,
-    PrivateAskResponse, PrivateAskScope, SelectedAgentState,
+    AgentLifecycle, PriorTurn, PrivateAskFailure, PrivateAskRequest, PrivateAskResponse,
+    PrivateAskScope, SelectedAgentState,
 };
 use crate::managed_agents::effective_config::EffectiveConfigResult;
 use crate::managed_agents::recap_capability::RecapExecutableIdentity;
@@ -100,7 +102,9 @@ impl std::fmt::Debug for PrivateAskSelection {
 /// so the viewer and the history see *what* was not covered rather than a
 /// bare no.
 pub(crate) enum ResolveStep {
-    Ready(PrivateAskSelection),
+    // Boxed: a ready selection carries the binding and grounding, which dwarfs
+    // the insufficient arm's manifest.
+    Ready(Box<PrivateAskSelection>),
     Insufficient(RetrievalManifest),
 }
 
@@ -258,7 +262,7 @@ pub(crate) fn resolve_observed_selection(
         &state.persona,
     )?;
 
-    Ok(ResolveStep::Ready(PrivateAskSelection {
+    Ok(ResolveStep::Ready(Box::new(PrivateAskSelection {
         binding: PrivateAskBinding {
             ownership,
             state,
@@ -268,7 +272,7 @@ pub(crate) fn resolve_observed_selection(
             now,
             attempt,
         },
-    }))
+    })))
 }
 
 /// Read the selected agent's session ledger, and refuse if it cannot be read.
@@ -365,8 +369,6 @@ fn session_generation(start_nonce: &str) -> String {
     hasher.update(start_nonce.as_bytes());
     hex::encode(hasher.finalize())
 }
-
-
 
 #[cfg(test)]
 #[path = "selection_tests.rs"]

@@ -24,6 +24,11 @@ pub(crate) use runner::output_with_policy_and_spawn_hook;
 pub(crate) use runner::output_with_policy_and_spawn_hook_and_stream;
 pub(crate) use runner::output_with_policy_and_stdin;
 
+/// A drained-output callback: the reader hands each piece to the sink as it
+/// arrives rather than waiting for EOF, which is how the private Ask surfaces
+/// stream a running answer.
+type OutputSink = Option<Box<dyn FnMut(&[u8]) + Send>>;
+
 #[cfg(test)]
 #[path = "bounded_command/policy_tests.rs"]
 mod policy_tests;
@@ -195,7 +200,7 @@ fn spawn_drain<R: Read + Send + 'static>(
     overflow: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     limit: u64,
-    mut sink: Option<Box<dyn FnMut(&[u8]) + Send>>,
+    mut sink: OutputSink,
 ) -> JoinHandle<std::io::Result<Vec<u8>>> {
     // `stop` gates only the nonblocking Unix drain; the Windows path blocks to
     // the job-close EOF and never consults it.

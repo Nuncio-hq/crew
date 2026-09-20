@@ -122,7 +122,15 @@ fn the_terminal_write_replaces_the_pending_record() {
     .expect("pending write");
     upsert(
         &ownership,
-        answered_entry(&scope, &question_id, None, "what?", &attempt, "it is 42", 20),
+        answered_entry(
+            &scope,
+            &question_id,
+            None,
+            "what?",
+            &attempt,
+            "it is 42",
+            20,
+        ),
         20,
     )
     .expect("terminal write");
@@ -192,23 +200,51 @@ fn a_follow_up_carries_only_its_own_chain_of_answered_turns() {
 
     // root → first → grandchild is one chain; sibling follows the root too
     // and is a different branch of the same thread.
-    upsert(&ownership, answered_entry(&scope, &root_q, None, "root q", &root, "root answer", 10), 10)
-        .expect("root");
     upsert(
         &ownership,
-        answered_entry(&scope, &root_q, Some(root.clone()), "follow q", &first, "first answer", 20),
+        answered_entry(&scope, &root_q, None, "root q", &root, "root answer", 10),
+        10,
+    )
+    .expect("root");
+    upsert(
+        &ownership,
+        answered_entry(
+            &scope,
+            &root_q,
+            Some(root.clone()),
+            "follow q",
+            &first,
+            "first answer",
+            20,
+        ),
         20,
     )
     .expect("first follow-up");
     upsert(
         &ownership,
-        answered_entry(&scope, &root_q, Some(root.clone()), "sibling q", &sibling, "sibling answer", 30),
+        answered_entry(
+            &scope,
+            &root_q,
+            Some(root.clone()),
+            "sibling q",
+            &sibling,
+            "sibling answer",
+            30,
+        ),
         30,
     )
     .expect("sibling follow-up");
     upsert(
         &ownership,
-        answered_entry(&scope, &root_q, Some(first.clone()), "deep q", &grandchild, "deep answer", 40),
+        answered_entry(
+            &scope,
+            &root_q,
+            Some(first.clone()),
+            "deep q",
+            &grandchild,
+            "deep answer",
+            40,
+        ),
         40,
     )
     .expect("grandchild");
@@ -306,7 +342,10 @@ fn the_per_scope_entry_bound_retires_the_oldest_first() {
         "the oldest question retired"
     );
     // Newest first to the reader.
-    assert_eq!(entries[0].question, format!("question {}", HISTORY_LIMIT_PER_SCOPE + 4));
+    assert_eq!(
+        entries[0].question,
+        format!("question {}", HISTORY_LIMIT_PER_SCOPE + 4)
+    );
 }
 
 /// Production line: the `HISTORY_MAX_AGE_SECS` guard in `prune`. A stale
@@ -359,7 +398,11 @@ fn a_corrupt_file_is_quarantined_and_reads_empty() {
     assert!(
         std::fs::read_dir(path.parent().unwrap())
             .unwrap()
-            .any(|entry| entry.unwrap().file_name().to_string_lossy().contains("corrupt")),
+            .any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("corrupt")),
         "the corrupt file was moved aside, not deleted"
     );
 
@@ -424,13 +467,29 @@ fn forgetting_removes_only_the_named_attempt_in_this_scope() {
     let gone = attempt_id();
     let foreign_attempt = attempt_id();
 
-    upsert(&ownership, answered_entry(&mine, &kept, None, "keep q", &kept, "keep a", 10), 10)
-        .expect("kept write");
-    upsert(&ownership, answered_entry(&mine, &gone, None, "drop q", &gone, "drop a", 20), 20)
-        .expect("dropped write");
     upsert(
         &ownership,
-        answered_entry(&foreign, &foreign_attempt, None, "foreign q", &foreign_attempt, "f", 30),
+        answered_entry(&mine, &kept, None, "keep q", &kept, "keep a", 10),
+        10,
+    )
+    .expect("kept write");
+    upsert(
+        &ownership,
+        answered_entry(&mine, &gone, None, "drop q", &gone, "drop a", 20),
+        20,
+    )
+    .expect("dropped write");
+    upsert(
+        &ownership,
+        answered_entry(
+            &foreign,
+            &foreign_attempt,
+            None,
+            "foreign q",
+            &foreign_attempt,
+            "f",
+            30,
+        ),
         30,
     )
     .expect("foreign write");
@@ -442,7 +501,9 @@ fn forgetting_removes_only_the_named_attempt_in_this_scope() {
     // A record under a foreign scope is untouched.
     assert_eq!(load_scoped(&ownership, &foreign.key(), &dead).len(), 1);
     // Forgetting what is not there is a no-op, not an error.
-    assert!(forget(&ownership, &mine.key(), &gone, 50).map(|removed| !removed).unwrap_or(false));
+    assert!(forget(&ownership, &mine.key(), &gone, 50)
+        .map(|removed| !removed)
+        .unwrap_or(false));
 }
 
 /// A record that arrives oversized — hand-edited, corrupt, or simply long — is

@@ -26,8 +26,8 @@ struct AskTestApp {
 }
 
 /// Tests that touch the process-wide test hooks serialize on this lock.
-fn hooks_mutex() -> &'static std::sync::Mutex<()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn hooks_mutex() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     &LOCK
 }
 
@@ -114,11 +114,8 @@ fn uuid() -> String {
 /// coordinate: the community is the relay origin, the viewer the committed
 /// pubkey — never anything a caller could name. It is captured through the
 /// same call the commands make, not recomputed.
-async fn scope_key(
-    app: &tauri::App<tauri::test::MockRuntime>,
-    coordinate: &str,
-) -> ScopeKey {
-    crate::managed_agents::private_ask::ask_scope_key(&app.handle(), coordinate)
+async fn scope_key(app: &tauri::App<tauri::test::MockRuntime>, coordinate: &str) -> ScopeKey {
+    crate::managed_agents::private_ask::ask_scope_key(app.handle(), coordinate)
         .await
         .expect("the fixture identity captures a scope")
 }
@@ -135,7 +132,12 @@ fn scope_for(key: &ScopeKey, agent: &str) -> HistoryScope {
     }
 }
 
-fn answered_entry(key: &ScopeKey, agent: &str, attempt: &str, markdown: &str) -> PrivateAskHistoryEntry {
+fn answered_entry(
+    key: &ScopeKey,
+    agent: &str,
+    attempt: &str,
+    markdown: &str,
+) -> PrivateAskHistoryEntry {
     // A record stamped at real `now`: the command-layer paths prune on their
     // own clock, so a fixture timestamp of `10` would be decades stale.
     let now = now_seconds();
@@ -164,7 +166,7 @@ fn answered_entry(key: &ScopeKey, agent: &str, attempt: &str, markdown: &str) ->
 /// Production line: the `valid_uuid_v4` fences at the top of `private_ask_run`.
 #[tokio::test]
 async fn a_run_with_an_id_this_surface_did_not_mint_is_refused() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
     let agent = "b".repeat(64);
 
@@ -218,9 +220,8 @@ async fn a_run_with_an_id_this_surface_did_not_mint_is_refused() {
 /// Production line: the `valid_agent_id`/`valid_coordinate`/question fences.
 #[tokio::test]
 async fn a_run_without_a_real_agent_coordinate_or_question_is_refused() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
-
 
     let error = private_ask_run(
         app.handle().clone(),
@@ -272,7 +273,7 @@ async fn a_run_without_a_real_agent_coordinate_or_question_is_refused() {
 /// Production line: `attempts.register(&attempt_id)` in `private_ask_run`.
 #[tokio::test]
 async fn a_second_run_on_an_in_flight_attempt_id_is_refused() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
     let attempt = uuid();
     let _held = app
@@ -304,7 +305,7 @@ async fn a_second_run_on_an_in_flight_attempt_id_is_refused() {
 /// `dev_run`, plus `ask_scope_key`'s observed scope in `private_ask_history`.
 #[tokio::test]
 async fn a_refused_attempt_is_recorded_and_reads_back_through_the_commands() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
     app.identified(owner_keys(), "wss://relay.example/");
     let coordinate = coordinate();
@@ -328,7 +329,10 @@ async fn a_refused_attempt_is_recorded_and_reads_back_through_the_commands() {
     assert_eq!(result.question_id, question);
     assert_eq!(result.status, "refused");
     // No such agent exists on this machine — the typed refusal, verbatim.
-    let refusal = result.refusal.clone().expect("a refusal carries its reason");
+    let refusal = result
+        .refusal
+        .clone()
+        .expect("a refusal carries its reason");
     assert_eq!(
         refusal,
         PrivateAskFailure::AgentUnbound.to_string(),
@@ -366,7 +370,7 @@ async fn a_refused_attempt_is_recorded_and_reads_back_through_the_commands() {
 /// Production line: `ask_scope_key` fed into `history::load_scoped`.
 #[tokio::test]
 async fn another_viewers_record_is_absent_from_the_history_read() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
     app.identified(owner_keys(), "wss://relay.example/");
     let coordinate = coordinate();
@@ -401,7 +405,7 @@ async fn another_viewers_record_is_absent_from_the_history_read() {
 /// field mapping in `private_ask_draft`.
 #[tokio::test]
 async fn the_draft_exists_only_for_an_answered_attempt_in_scope() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
     let keys = app.identified(owner_keys(), "wss://relay.example/");
     let coordinate = coordinate();
@@ -490,7 +494,7 @@ async fn the_draft_exists_only_for_an_answered_attempt_in_scope() {
 /// Production line: `history::forget`'s scoped retain.
 #[tokio::test]
 async fn forgetting_removes_the_named_attempt_from_the_observed_scope() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
     app.identified(owner_keys(), "wss://relay.example/");
     let coordinate = coordinate();
@@ -499,10 +503,18 @@ async fn forgetting_removes_the_named_attempt_from_the_observed_scope() {
     let gone = uuid();
     let kept = uuid();
 
-    history::upsert(&app.ownership(), answered_entry(&key, &agent, &gone, "gone"), 10)
-        .expect("write");
-    history::upsert(&app.ownership(), answered_entry(&key, &agent, &kept, "kept"), 20)
-        .expect("write");
+    history::upsert(
+        &app.ownership(),
+        answered_entry(&key, &agent, &gone, "gone"),
+        10,
+    )
+    .expect("write");
+    history::upsert(
+        &app.ownership(),
+        answered_entry(&key, &agent, &kept, "kept"),
+        20,
+    )
+    .expect("write");
 
     assert!(
         private_ask_forget(app.handle().clone(), coordinate.clone(), gone.clone())
@@ -521,11 +533,9 @@ async fn forgetting_removes_the_named_attempt_from_the_observed_scope() {
     assert_eq!(items[0].attempt_id, kept);
 
     // Forgetting again is a no-op, not an error.
-    assert!(
-        !private_ask_forget(app.handle().clone(), coordinate, gone)
-            .await
-            .expect("forget")
-    );
+    assert!(!private_ask_forget(app.handle().clone(), coordinate, gone)
+        .await
+        .expect("forget"));
 }
 
 /// Cancelling is keyed by the registry: an unknown id — or one that already
@@ -534,7 +544,7 @@ async fn forgetting_removes_the_named_attempt_from_the_observed_scope() {
 /// Production line: the `valid_uuid_v4` gate and `attempts.cancel` call.
 #[tokio::test]
 async fn cancelling_an_unknown_or_finished_attempt_is_a_no_op() {
-    let _hooks = hooks_mutex().lock().unwrap_or_else(|p| p.into_inner());
+    let _hooks = hooks_mutex().lock().await;
     let app = AskTestApp::new();
     private_ask_cancel(
         app.state::<crate::managed_agents::private_ask::PrivateAskAttempts>(),

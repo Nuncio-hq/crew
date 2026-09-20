@@ -62,12 +62,12 @@ const EXCERPT_RADIUS: usize = 1500;
 const STOPWORDS: &[&str] = &[
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did",
     "doing", "what", "how", "why", "when", "where", "which", "who", "whom", "whose", "in", "on",
-    "at", "to", "of", "for", "and", "or", "nor", "but", "if", "then", "else", "it", "its",
-    "this", "that", "these", "those", "there", "here", "can", "could", "should", "would", "will",
-    "shall", "may", "might", "must", "with", "without", "from", "by", "as", "about", "into",
-    "through", "over", "under", "again", "further", "once", "any", "some", "no", "not", "only",
-    "own", "same", "so", "than", "too", "very", "just", "now", "i", "you", "he", "she", "we",
-    "they", "me", "him", "her", "us", "them", "my", "your", "his", "our", "their", "am",
+    "at", "to", "of", "for", "and", "or", "nor", "but", "if", "then", "else", "it", "its", "this",
+    "that", "these", "those", "there", "here", "can", "could", "should", "would", "will", "shall",
+    "may", "might", "must", "with", "without", "from", "by", "as", "about", "into", "through",
+    "over", "under", "again", "further", "once", "any", "some", "no", "not", "only", "own", "same",
+    "so", "than", "too", "very", "just", "now", "i", "you", "he", "she", "we", "they", "me", "him",
+    "her", "us", "them", "my", "your", "his", "our", "their", "am",
 ];
 
 /// Lowercase alphanumeric terms of at least two characters, minus stopwords.

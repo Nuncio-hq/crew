@@ -292,12 +292,12 @@ pub async fn private_ask_history<R: tauri::Runtime>(
         .await
         .map_err(|failure| failure.to_string())?;
     let registry = attempts.inner().clone();
-    Ok(history::load_scoped(&ownership, &key, &move |id| {
-        registry.is_registered(id)
-    })
-    .into_iter()
-    .map(PrivateAskHistoryItem::from_entry)
-    .collect())
+    Ok(
+        history::load_scoped(&ownership, &key, &move |id| registry.is_registered(id))
+            .into_iter()
+            .map(PrivateAskHistoryItem::from_entry)
+            .collect(),
+    )
 }
 
 /// One attempt's record — what a viewer reopening a question reads back.
@@ -441,6 +441,7 @@ pub async fn private_ask_agents<R: tauri::Runtime>(
 /// passes `follow_up_of` and inherits the parent's thread. Both must be ids
 /// this surface mints — anything else is refused before it reaches a store.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn private_ask_run<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     attempts: tauri::State<'_, PrivateAskAttempts>,
@@ -494,8 +495,8 @@ pub async fn private_ask_run<R: tauri::Runtime>(
         let (name, payload) = progress_event(&emit_attempt, event);
         let _ = emit_app.emit(name, payload);
     });
-    let identity = AttemptIdentity::new(&attempt_id, registration.cancel_flag())
-        .with_reporter(reporter);
+    let identity =
+        AttemptIdentity::new(&attempt_id, registration.cancel_flag()).with_reporter(reporter);
     let asked_at = now_seconds();
     // Resolution reads this machine's own state and one scoped Wiki snapshot;
     // the answer itself is moved onto a blocking worker inside `dev_run`, on
@@ -525,7 +526,11 @@ pub async fn private_ask_run<R: tauri::Runtime>(
             status: STATUS_ANSWERED,
             markdown: response.markdown,
             refusal: None,
-            citations: response.citations.iter().map(PrivateAskCitation::from).collect(),
+            citations: response
+                .citations
+                .iter()
+                .map(PrivateAskCitation::from)
+                .collect(),
             source_revision: Some(response.source_revision),
             manifest: Some(response.manifest),
             history_recorded: result.history_recorded,
@@ -547,8 +552,7 @@ pub async fn private_ask_run<R: tauri::Runtime>(
             status: if failure
                 == PrivateAskFailure::Process(
                     crate::managed_agents::discovery::bounded_command::BoundedFailure::Cancelled,
-                )
-            {
+                ) {
                 STATUS_CANCELLED
             } else {
                 STATUS_REFUSED

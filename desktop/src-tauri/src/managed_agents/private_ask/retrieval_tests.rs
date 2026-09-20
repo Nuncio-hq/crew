@@ -131,8 +131,10 @@ fn two_page_snapshot() -> (VerifiedSnapshot, BTreeMap<String, String>) {
             "pub fn anchor() {}\n",
         ),
     ];
-    let files: BTreeMap<String, String> =
-        pairs.iter().map(|pair| (pair.3.into(), pair.4.into())).collect();
+    let files: BTreeMap<String, String> = pairs
+        .iter()
+        .map(|pair| (pair.3.into(), pair.4.into()))
+        .collect();
     (verified(&publication(&pairs)), files)
 }
 
@@ -227,7 +229,10 @@ fn without_a_source_grant_sources_are_omitted_not_read() {
         },
     );
 
-    assert!(!retrieval.insufficient(), "the page hit still grounds the ask");
+    assert!(
+        !retrieval.insufficient(),
+        "the page hit still grounds the ask"
+    );
     assert_eq!(retrieval.pages.len(), 1);
     assert!(retrieval.grounding.is_empty());
     assert!(!retrieval.manifest.source_grant);
@@ -271,10 +276,7 @@ fn an_unreadable_source_is_omitted_and_named() {
 
     assert_eq!(retrieval.pages.len(), 1);
     assert!(retrieval.grounding.is_empty());
-    assert_eq!(
-        retrieval.manifest.omitted_sources[0].path,
-        "src/bridges.rs"
-    );
+    assert_eq!(retrieval.manifest.omitted_sources[0].path, "src/bridges.rs");
 }
 
 /// A read that returns the wrong bytes is refused by `GroundedSource`'s own
@@ -324,8 +326,10 @@ fn a_large_page_is_excerpted_to_its_matching_windows() {
             "pub fn small() {}\n",
         ),
     ];
-    let files: BTreeMap<String, String> =
-        pairs.iter().map(|pair| (pair.3.into(), pair.4.into())).collect();
+    let files: BTreeMap<String, String> = pairs
+        .iter()
+        .map(|pair| (pair.3.into(), pair.4.into()))
+        .collect();
     let snapshot = verified(&publication(&pairs));
 
     let retrieval = retrieve_with("what is the keelhaul protocol?", &snapshot, &files);
@@ -356,7 +360,15 @@ fn pages_past_the_bound_are_omitted_and_scored() {
     }
     let pairs_ref: Vec<(&str, &str, &str, &str, &str)> = pairs
         .iter()
-        .map(|p| (p.0.as_str(), p.1.as_str(), p.2.as_str(), p.3.as_str(), p.4.as_str()))
+        .map(|p| {
+            (
+                p.0.as_str(),
+                p.1.as_str(),
+                p.2.as_str(),
+                p.3.as_str(),
+                p.4.as_str(),
+            )
+        })
         .collect();
     let files: BTreeMap<String, String> = pairs
         .iter()
@@ -402,8 +414,10 @@ fn a_source_shared_by_two_pages_is_read_once() {
             shared,
         ),
     ];
-    let files: BTreeMap<String, String> =
-        pairs.iter().map(|pair| (pair.3.into(), pair.4.into())).collect();
+    let files: BTreeMap<String, String> = pairs
+        .iter()
+        .map(|pair| (pair.3.into(), pair.4.into()))
+        .collect();
     let snapshot = verified(&publication(&pairs));
     let reads = std::cell::Cell::new(0usize);
 

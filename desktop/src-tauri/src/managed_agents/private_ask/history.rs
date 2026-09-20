@@ -230,6 +230,7 @@ impl PrivateAskHistoryEntry {
 
     /// The terminal record for an attempt the verified snapshot could not
     /// cover.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn insufficient(
         scope: &HistoryScope,
         question_id: &str,
@@ -260,6 +261,7 @@ impl PrivateAskHistoryEntry {
     /// The terminal record for an attempt that reached a fence or a failure —
     /// including `cancelled`, which is a refusal with a named reason rather
     /// than a silence.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finished_refusal(
         scope: &HistoryScope,
         question_id: &str,
@@ -470,14 +472,20 @@ fn prune(entries: Vec<PrivateAskHistoryEntry>, now: u64) -> Vec<PrivateAskHistor
         }
     }
     // Present newest-first to the reader; file order is the display order.
-    retained.sort_by(|a, b| b.asked_at.cmp(&a.asked_at).then(b.attempt_id.cmp(&a.attempt_id)));
+    retained.sort_by(|a, b| {
+        b.asked_at
+            .cmp(&a.asked_at)
+            .then(b.attempt_id.cmp(&a.attempt_id))
+    });
     retained
 }
 
 /// One entry's serialized size, for the byte bound. Approximate by JSON size —
 /// exact enough for a retention bound, and it measures what is actually kept.
 fn serialized_size(entry: &PrivateAskHistoryEntry) -> usize {
-    serde_json::to_vec(entry).map(|body| body.len()).unwrap_or(0)
+    serde_json::to_vec(entry)
+        .map(|body| body.len())
+        .unwrap_or(0)
 }
 
 /// Map a stored `running` entry to the status the reader should see.
@@ -533,7 +541,9 @@ pub(crate) fn upsert(
     now: u64,
 ) -> Result<(), ()> {
     let _guard = RECORD_LOCK.lock().map_err(|_| ())?;
-    let mut entries = read_document(ownership).unwrap_or_default().unwrap_or_default();
+    let mut entries = read_document(ownership)
+        .unwrap_or_default()
+        .unwrap_or_default();
     entries.retain(|existing| existing.attempt_id != entry.attempt_id);
     entries.push(clamped(entry));
     let entries = prune(entries, now);
@@ -602,13 +612,11 @@ pub(crate) fn follow_up_thread(
     let Ok(Some(entries)) = read_document(ownership) else {
         return None;
     };
-    let parent = entries
-        .iter()
-        .find(|entry| {
-            entry.scope.key() == *key
-                && entry.attempt_id == parent_attempt_id
-                && visible_status(entry, is_live) == HistoryStatus::Answered
-        })?;
+    let parent = entries.iter().find(|entry| {
+        entry.scope.key() == *key
+            && entry.attempt_id == parent_attempt_id
+            && visible_status(entry, is_live) == HistoryStatus::Answered
+    })?;
     let question_id = parent.question_id.clone();
     // The thread is the follow-up chain walked backward from the parent, not a
     // time slice: a sibling follow-up to an earlier turn is a different branch
@@ -649,7 +657,9 @@ pub(crate) fn forget(
     now: u64,
 ) -> Result<bool, ()> {
     let _guard = RECORD_LOCK.lock().map_err(|_| ())?;
-    let entries = read_document(ownership).unwrap_or_default().unwrap_or_default();
+    let entries = read_document(ownership)
+        .unwrap_or_default()
+        .unwrap_or_default();
     let before = entries.len();
     let entries: Vec<PrivateAskHistoryEntry> = entries
         .into_iter()

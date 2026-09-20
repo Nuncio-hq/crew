@@ -141,9 +141,7 @@ pub(super) fn build_prompt_with_nonce(
     for page in &request.pages {
         prompt.push_str(&page_block(nonce, page));
     }
-    prompt.push_str(&format!(
-        "</wiki-pages-{nonce}>\n\n<grounding-{nonce}>\n"
-    ));
+    prompt.push_str(&format!("</wiki-pages-{nonce}>\n\n<grounding-{nonce}>\n"));
     for source in &request.grounding {
         prompt.push_str(&source_block(nonce, source));
     }
@@ -245,8 +243,7 @@ pub(super) fn fit_request(
         bare.grounding.clear();
         match build_prompt_with_nonce(&bare, persona, MEASURING_NONCE) {
             Ok(envelope) => {
-                let Some(mut budget) = PRIVATE_ASK_INPUT_LIMIT.checked_sub(envelope.len())
-                else {
+                let Some(mut budget) = PRIVATE_ASK_INPUT_LIMIT.checked_sub(envelope.len()) else {
                     return Err(PrivateAskFailure::QuestionLimit);
                 };
                 // Pages, then the sources they stand on.
@@ -295,16 +292,16 @@ fn drop_page_from_manifest(request: &mut super::PrivateAskRequest, slug: &str) {
 }
 
 /// Move one source the prompt bound dropped into the manifest's omitted list.
-fn drop_source_from_manifest(request: &mut super::PrivateAskRequest, source: &super::GroundedSource) {
+fn drop_source_from_manifest(
+    request: &mut super::PrivateAskRequest,
+    source: &super::GroundedSource,
+) {
     let sources = &mut request.manifest.included_sources;
-    if let Some(position) = sources
-        .iter()
-        .position(|entry| {
-            entry.path == source.path()
-                && entry.start_line == source.start_line()
-                && entry.end_line == source.end_line()
-        })
-    {
+    if let Some(position) = sources.iter().position(|entry| {
+        entry.path == source.path()
+            && entry.start_line == source.start_line()
+            && entry.end_line == source.end_line()
+    }) {
         let entry = sources.remove(position);
         request.manifest.omitted_sources.push(entry);
     }

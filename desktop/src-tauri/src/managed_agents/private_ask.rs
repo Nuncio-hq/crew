@@ -45,7 +45,9 @@ use recovery::finish_after_process_with;
 use recovery::{
     finish_after_process, finish_before_spawn, leave_process_pending, leave_process_pending_state,
 };
-pub(crate) use selection_native::{ask_scope_key, dev_run, observed_agents, DevAskMeta, DevOutcome};
+pub(crate) use selection_native::{
+    ask_scope_key, dev_run, observed_agents, DevAskMeta, DevOutcome,
+};
 use validation::{is_hex64, valid_model, valid_profile, valid_scope_value, valid_source_revision};
 // The test modules below are children of this module and share its vocabulary;
 // these re-imports keep them compiling after the attempt half moved out.
@@ -70,8 +72,7 @@ pub(crate) const PRIVATE_ASK_TIMEOUT: Duration = Duration::from_secs(120);
 /// The fixed reason a "not enough source" outcome carries. It is an outcome,
 /// not a failure — the attempt ran, the question was asked, and the verified
 /// snapshot is what says it cannot answer. The manifest shows the coverage.
-pub(crate) const PRIVATE_ASK_INSUFFICIENT: &str =
-    "the verified Wiki does not cover this question";
+pub(crate) const PRIVATE_ASK_INSUFFICIENT: &str = "the verified Wiki does not cover this question";
 
 /// A capability state is intentionally explicit.  `Unverified` is the safe
 /// default for every discovered runtime and cannot be coerced into `Verified`.

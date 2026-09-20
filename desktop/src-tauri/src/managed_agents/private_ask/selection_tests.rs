@@ -235,7 +235,7 @@ fn resolve(
         1_000,
         AttemptIdentity::fresh(),
     ) {
-        Ok(ResolveStep::Ready(selection)) => Ok(selection),
+        Ok(ResolveStep::Ready(selection)) => Ok(*selection),
         Ok(ResolveStep::Insufficient(_)) => {
             panic!("the fixture question is covered by the fixture snapshot")
         }
@@ -340,7 +340,7 @@ fn a_request_cannot_name_the_acl_projection_or_the_session_generation() {
     )
     .expect("widened")
     {
-        ResolveStep::Ready(selection) => selection,
+        ResolveStep::Ready(selection) => *selection,
         ResolveStep::Insufficient(_) => panic!("the fixture question is covered"),
     };
     assert_ne!(widened.acl_fingerprint(), acl);
@@ -528,7 +528,7 @@ fn a_selection_carries_the_prior_turns_it_was_resolved_with() {
         1_000,
         AttemptIdentity::fresh(),
     ) {
-        Ok(ResolveStep::Ready(selection)) => selection,
+        Ok(ResolveStep::Ready(selection)) => *selection,
         _ => panic!("a covered follow-up resolves ready"),
     };
     assert_eq!(selection.prior().len(), 1);
@@ -591,11 +591,13 @@ fn grounding_past_the_prompt_bound_is_trimmed_rather_than_refused() {
         grounding: oversupplied,
     };
 
-    let selection = match resolve_with_retrieval(&observation, scope(), &fixture, &snapshot, retrieval)
-        .expect("an over-supplied repository still resolves") {
-        ResolveStep::Ready(selection) => selection,
-        ResolveStep::Insufficient(_) => panic!("the fixture retrieval is not empty"),
-    };
+    let selection =
+        match resolve_with_retrieval(&observation, scope(), &fixture, &snapshot, retrieval)
+            .expect("an over-supplied repository still resolves")
+        {
+            ResolveStep::Ready(selection) => *selection,
+            ResolveStep::Insufficient(_) => panic!("the fixture retrieval is not empty"),
+        };
 
     let kept = selection.grounding().len();
     assert!(
@@ -670,14 +672,9 @@ fn a_resolved_selection_answers_through_the_production_path() {
         1,
         "the fixture snapshot grounds one file"
     );
-    let response = resolve(
-        &observation,
-        scope(),
-        &fixture,
-        &snapshot,
-    )
-    .expect("a bound agent resolves")
-    .answer();
+    let response = resolve(&observation, scope(), &fixture, &snapshot)
+        .expect("a bound agent resolves")
+        .answer();
     let _ = session.kill();
     let _ = session.wait();
     let response = response.expect("a resolved selection answers");

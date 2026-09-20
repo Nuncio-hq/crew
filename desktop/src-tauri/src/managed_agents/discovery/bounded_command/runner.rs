@@ -57,7 +57,7 @@ pub(crate) fn output_with_policy_and_spawn_hook_and_stream(
     policy: BoundedPolicy,
     cancelled: &AtomicBool,
     on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
-    stdout_sink: Option<Box<dyn FnMut(&[u8]) + Send>>,
+    stdout_sink: super::OutputSink,
 ) -> Result<BoundedOutcome, BoundedFailure> {
     output_with_policy_and_stdin_and_spawn_hook(
         command,
@@ -75,7 +75,7 @@ fn output_with_policy_and_stdin_and_spawn_hook(
     policy: BoundedPolicy,
     cancelled: &AtomicBool,
     on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
-    stdout_sink: Option<Box<dyn FnMut(&[u8]) + Send>>,
+    stdout_sink: super::OutputSink,
 ) -> Result<BoundedOutcome, BoundedFailure> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(BoundedFailure::Cancelled);

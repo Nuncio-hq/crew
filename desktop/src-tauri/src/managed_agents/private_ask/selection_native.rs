@@ -15,9 +15,7 @@
 use super::attempt::AttemptIdentity;
 use super::history::{HistoryScope, ScopeKey};
 use super::retrieval::{Retrieval, RetrievalManifest};
-use super::selection::{
-    resolve_observed_selection, LiveAgentRuntime, ObservedAgent, ResolveStep,
-};
+use super::selection::{resolve_observed_selection, LiveAgentRuntime, ObservedAgent, ResolveStep};
 use super::{session_evidence, PriorTurn, PrivateAskFailure, PrivateAskScope};
 use crate::app_state::AppState;
 use crate::commands::NativeSourceRoot;
@@ -130,8 +128,8 @@ pub(crate) async fn resolve_selection<R: tauri::Runtime>(
         crate::commands::read_wiki_snapshot(app.clone(), captured.token.clone(), coordinate.into())
             .await
             .map_err(|_| scoped!(PrivateAskFailure::AccessRevoked))?;
-    let snapshot = verified_snapshot(&owner, &repo_d, &snapshot_read.value)
-        .map_err(|f| scoped!(f))?;
+    let snapshot =
+        verified_snapshot(&owner, &repo_d, &snapshot_read.value).map_err(|f| scoped!(f))?;
     source_revision = Some(snapshot.index().source_revision().to_owned());
 
     let source_root = NativeSourceRoot::current(
@@ -469,7 +467,9 @@ pub(crate) struct DevRunResult {
 
 /// The terminal state of one attempt.
 pub(crate) enum DevOutcome {
-    Answered(super::PrivateAskResponse),
+    // Boxed: an answered outcome carries the whole response next to the small
+    // manifest/failure arms.
+    Answered(Box<super::PrivateAskResponse>),
     /// The verified snapshot does not cover the question; the manifest is the
     /// coverage record.
     Insufficient(RetrievalManifest),
@@ -502,6 +502,7 @@ pub(crate) struct DevAskMeta {
 /// The answer itself runs on a blocking worker, on ONE thread — which is what
 /// the thread-scoped no-publish attribution relies on. The resolution above it
 /// is async because it reads the Wiki snapshot natively.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn dev_run<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     agent_id: &str,
@@ -687,25 +688,25 @@ pub(crate) async fn dev_run<R: tauri::Runtime>(
         }
         ResolveStep::Ready(selection) => {
             let scope = resolved.scope;
-            let outcome = match tokio::task::spawn_blocking(move || selection.answer()).await {
-                Ok(Ok(response)) => DevOutcome::Answered(response),
+            let outcome = match tokio::task::spawn_blocking(move || (*selection).answer()).await {
+                Ok(Ok(response)) => DevOutcome::Answered(Box::new(response)),
                 Ok(Err(failure)) => DevOutcome::Refused(failure),
                 Err(_) => DevOutcome::Refused(PrivateAskFailure::InvalidState),
             };
             if let Some(ownership) = ownership.as_ref() {
                 let entry = match &outcome {
-                    DevOutcome::Answered(response) => Some(
-                        super::history::PrivateAskHistoryEntry::answered(
+                    DevOutcome::Answered(response) => {
+                        Some(super::history::PrivateAskHistoryEntry::answered(
                             &scope,
                             &question_id,
                             meta.follow_up_of.clone(),
                             question,
                             response,
                             now,
-                        ),
-                    ),
-                    DevOutcome::Refused(failure) => Some(
-                        super::history::PrivateAskHistoryEntry::finished_refusal(
+                        ))
+                    }
+                    DevOutcome::Refused(failure) => {
+                        Some(super::history::PrivateAskHistoryEntry::finished_refusal(
                             &scope,
                             &question_id,
                             meta.follow_up_of.clone(),
@@ -714,8 +715,8 @@ pub(crate) async fn dev_run<R: tauri::Runtime>(
                             resolved.source_revision.as_deref(),
                             failure,
                             now,
-                        ),
-                    ),
+                        ))
+                    }
                     // A ready step cannot resolve to insufficient — that
                     // outcome is decided before the selection is built.
                     DevOutcome::Insufficient(_) => None,
@@ -752,8 +753,6 @@ fn history_scope_for(key: &ScopeKey, agent_id: &str, coordinate: &str) -> Histor
         repo_d: key.repo_d.clone(),
     }
 }
-
-
 
 /// One agent as the picker sees it: named, addressed, and honest about why it
 /// can or cannot be asked right now.
