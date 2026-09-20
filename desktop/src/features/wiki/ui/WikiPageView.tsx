@@ -841,6 +841,10 @@ export function WikiPageView({
         <WikiAskBox
           channelId={channelId}
           door={door}
+          // A private Ask citation opens the same pane an in-page citation
+          // does: the pane resolves the path against the shown page's signed
+          // source references, so an answer cannot conjure a foreign file.
+          onOpenSource={openSourcePane}
           owner={owner}
           repoD={repoD}
           scopeLabel={

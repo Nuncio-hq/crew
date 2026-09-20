@@ -239,6 +239,9 @@ pub fn run() {
         .manage(crate::resource_governor::ResourceGovernorHandle::new())
         .manage(crate::resource_governor::MjpegFrames(Default::default()))
         .manage(crate::agent_control::AgentControlHandle::new())
+        // Which private Asks are in flight, so `private_ask_cancel` can reach
+        // the run that owns a child rather than only the renderer's own state.
+        .manage(crate::managed_agents::private_ask::PrivateAskAttempts::default())
         .manage(channel_head_cache::ChannelHeadCacheStore::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
