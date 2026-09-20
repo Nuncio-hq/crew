@@ -918,3 +918,98 @@ strict MCP config, and an empty tool list; Codex retains read-only sandboxing
 and explicit shell feature disables. These flags are launch controls, not proof
 of Codex snapshot-only or complete tool isolation; installed generation and
 credential renewal remain acceptance requirements.
+
+## Private Wiki Ask lineage (#365)
+
+A private Ask is the third member of the desktop's native one-shot family, after
+the #351 installed-runtime recap and the #363 installed Wiki runtime. It shares
+their shape — discover an installed runtime, certify it against a retained
+probe, then run it once in a disposable root under a Seatbelt policy — and adds
+the fences a viewer's private question needs.
+
+`desktop/src-tauri/src/managed_agents/private_ask.rs` owns the adapter; its
+submodules split the responsibilities:
+
+| Module | Responsibility |
+|--------|----------------|
+| `launch.rs` | The fixed native plan: argv, isolated environment, run root, policy wrapper |
+| `prompt.rs` | Persona as delimited authority, question and grounding as data, config fingerprint |
+| `containment.rs` | The Seatbelt policy text for one run root and one runtime directory |
+| `capability.rs` | The only production producer of a positive capability, from a retained probe |
+| `selection.rs` | The resolver's deciding half: one native observation of an agent becomes a selection, or a typed refusal |
+| `selection_native.rs` | The resolver's gathering half: the agent record, the live harness generation, one scoped snapshot read, the source grant |
+| `binding.rs` | The sequencing from a resolved selection to an answer: retained-or-fresh probe, projection, admission, attempt |
+| `citations.rs` | The answer-citation fence: every cited path must be one the verified grounding accounts for |
+| `history.rs` | The bounded owner-local record of what was asked and what came back |
+| `cancel_registry.rs` | Which attempts are in flight, and the flag `private_ask_cancel` raises on one |
+| `session_evidence.rs` | Observation of a running employee session's ACP session-ledger directory; the only way to obtain isolation evidence |
+| `profile.rs`, `recovery.rs`, `validation.rs` | Hermes profile staging, crash recovery, input fences |
+
+The lineage difference that matters is the transport: a recap and a Wiki
+generation publish their result, and a private Ask publishes nothing. There is
+no event kind, no command that writes to the relay, and no store that mirrors
+the question or the answer outward. The question, the answer and the history stay
+on the viewer's machine. The history is durable there and nowhere else: a
+bounded newest-first window capped by count and by age, in an owned 0o700
+directory, written 0o600 through a temporary file and a rename — the owned-run
+retention shape. Refusals are kept beside answers, and only citation paths and
+line ranges are stored, never the source text.
+
+That absence is enforced rather than documented. Every relay-bound egress
+boundary in the desktop calls the key-backup guard in `egress_guard.rs` — the
+`EVENTS_INVENTORY` scan fails the build if a new one does not — so the guard is
+a complete census of relay traffic from the desktop's own identity. The private
+Ask proof brackets a whole attempt through the production launch path and
+requires that census to move by zero.
+
+Certification is separate from discovery. `PrivateAskCapability` carries one
+`ProofStatus` per property — authentication, tool isolation, read bound, egress
+bound, process containment, side-effect freedom, independent invocation — and
+`admit_private_ask` refuses on the first that is not `Verified`, naming it. A
+discovered runtime is always unverified.
+
+`private_ask/probe_run.rs` is the sole producer. It launches a probe program
+Crew ships under byte-identical policy text to a production answer, with the
+attempt proxy serving, and measures every effect from the desktop's own side
+rather than accepting the child's report of itself. `private_ask/probe_receipt.rs`
+retains that trace in an owned, uid-validated directory bound to this install's
+ownership digest, so one probe serves later Asks until it expires; loading a
+receipt yields a probe, never a capability, and every admission fence still
+applies. `independent_invocation` is deliberately never restored from a receipt.
+
+`private_ask/selection.rs` is what turns an observation into a selection. A
+private Ask names an agent, a repository and a question; everything admission
+checks — the persona and model from the agent's own effective configuration, the
+executable identity, the ACL projection, the harness generation and the verified
+snapshot — is produced natively in `private_ask/selection_native.rs`, which is
+also the only part that needs an `AppHandle`. Its one piece of relay traffic is a
+**read**: the same scoped kind-30623 query the Wiki pane makes, so the snapshot
+is verified here rather than carried by a renderer. Nothing is published.
+
+Session isolation is observed from the harness's own ACP session-ledger
+directory for the exact (relay, agent) pair, together with the PID of the child
+this process owns a handle to. At least one ledger entry is required; a missing,
+empty, oversized or unreadable directory refuses before any child starts. The
+desktop does not depend on `buzz-acp`, so that directory's location is a mirrored
+derivation pinned by a test. An agent with no live harness generation therefore
+cannot be asked at all — there is nothing to be shown to have been left alone.
+
+That observation brackets the **answering run**, not the capability probe: the
+ledger digest, entry count and owning PID are read immediately before and after,
+and an answer produced beside a session any of them moved under is refused
+rather than returned. It is deliberately not part of the probe receipt, because
+it is a fact about one run beside one session rather than a property of the
+machine — which is exactly what lets a fresh receipt restore the containment
+dimensions and lets a second Ask on the same selection answer without spawning a
+probe child.
+
+`private_ask/binding.rs` is what turns a resolved selection into an answer, and
+`private_ask/citations.rs` is what bounds that answer: the runtime prints its
+citations in a fixed Markdown footnote form the prompt states, and an answer
+citing a path the verified grounding cannot account for is refused outright.
+Previously the response simply echoed the request's grounding, which said
+nothing about the answer.
+
+The resolver in front of the binding is `private_ask/selection_native.rs`, so
+the developer surface reaches a real selection or a typed refusal. See D-083 for
+what each producer observes and for the named limits.

@@ -5,6 +5,17 @@ import {
   type AskMode,
 } from "@/features/wiki/lib/wikiAsk";
 import {
+  canAskPrivately,
+  initialPrivateAskState,
+  privateAskReducer,
+  type PrivateAskAgent,
+  type PrivateAskCitation,
+  type PrivateAskDevStatus,
+  type PrivateAskHistoryEntry,
+  type PrivateAskRunResult,
+} from "@/features/wiki/lib/privateAskDev";
+import { invokeTauri } from "@/shared/api/tauri";
+import {
   OFFICE_COMPOSER_SURFACE_CLASS,
   OFFICE_FIELD_BOX_CLASS,
   OFFICE_FIELD_CONTROL_CLASS,
@@ -13,17 +24,71 @@ import {
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
+const CLOSED_STATUS: PrivateAskDevStatus = {
+  enabled: false,
+  blockedReason: null,
+};
+
+/**
+ * Ask the backend whether the developer surface exists. The renderer never
+ * decides this: a webview can invoke any registered command, so the gate lives
+ * in the command bodies and this only mirrors their answer.
+ */
+function usePrivateAskDevStatus(): PrivateAskDevStatus {
+  const [status, setStatus] =
+    React.useState<PrivateAskDevStatus>(CLOSED_STATUS);
+
+  React.useEffect(() => {
+    let active = true;
+    invokeTauri<PrivateAskDevStatus>("private_ask_dev_status")
+      .then((next) => {
+        if (active) {
+          setStatus(next);
+        }
+      })
+      .catch(() => {
+        // A backend that cannot answer is a backend that has not enabled this.
+        // Staying closed is the safe reading, and the user placeholder below
+        // already explains the state.
+        if (active) {
+          setStatus(CLOSED_STATUS);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return status;
+}
+
 export function WikiAskBox({
+  onOpenSource,
+  owner,
+  repoD,
   scopeLabel,
 }: {
   channelId?: string | null;
   door: "library" | "project";
+  onOpenSource?: (citation: PrivateAskCitation) => void;
   owner?: string;
   repoD?: string;
   scopeLabel: string;
 }) {
   const [mode, setMode] = React.useState<AskMode>("auto");
   const [question, setQuestion] = React.useState("");
+  const status = usePrivateAskDevStatus();
+
+  if (status.enabled) {
+    return (
+      <PrivateAskDevComposer
+        coordinate={owner && repoD ? `${owner}:${repoD}` : null}
+        onOpenSource={onOpenSource}
+        scopeLabel={scopeLabel}
+        status={status}
+      />
+    );
+  }
 
   return (
     <div className="shrink-0 px-4 pb-3 pt-2">
@@ -87,6 +152,317 @@ export function WikiAskBox({
             Ask
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The developer-only composer. It is deliberately bare: no mode selector, no
+ * persistence beyond this window, and it shows the backend's refusal verbatim
+ * rather than dressing it up, because the refusal is the thing under test.
+ */
+/**
+ * One citation, as a control rather than decoration.
+ *
+ * It opens the cited source when the host supplied an opener; otherwise it
+ * renders the path as plain text rather than a control that goes nowhere.
+ */
+function CitationLink({
+  citation,
+  onOpen,
+}: {
+  citation: PrivateAskCitation;
+  onOpen?: (citation: PrivateAskCitation) => void;
+}) {
+  const label = `${citation.path}:${citation.startLine}-${citation.endLine}`;
+  if (!onOpen) {
+    return (
+      <span data-testid={`wiki-ask-dev-citation-${citation.path}`}>
+        {label}
+      </span>
+    );
+  }
+  return (
+    <button
+      className="font-mono text-2xs text-primary"
+      data-testid={`wiki-ask-dev-citation-${citation.path}`}
+      onClick={() => onOpen(citation)}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+function PrivateAskDevComposer({
+  coordinate,
+  onOpenSource,
+  scopeLabel,
+  status,
+}: {
+  /** `<owner-hex>:<repo-d>`, or null when this pane is not showing one
+   * repository. Without it there is nothing for an answer to be grounded in
+   * and the composer says so rather than asking about an unnamed repository. */
+  coordinate: string | null;
+  onOpenSource?: (citation: PrivateAskCitation) => void;
+  scopeLabel: string;
+  status: PrivateAskDevStatus;
+}) {
+  const [state, dispatch] = React.useReducer(
+    privateAskReducer,
+    initialPrivateAskState,
+  );
+  /** The id of the run in flight, so Cancel can name it. */
+  const attempt = React.useRef<string | null>(null);
+  /**
+   * The agents this machine could address, and the one chosen. The backend
+   * lists only agents with a live harness generation — the resolver refuses
+   * any other — so an empty list is the honest "nothing to ask" state rather
+   * than a picker full of refusals.
+   */
+  const [agents, setAgents] = React.useState<PrivateAskAgent[]>([]);
+  const [agentId, setAgentId] = React.useState<string>("");
+
+  React.useEffect(() => {
+    invokeTauri<PrivateAskAgent[]>("private_ask_agents")
+      .then((available) => {
+        setAgents(available);
+        setAgentId((chosen) =>
+          available.some((agent) => agent.pubkey === chosen)
+            ? chosen
+            : (available[0]?.pubkey ?? ""),
+        );
+      })
+      .catch(() => {
+        // A list that cannot be read is an empty list: the composer stays
+        // usable and the Ask button stays disabled.
+        setAgents([]);
+        setAgentId("");
+      });
+  }, []);
+
+  /**
+   * Read the owner-local record. It lives on this machine only — a private Ask
+   * publishes nothing — so this is the only place a past attempt exists, and it
+   * is what makes the list survive a restart.
+   */
+  const refreshHistory = React.useCallback(
+    () =>
+      invokeTauri<PrivateAskHistoryEntry[]>("private_ask_history")
+        .then((history) => dispatch({ type: "restored", history }))
+        .catch(() => {
+          // A record that cannot be read is an empty list, never a crash: the
+          // composer must still be usable.
+        }),
+    [],
+  );
+
+  React.useEffect(() => {
+    void refreshHistory();
+  }, [refreshHistory]);
+
+  const ask = React.useCallback(() => {
+    if (!canAskPrivately(state, status) || !agentId || !coordinate) {
+      return;
+    }
+    // The id is minted here, before the run starts, because the command only
+    // returns once the attempt is over: an id taken from the answer could
+    // never be cancelled. The backend registers it and echoes it back.
+    const attemptId = crypto.randomUUID();
+    attempt.current = attemptId;
+    dispatch({ type: "start" });
+    invokeTauri<PrivateAskRunResult>("private_ask_run", {
+      attemptId,
+      agentId,
+      coordinate,
+      question: state.question,
+    })
+      .then((result) => {
+        attempt.current = null;
+        if (result.refusal) {
+          dispatch({
+            type: "refused",
+            attemptId: result.attemptId,
+            error: result.refusal,
+            historyRecorded: result.historyRecorded,
+          });
+        } else {
+          dispatch({
+            type: "answered",
+            // The backend's own attempt id, not a renderer counter: it is the
+            // id the owner-local record is keyed on.
+            attemptId: result.attemptId,
+            markdown: result.markdown,
+            citations: result.citations,
+            historyRecorded: result.historyRecorded,
+          });
+        }
+        void refreshHistory();
+      })
+      .catch((error: unknown) => {
+        // The command itself could not run — a closed gate, a foreign id, a
+        // blank question. The attempt never started, so nothing was recorded
+        // and nothing needs cancelling.
+        attempt.current = null;
+        dispatch({
+          type: "refused",
+          attemptId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // A refusal is recorded on this machine too, so the list must catch up.
+        void refreshHistory();
+      });
+  }, [agentId, coordinate, state, status, refreshHistory]);
+
+  const cancel = React.useCallback(() => {
+    const attemptId = attempt.current;
+    dispatch({ type: "cancelled" });
+    // A cancel the backend never heard of is a no-op there, so a failure here
+    // is not worth surfacing to a developer who already sees an idle composer.
+    void invokeTauri("private_ask_cancel", { attemptId }).catch(() => {});
+  }, []);
+
+  return (
+    <div className="shrink-0 px-4 pb-3 pt-2">
+      <div
+        className={OFFICE_COMPOSER_SURFACE_CLASS}
+        data-office-surface={OFFICE_SURFACE.composerSurface}
+        data-testid="wiki-ask-dev"
+      >
+        <div className="mb-1 text-2xs text-muted-foreground">
+          {scopeLabel} · private Ask (developer build)
+        </div>
+        {status.blockedReason ? (
+          <p
+            aria-live="polite"
+            className="mb-2 rounded-md border border-border bg-muted/20 p-2 text-2xs text-muted-foreground"
+            data-testid="wiki-ask-dev-blocked"
+            role="status"
+          >
+            {status.blockedReason}
+          </p>
+        ) : null}
+        <div className="flex items-center gap-2">
+          <select
+            aria-label="Agent to ask"
+            className={cn(
+              OFFICE_FIELD_BOX_CLASS,
+              OFFICE_FIELD_CONTROL_CLASS,
+              "h-8 px-2 text-2xs",
+            )}
+            data-testid="wiki-ask-dev-agent"
+            disabled={agents.length === 0}
+            onChange={(event) => setAgentId(event.target.value)}
+            value={agentId}
+          >
+            {agents.length === 0 ? (
+              <option value="">No running agent</option>
+            ) : null}
+            {agents.map((agent) => (
+              <option key={agent.pubkey} value={agent.pubkey}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label="Ask this agent privately"
+            className={cn(
+              OFFICE_FIELD_BOX_CLASS,
+              OFFICE_FIELD_CONTROL_CLASS,
+              "h-8 min-w-0 flex-1 px-2 text-sm",
+            )}
+            data-testid="wiki-ask-dev-input"
+            onChange={(event) =>
+              dispatch({ type: "question", value: event.target.value })
+            }
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) {
+                return;
+              }
+              event.preventDefault();
+              ask();
+            }}
+            placeholder="Ask this agent privately"
+            value={state.question}
+          />
+          {state.running ? (
+            <Button
+              data-testid="wiki-ask-dev-cancel"
+              onClick={cancel}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              data-testid="wiki-ask-dev-submit"
+              disabled={
+                !canAskPrivately(state, status) || !agentId || !coordinate
+              }
+              onClick={ask}
+              size="sm"
+              type="button"
+            >
+              Ask
+            </Button>
+          )}
+        </div>
+
+        {state.error ? (
+          <p
+            aria-live="polite"
+            className="mt-2 rounded-md border border-border bg-muted/20 p-2 text-2xs text-muted-foreground"
+            data-testid="wiki-ask-dev-error"
+            role="status"
+          >
+            {state.error}
+          </p>
+        ) : null}
+
+        {!state.historyRecorded && (state.answer || state.error) ? (
+          <p
+            aria-live="polite"
+            className="mt-2 text-2xs text-muted-foreground"
+            data-testid="wiki-ask-dev-history-unrecorded"
+            role="status"
+          >
+            This attempt could not be kept on this machine.
+          </p>
+        ) : null}
+
+        {state.answer ? (
+          <div className="mt-2 text-sm" data-testid="wiki-ask-dev-answer">
+            {state.answer}
+            {state.citations.length > 0 ? (
+              <ul
+                className="mt-1 text-2xs text-muted-foreground"
+                data-testid="wiki-ask-dev-citations"
+              >
+                {state.citations.map((citation) => (
+                  <li key={`${citation.path}:${citation.startLine}`}>
+                    <CitationLink citation={citation} onOpen={onOpenSource} />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+
+        {state.history.length > 0 ? (
+          <ol
+            className="mt-2 space-y-1 text-2xs text-muted-foreground"
+            data-testid="wiki-ask-dev-history"
+          >
+            {state.history.map((entry) => (
+              <li key={entry.attemptId}>
+                {entry.question} — {entry.refusal ?? "answered"}
+              </li>
+            ))}
+          </ol>
+        ) : null}
       </div>
     </div>
   );

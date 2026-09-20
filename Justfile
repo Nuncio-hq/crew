@@ -477,6 +477,18 @@ wiki-contract:
     cargo nextest run --cargo-profile ci -p buzz-relay --lib \
         -E 'test(/^handlers::source_publication::/) + test(/^handlers::wiki_page::/) + test(/^api::git::manifest_event::/)'
 
+# Run the private Wiki Ask contract: the adapter's fences, its real-process
+# containment and session-isolation proofs, and the zero-publish proof taken
+# from the relay egress census. The macOS proof modules are cfg-gated, so on a
+# non-macOS host this still runs the fail-closed assertions. The desktop crate
+# is outside the root workspace, hence the explicit manifest path; the sidecar
+# stubs must exist before it links.
+private-ask-contract: _ensure-sidecar-stubs
+    cargo test --manifest-path {{desktop_dir}}/src-tauri/Cargo.toml -p buzz-desktop \
+        private_ask
+    cargo test --manifest-path {{desktop_dir}}/src-tauri/Cargo.toml -p buzz-desktop \
+        egress_guard
+
 # Run integration tests only (starts services if needed)
 test-integration:
     ./scripts/run-tests.sh integration
