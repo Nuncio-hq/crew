@@ -13,10 +13,12 @@
 //! attempt thread the no-publish attribution covers.
 
 use super::attempt::AttemptIdentity;
+use super::history::{HistoryScope, ScopeKey};
+use super::retrieval::{Retrieval, RetrievalManifest};
 use super::selection::{
-    resolve_observed_selection, LiveAgentRuntime, ObservedAgent, PrivateAskSelection,
+    resolve_observed_selection, LiveAgentRuntime, ObservedAgent, ResolveStep,
 };
-use super::{session_evidence, GroundedSource, PrivateAskFailure, PrivateAskScope};
+use super::{session_evidence, PriorTurn, PrivateAskFailure, PrivateAskScope};
 use crate::app_state::AppState;
 use crate::commands::NativeSourceRoot;
 use crate::managed_agents::recap_capability::{verify_executable, RecapExecutableIdentity};
@@ -29,6 +31,45 @@ use tauri::Manager;
 /// same deadline the renderer-facing read uses.
 const GROUNDING_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// What one Ask attempt resolved to, with the scope it resolved under.
+///
+/// The scope travels beside the outcome — including on refusal — because the
+/// owner-local record is keyed on it: a refused attempt is still this viewer's
+/// attempt about this repository, and it lands in the same scoped history.
+pub(crate) struct ResolvedAsk {
+    pub(crate) step: ResolveStep,
+    /// The history identity of this attempt. Present whenever the scope itself
+    /// could be observed — which is earlier than any of the fences that can
+    /// refuse.
+    pub(crate) scope: HistoryScope,
+    /// The snapshot's source revision, when the read got that far.
+    pub(crate) source_revision: Option<String>,
+    /// What the question retrieved, so a refused selection still reports its
+    /// coverage to the record.
+    pub(crate) manifest: Option<RetrievalManifest>,
+}
+
+/// A resolution that stopped at a fence. `scope` is `None` only when the scope
+/// itself could not be observed — an attempt without a scope has no scoped
+/// history to be recorded under, which the caller reports honestly.
+pub(crate) struct ResolvedRefusal {
+    pub(crate) failure: PrivateAskFailure,
+    pub(crate) scope: Option<HistoryScope>,
+    pub(crate) source_revision: Option<String>,
+    pub(crate) manifest: Option<RetrievalManifest>,
+}
+
+impl ResolvedRefusal {
+    fn bare(failure: PrivateAskFailure) -> Self {
+        Self {
+            failure,
+            scope: None,
+            source_revision: None,
+            manifest: None,
+        }
+    }
+}
+
 /// Resolve one private Ask for the named agent and repository.
 ///
 /// `agent_id` is the selected agent's pubkey and `coordinate` the repository it
@@ -40,21 +81,22 @@ pub(crate) async fn resolve_selection<R: tauri::Runtime>(
     agent_id: &str,
     coordinate: &str,
     question: String,
+    prior: Vec<PriorTurn>,
     now: u64,
     attempt: AttemptIdentity,
-) -> Result<PrivateAskSelection, PrivateAskFailure> {
-    let ownership =
-        VerifiedStagingOwnership::load(app).map_err(|_| PrivateAskFailure::InvalidState)?;
+) -> Result<ResolvedAsk, ResolvedRefusal> {
+    let ownership = VerifiedStagingOwnership::load(app)
+        .map_err(|_| ResolvedRefusal::bare(PrivateAskFailure::InvalidState))?;
     // A scope that cannot be captured is this machine's own lock or identity
     // state, not a revocation: saying "access was revoked" would send the
     // reader to the wrong problem.
     let captured = crate::app_state::owner_scope::capture(app.clone())
         .await
-        .map_err(|_| PrivateAskFailure::InvalidState)?;
+        .map_err(|_| ResolvedRefusal::bare(PrivateAskFailure::InvalidState))?;
 
-    let record = agent_record(app, agent_id)?;
-    let relay_url = bound_relay_url(app, &record)?;
-    let (owner, repo_d) = coordinate_parts(coordinate)?;
+    let record = agent_record(app, agent_id).map_err(ResolvedRefusal::bare)?;
+    let relay_url = bound_relay_url(app, &record).map_err(ResolvedRefusal::bare)?;
+    let (owner, repo_d) = coordinate_parts(coordinate).map_err(ResolvedRefusal::bare)?;
     let scope = PrivateAskScope {
         community_id: captured.token.scope.community.clone(),
         relay_url: relay_url.clone(),
@@ -68,21 +110,52 @@ pub(crate) async fn resolve_selection<R: tauri::Runtime>(
         repo_owner: owner.clone(),
         repo_d: repo_d.clone(),
     };
+    let history_scope = HistoryScope::from_scope(&scope);
+    let mut source_revision = None;
+    let mut manifest = None;
+    // From here on every refusal carries the scope: the attempt is scoped, it
+    // just could not run.
+    macro_rules! scoped {
+        ($failure:expr) => {
+            ResolvedRefusal {
+                failure: $failure,
+                scope: Some(history_scope.clone()),
+                source_revision: source_revision.clone(),
+                manifest: manifest.clone(),
+            }
+        };
+    }
 
     let snapshot_read =
         crate::commands::read_wiki_snapshot(app.clone(), captured.token.clone(), coordinate.into())
             .await
-            .map_err(|_| PrivateAskFailure::AccessRevoked)?;
-    let snapshot = verified_snapshot(&owner, &repo_d, &snapshot_read.value)?;
+            .map_err(|_| scoped!(PrivateAskFailure::AccessRevoked))?;
+    let snapshot = verified_snapshot(&owner, &repo_d, &snapshot_read.value)
+        .map_err(|f| scoped!(f))?;
+    source_revision = Some(snapshot.index().source_revision().to_owned());
 
     let source_root = NativeSourceRoot::current(
         &app.state::<crate::commands::SourceState>(),
         &captured.token,
         coordinate,
     );
-    let grounding = grounding(&snapshot, source_root.as_ref());
+    let deadline = std::time::Instant::now() + GROUNDING_DEADLINE;
+    let retrieval = super::retrieval::retrieve(
+        &question,
+        &snapshot,
+        source_root.as_ref().map(NativeSourceRoot::workspace_mode),
+        deadline,
+        |revision, reference| -> Result<_, String> {
+            match source_root.as_ref() {
+                Some(root) => root.read_verified_reference(revision, reference, deadline),
+                None => Err("no source grant".to_string()),
+            }
+        },
+    );
+    manifest = Some(retrieval_manifest(&retrieval));
 
-    let (runtime_id, executable, effective_model, profile) = runtime_selection(app, &record)?;
+    let (runtime_id, executable, effective_model, profile) =
+        runtime_selection(app, &record).map_err(|f| scoped!(f))?;
     let hermes_profile = profile
         .as_deref()
         .map(|profile| {
@@ -91,19 +164,21 @@ pub(crate) async fn resolve_selection<R: tauri::Runtime>(
                 .map(|root| root.join(profile))
                 .map_err(PrivateAskFailure::State)
         })
-        .transpose()?;
+        .transpose()
+        .map_err(|f| scoped!(f))?;
     let live = live_runtime(app, &record, &relay_url);
     let ledger_dir = session_evidence::session_ledger_dir(&relay_url, &record.pubkey)
-        .ok_or(PrivateAskFailure::SessionObservationUnavailable)?;
+        .ok_or_else(|| scoped!(PrivateAskFailure::SessionObservationUnavailable))?;
     let config = crate::managed_agents::effective_config::resolve_effective_config(
         &record,
         &agent_definitions(app),
         &global_config(app),
     );
 
-    resolve_observed_selection(
+    let step = resolve_observed_selection(
         scope,
         question,
+        prior,
         ObservedAgent {
             record: &record,
             config: &config,
@@ -118,11 +193,29 @@ pub(crate) async fn resolve_selection<R: tauri::Runtime>(
             hermes_profile,
         },
         &snapshot,
-        grounding,
+        retrieval,
         ownership,
         now,
         attempt,
     )
+    .map_err(|failure| scoped!(failure))?;
+
+    Ok(ResolvedAsk {
+        step,
+        scope: history_scope,
+        source_revision,
+        manifest,
+    })
+}
+
+/// Take the manifest out of a retrieval about to be consumed.
+///
+/// `resolve_observed_selection` may reconcile it further (the prompt bound's
+/// own trim), which is why the Ready selection carries the request's manifest
+/// rather than this one — this copy is the fallback for the paths that never
+/// reached a request.
+fn retrieval_manifest(retrieval: &Retrieval) -> RetrievalManifest {
+    retrieval.manifest.clone()
 }
 
 /// The stored record for this agent id, or `AgentUnbound`.
@@ -332,23 +425,65 @@ fn verified_snapshot(
         .map_err(|_| PrivateAskFailure::InvalidGrounding)
 }
 
-/// Read the snapshot's own source references through the viewer's grant.
+/// The scope key the owner-local history is filtered by, observed natively.
 ///
-/// The decision of what may be grounded belongs to `selection::collect_grounding`;
-/// this only supplies the reader.
-fn grounding(
-    snapshot: &crew_wiki::snapshot_v1::VerifiedSnapshot,
-    source_root: Option<&NativeSourceRoot>,
-) -> Vec<GroundedSource> {
-    let Some(source_root) = source_root else {
-        return Vec::new();
-    };
-    let deadline = std::time::Instant::now() + GROUNDING_DEADLINE;
-    super::selection::collect_grounding(
-        snapshot,
-        source_root.workspace_mode(),
-        |revision, reference| source_root.read_verified_reference(revision, reference, deadline),
-    )
+/// This is the same capture `resolve_selection` performs, minus the agent:
+/// history reads and deletion are scoped to the community, the viewer and the
+/// repository coordinate, never to anything a caller supplies.
+pub(crate) async fn ask_scope_key<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    coordinate: &str,
+) -> Result<ScopeKey, PrivateAskFailure> {
+    let captured = crate::app_state::owner_scope::capture(app.clone())
+        .await
+        .map_err(|_| PrivateAskFailure::InvalidState)?;
+    let (repo_owner, repo_d) = coordinate_parts(coordinate)?;
+    Ok(ScopeKey {
+        community_id: captured.token.scope.community.clone(),
+        viewer_pubkey: captured.token.scope.owner.clone(),
+        repo_owner,
+        repo_d,
+    })
+}
+
+/// What one dev-surface Ask produced, with the truth about its record.
+///
+/// `dev_run` never fails at the boundary: everything an attempt can produce —
+/// answer, insufficiency or refusal — is an outcome. What the command still
+/// needs to tell the viewer is the scope the outcome belongs to and whether
+/// the owner-local record kept it.
+pub(crate) struct DevRunResult {
+    pub(crate) outcome: DevOutcome,
+    /// The scope the attempt resolved under. `None` means the attempt never
+    /// reached a scope, so there is no scoped record for it either.
+    pub(crate) scope: Option<HistoryScope>,
+    /// The question thread the attempt landed on — the caller's own id, or the
+    /// parent's when a follow-up inherited the thread.
+    pub(crate) question_id: String,
+    /// The source revision the attempt bound to, when resolution got that far.
+    pub(crate) source_revision: Option<String>,
+    /// The coverage record, when retrieval ran.
+    pub(crate) manifest: Option<RetrievalManifest>,
+    pub(crate) history_recorded: bool,
+}
+
+/// The terminal state of one attempt.
+pub(crate) enum DevOutcome {
+    Answered(super::PrivateAskResponse),
+    /// The verified snapshot does not cover the question; the manifest is the
+    /// coverage record.
+    Insufficient(RetrievalManifest),
+    Refused(PrivateAskFailure),
+}
+
+/// What a follow-up is threaded under: the chain id it shares, and the earlier
+/// turn it builds on.
+pub(crate) struct DevAskMeta {
+    /// Identity of the question thread. A fresh question gets a fresh id; a
+    /// follow-up inherits the parent's.
+    pub(crate) question_id: String,
+    /// The attempt this follows up on, if any.
+    pub(crate) follow_up_of: Option<String>,
 }
 
 /// Run one private Ask from the developer surface.
@@ -358,6 +493,12 @@ fn grounding(
 /// decision belongs to `resolve_observed_selection`, `admit_private_ask` and
 /// `PrivateAskAttempt::run`, and nothing here invents a result or a reason.
 ///
+/// The owner-local record is written here — the pending entry before anything
+/// can launch, and the terminal entry the moment the outcome is known — so a
+/// viewer navigating away mid-attempt cannot orphan the record of what they
+/// asked. A history write that fails is reported (`history_recorded`), never
+/// allowed to block the answer.
+///
 /// The answer itself runs on a blocking worker, on ONE thread — which is what
 /// the thread-scoped no-publish attribution relies on. The resolution above it
 /// is async because it reads the Wiki snapshot natively.
@@ -366,30 +507,279 @@ pub(crate) async fn dev_run<R: tauri::Runtime>(
     agent_id: &str,
     coordinate: &str,
     question: &str,
+    meta: DevAskMeta,
+    is_live: std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>,
     attempt: &AttemptIdentity,
     now: u64,
-) -> Result<super::PrivateAskResponse, PrivateAskFailure> {
-    super::attempt::check_question(question, attempt)?;
-    let selection = resolve_selection(
+) -> DevRunResult {
+    attempt.report(super::attempt::AskEvent::Retrieving);
+
+    // The scope key for the record and the ownership root that holds it are
+    // observed up front: the pending entry is written before anything else can
+    // run, so a vanishing process always leaves `running` behind to be read
+    // back as `interrupted`.
+    let scope_key = ask_scope_key(app, coordinate).await.ok();
+    let ownership = VerifiedStagingOwnership::load(app).ok();
+    // What the scope can say before resolution verified it: the observed key
+    // fields plus the caller-supplied names, marked as such (empty relay).
+    let provisional_scope = scope_key
+        .as_ref()
+        .map(|key| history_scope_for(key, agent_id, coordinate));
+
+    if let Err(failure) = super::attempt::check_question(question, attempt) {
+        // A withdrawn or malformed question never reached a scope, but the
+        // refusal still reports the scope it would have been under.
+        return DevRunResult {
+            outcome: DevOutcome::Refused(failure),
+            scope: provisional_scope,
+            question_id: meta.question_id,
+            source_revision: None,
+            manifest: None,
+            history_recorded: false,
+        };
+    }
+
+    // Write the attempt's identity before any resolution or launch. The scope
+    // here is provisional — the terminal write carries the resolved one.
+    let mut history_recorded = match (ownership.as_ref(), provisional_scope.as_ref()) {
+        (Some(ownership), Some(scope)) => super::history::upsert(
+            ownership,
+            super::history::PrivateAskHistoryEntry::pending(
+                scope,
+                &meta.question_id,
+                meta.follow_up_of.clone(),
+                question,
+                attempt.attempt_id(),
+                None,
+                now,
+            ),
+            now,
+        )
+        .is_ok(),
+        _ => false,
+    };
+
+    // A follow-up names the attempt it builds on. The prior turns are read
+    // from this viewer's own scoped history — the record the earlier attempt
+    // left — never from caller-supplied text.
+    let mut question_id = meta.question_id;
+    let mut prior: Vec<PriorTurn> = Vec::new();
+    if let Some(parent) = meta.follow_up_of.as_deref() {
+        let thread = match (ownership.as_ref(), scope_key.as_ref()) {
+            (Some(ownership), Some(key)) => {
+                super::history::follow_up_thread(ownership, key, parent, is_live.as_ref(), now)
+            }
+            _ => None,
+        };
+        match thread {
+            Some((thread_id, turns)) => {
+                question_id = thread_id;
+                prior = turns;
+            }
+            None => {
+                let failure = PrivateAskFailure::FollowUpUnavailable;
+                history_recorded = match (ownership.as_ref(), provisional_scope.as_ref()) {
+                    (Some(ownership), Some(scope)) => super::history::upsert(
+                        ownership,
+                        super::history::PrivateAskHistoryEntry::finished_refusal(
+                            scope,
+                            &question_id,
+                            meta.follow_up_of.clone(),
+                            question,
+                            attempt.attempt_id(),
+                            None,
+                            &failure,
+                            now,
+                        ),
+                        now,
+                    )
+                    .is_ok(),
+                    _ => history_recorded,
+                };
+                return DevRunResult {
+                    outcome: DevOutcome::Refused(failure),
+                    scope: provisional_scope,
+                    question_id,
+                    source_revision: None,
+                    manifest: None,
+                    history_recorded,
+                };
+            }
+        }
+    }
+
+    let resolved = resolve_selection(
         app,
         agent_id,
         coordinate,
         question.to_owned(),
+        prior,
         now,
         attempt.clone(),
     )
-    .await?;
-    tokio::task::spawn_blocking(move || selection.answer())
-        .await
-        .map_err(|_| PrivateAskFailure::InvalidState)?
+    .await;
+
+    let resolved = match resolved {
+        Err(refusal) => {
+            // The refusal is terminal even when resolution died before it
+            // could verify a scope: the record lands under the provisional
+            // scope the pending write used, so a viewer reads `refused` back
+            // instead of an entry stuck reporting `interrupted`.
+            if let (Some(ownership), Some(scope)) = (
+                ownership.as_ref(),
+                refusal.scope.as_ref().or(provisional_scope.as_ref()),
+            ) {
+                history_recorded = super::history::upsert(
+                    ownership,
+                    super::history::PrivateAskHistoryEntry::finished_refusal(
+                        scope,
+                        &question_id,
+                        meta.follow_up_of.clone(),
+                        question,
+                        attempt.attempt_id(),
+                        refusal.source_revision.as_deref(),
+                        &refusal.failure,
+                        now,
+                    ),
+                    now,
+                )
+                .is_ok();
+            }
+            return DevRunResult {
+                outcome: DevOutcome::Refused(refusal.failure),
+                scope: refusal.scope.clone().or(provisional_scope),
+                question_id,
+                source_revision: refusal.source_revision,
+                manifest: refusal.manifest,
+                history_recorded,
+            };
+        }
+        Ok(resolved) => resolved,
+    };
+
+    match resolved.step {
+        ResolveStep::Insufficient(manifest) => {
+            if let Some(ownership) = ownership.as_ref() {
+                history_recorded = super::history::upsert(
+                    ownership,
+                    super::history::PrivateAskHistoryEntry::insufficient(
+                        &resolved.scope,
+                        &question_id,
+                        meta.follow_up_of,
+                        question,
+                        attempt.attempt_id(),
+                        resolved.source_revision.as_deref(),
+                        manifest.clone(),
+                        now,
+                    ),
+                    now,
+                )
+                .is_ok();
+            }
+            DevRunResult {
+                outcome: DevOutcome::Insufficient(manifest.clone()),
+                scope: Some(resolved.scope),
+                question_id,
+                source_revision: resolved.source_revision,
+                manifest: Some(manifest),
+                history_recorded,
+            }
+        }
+        ResolveStep::Ready(selection) => {
+            let scope = resolved.scope;
+            let outcome = match tokio::task::spawn_blocking(move || selection.answer()).await {
+                Ok(Ok(response)) => DevOutcome::Answered(response),
+                Ok(Err(failure)) => DevOutcome::Refused(failure),
+                Err(_) => DevOutcome::Refused(PrivateAskFailure::InvalidState),
+            };
+            if let Some(ownership) = ownership.as_ref() {
+                let entry = match &outcome {
+                    DevOutcome::Answered(response) => Some(
+                        super::history::PrivateAskHistoryEntry::answered(
+                            &scope,
+                            &question_id,
+                            meta.follow_up_of.clone(),
+                            question,
+                            response,
+                            now,
+                        ),
+                    ),
+                    DevOutcome::Refused(failure) => Some(
+                        super::history::PrivateAskHistoryEntry::finished_refusal(
+                            &scope,
+                            &question_id,
+                            meta.follow_up_of.clone(),
+                            question,
+                            attempt.attempt_id(),
+                            resolved.source_revision.as_deref(),
+                            failure,
+                            now,
+                        ),
+                    ),
+                    // A ready step cannot resolve to insufficient — that
+                    // outcome is decided before the selection is built.
+                    DevOutcome::Insufficient(_) => None,
+                };
+                if let Some(entry) = entry {
+                    history_recorded = super::history::upsert(ownership, entry, now).is_ok();
+                }
+            }
+            DevRunResult {
+                outcome,
+                scope: Some(scope),
+                question_id,
+                source_revision: resolved.source_revision,
+                manifest: resolved.manifest,
+                history_recorded,
+            }
+        }
+    }
 }
 
-/// The agents on this machine that currently have a live harness generation.
+/// A best-effort scope for a record whose resolution could not produce one.
 ///
-/// A private Ask can only be addressed to one of these — an agent with no
-/// running session has no ledger to be isolated from — so the developer surface
-/// offers exactly this set rather than every stored record.
-pub(crate) fn live_agents<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<(String, String)> {
+/// The key fields are observed (community, viewer, repository); the agent and
+/// relay fields are the names the caller gave, marked honestly — they were
+/// never verified because the attempt refused before either was bound.
+fn history_scope_for(key: &ScopeKey, agent_id: &str, coordinate: &str) -> HistoryScope {
+    HistoryScope {
+        community_id: key.community_id.clone(),
+        relay_url: String::new(),
+        viewer_pubkey: key.viewer_pubkey.clone(),
+        agent_pubkey: agent_id.to_ascii_lowercase(),
+        project_id: coordinate.to_owned(),
+        repo_owner: key.repo_owner.clone(),
+        repo_d: key.repo_d.clone(),
+    }
+}
+
+
+
+/// One agent as the picker sees it: named, addressed, and honest about why it
+/// can or cannot be asked right now.
+///
+/// `status` is what the resolver itself would conclude at this moment — a
+/// `busy` agent has a live session mid-turn, an `offline` one has no live
+/// generation at all. The renderer offers a recovery (start the agent, or pick
+/// another), never a substitution.
+pub(crate) struct ObservedAskAgent {
+    pub(crate) pubkey: String,
+    pub(crate) name: String,
+    /// The relay the agent's harness is bound to — what the runtime-start
+    /// command needs to bring it back.
+    pub(crate) relay_url: String,
+    pub(crate) status: &'static str,
+}
+
+/// All managed agents on this machine with their askability.
+///
+/// Unlike the old `live_agents` this lists every record, because the picker
+/// must show *why* an agent cannot be asked rather than silently dropping it —
+/// an agent that vanished from the list between render and resolve would look
+/// like a crash.
+pub(crate) fn observed_agents<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Vec<ObservedAskAgent> {
     let Ok(records) = crate::managed_agents::storage::load_managed_agents(app) else {
         return Vec::new();
     };
@@ -398,8 +788,29 @@ pub(crate) fn live_agents<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<(
         .filter(|record| !record.pubkey.is_empty())
         .filter_map(|record| {
             let relay_url = bound_relay_url(app, &record).ok()?;
-            live_runtime(app, &record, &relay_url)?;
-            Some((record.pubkey.clone(), record.name.clone()))
+            let status = match live_runtime(app, &record, &relay_url) {
+                Some(live) => match live.lifecycle {
+                    crate::managed_agents::runtime_types::ManagedAgentRuntimeLifecycle::Ready => {
+                        "ready"
+                    }
+                    crate::managed_agents::runtime_types::ManagedAgentRuntimeLifecycle::Starting
+                    | crate::managed_agents::runtime_types::ManagedAgentRuntimeLifecycle::Listening
+                    | crate::managed_agents::runtime_types::ManagedAgentRuntimeLifecycle::Waking => {
+                        "busy"
+                    }
+                    crate::managed_agents::runtime_types::ManagedAgentRuntimeLifecycle::Failed
+                    | crate::managed_agents::runtime_types::ManagedAgentRuntimeLifecycle::Stopped => {
+                        "offline"
+                    }
+                },
+                None => "offline",
+            };
+            Some(ObservedAskAgent {
+                pubkey: record.pubkey.clone(),
+                name: record.name.clone(),
+                relay_url,
+                status,
+            })
         })
         .collect()
 }

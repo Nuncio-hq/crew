@@ -23,10 +23,11 @@
 
 use super::attempt::AttemptIdentity;
 use super::binding::{self, PrivateAskBinding};
+use super::retrieval::{Retrieval, RetrievalManifest};
 use super::session_evidence::{SessionObservation, SessionSnapshot};
 use super::{
-    AgentLifecycle, GroundedSource, PrivateAskFailure, PrivateAskRequest, PrivateAskResponse,
-    PrivateAskScope, SelectedAgentState,
+    AgentLifecycle, GroundedSource, PriorTurn, PrivateAskFailure, PrivateAskRequest,
+    PrivateAskResponse, PrivateAskScope, SelectedAgentState,
 };
 use crate::managed_agents::effective_config::EffectiveConfigResult;
 use crate::managed_agents::recap_capability::RecapExecutableIdentity;
@@ -91,16 +92,65 @@ impl std::fmt::Debug for PrivateAskSelection {
     }
 }
 
+/// What resolution produced: a selection ready to be answered, or a question
+/// the verified snapshot cannot cover.
+///
+/// `Insufficient` is an outcome, not a refusal: the question was asked, the
+/// retrieval ran, and the coverage record travels back in `RetrievalManifest`
+/// so the viewer and the history see *what* was not covered rather than a
+/// bare no.
+pub(crate) enum ResolveStep {
+    Ready(PrivateAskSelection),
+    Insufficient(RetrievalManifest),
+}
+
 impl PrivateAskSelection {
     /// Answer this selection on the production path.
     pub(crate) fn answer(self) -> Result<PrivateAskResponse, PrivateAskFailure> {
         binding::answer(self.binding)
     }
 
+    /// The history scope this selection resolved under — the identity its
+    /// owner-local record is keyed on.
+    pub(crate) fn history_scope(&self) -> super::history::HistoryScope {
+        super::history::HistoryScope::from_scope(&self.binding.request.scope)
+    }
+
+    /// The source revision this selection's question is bound to.
+    pub(crate) fn source_revision(&self) -> &str {
+        &self.binding.request.source_revision
+    }
+
+    /// The owned staging tree this selection was resolved under. Shared with
+    /// the binding, so the pending record and the run that follows it write
+    /// under the same ownership.
+    pub(crate) fn ownership(&self) -> &VerifiedStagingOwnership {
+        &self.binding.ownership
+    }
+
     /// The ACL projection this selection was resolved under.
     #[cfg(test)]
     pub(crate) fn acl_fingerprint(&self) -> &str {
         &self.binding.state.acl_fingerprint
+    }
+
+    /// The retrieval manifest this selection carries, after the prompt bound's
+    /// own trim reconciled it.
+    #[cfg(test)]
+    pub(crate) fn manifest(&self) -> &RetrievalManifest {
+        &self.binding.request.manifest
+    }
+
+    /// The prior turns carried into this selection's prompt.
+    #[cfg(test)]
+    pub(crate) fn prior(&self) -> &[PriorTurn] {
+        &self.binding.request.prior
+    }
+
+    /// The page slugs carried into this selection's prompt.
+    #[cfg(test)]
+    pub(crate) fn page_slugs(&self) -> Vec<&str> {
+        self.binding.request.page_slugs()
     }
 
     /// The harness generation this selection was resolved under.
@@ -141,13 +191,14 @@ impl PrivateAskSelection {
 pub(crate) fn resolve_observed_selection(
     scope: PrivateAskScope,
     question: String,
+    prior: Vec<PriorTurn>,
     agent: ObservedAgent<'_>,
     snapshot: &crew_wiki::snapshot_v1::VerifiedSnapshot,
-    grounding: Vec<GroundedSource>,
+    retrieval: Retrieval,
     ownership: VerifiedStagingOwnership,
     now: u64,
     attempt: AttemptIdentity,
-) -> Result<PrivateAskSelection, PrivateAskFailure> {
+) -> Result<ResolveStep, PrivateAskFailure> {
     scope.validate()?;
     // The caller named an agent and a scope; the scope's claims about that
     // agent are checked against the record the id actually resolved to, so a
@@ -176,6 +227,15 @@ pub(crate) fn resolve_observed_selection(
     // refused here rather than carried to admission as a lifecycle.
     let lifecycle =
         lifecycle_of(&live.lifecycle).ok_or(PrivateAskFailure::SessionObservationUnavailable)?;
+
+    // A question the snapshot cannot cover is an outcome, not a fence
+    // violation — but it is decided here, after the busy/lifecycle fences, so
+    // an agent that could not have answered anyway still reports its own
+    // reason rather than a coverage reason that would mislead.
+    if retrieval.insufficient() {
+        return Ok(ResolveStep::Insufficient(retrieval.manifest));
+    }
+
     let session = observed_session(agent.ledger_dir, &live)?;
 
     let state = SelectedAgentState::from_effective_config(
@@ -192,12 +252,13 @@ pub(crate) fn resolve_observed_selection(
     let request = PrivateAskRequest::from_verified_snapshot(
         scope,
         question,
+        prior,
         snapshot,
-        grounding,
+        retrieval,
         &state.persona,
     )?;
 
-    Ok(PrivateAskSelection {
+    Ok(ResolveStep::Ready(PrivateAskSelection {
         binding: PrivateAskBinding {
             ownership,
             state,
@@ -207,7 +268,7 @@ pub(crate) fn resolve_observed_selection(
             now,
             attempt,
         },
-    })
+    }))
 }
 
 /// Read the selected agent's session ledger, and refuse if it cannot be read.
@@ -305,60 +366,7 @@ fn session_generation(start_nonce: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Read the snapshot's own source references into grounding.
-///
-/// The reader is supplied rather than reached for, so the deciding half stays
-/// pure and the branches below are testable without a grant, a folder or a
-/// repository: a reference that cannot be read is skipped, a snapshot whose
-/// revision belongs to a different checkout mode grounds nothing, and the total
-/// is bounded rather than unbounded.
-///
-/// The bound here is a READ bound — how much source this is willing to pull off
-/// disk — and deliberately not the prompt bound. What actually fits the prompt
-/// depends on the persona and question, neither of which is known here, so the
-/// prompt-side trim belongs to `prompt::fit_grounding` and happens when the
-/// request is built. Enforcing the prompt bound in both places is what made
-/// every well-stocked repository refuse as though its question were too large.
-///
-/// Zero grounding is a legal Ask — an install with no chosen source folder can
-/// still ask — so nothing here fails the attempt.
-pub(crate) fn collect_grounding<E>(
-    snapshot: &crew_wiki::snapshot_v1::VerifiedSnapshot,
-    workspace_mode: &str,
-    read: impl Fn(
-        &str,
-        &crew_wiki::source_snapshot::SourceReference,
-    ) -> Result<crew_wiki::source_access::VerifiedSourceFile, E>,
-) -> Vec<GroundedSource> {
-    let revision = snapshot.index().source_revision().to_owned();
-    if !revision.starts_with(&format!("{workspace_mode}:")) {
-        // The grant anchors a different checkout mode of the same repository;
-        // its bytes are not this snapshot's bytes.
-        return Vec::new();
-    }
-    let mut grounding = Vec::new();
-    let mut budget = super::PRIVATE_ASK_INPUT_LIMIT;
-    // Reading exactly the prompt bound is enough: the prompt-side trim can only
-    // keep less than this, never more.
-    for page in snapshot.pages() {
-        for reference in page.source_references() {
-            let Ok(file) = read(&revision, reference) else {
-                continue;
-            };
-            let Ok(source) =
-                GroundedSource::from_verified_snapshot(snapshot, page, reference, &file)
-            else {
-                continue;
-            };
-            let Some(remaining) = budget.checked_sub(source.content.len()) else {
-                return grounding;
-            };
-            budget = remaining;
-            grounding.push(source);
-        }
-    }
-    grounding
-}
+
 
 #[cfg(test)]
 #[path = "selection_tests.rs"]

@@ -21,6 +21,7 @@ pub(crate) use policy::{BoundedFailure, BoundedOutcome, BoundedPolicy, OutputBud
 mod runner;
 pub(crate) use runner::output_with_policy;
 pub(crate) use runner::output_with_policy_and_spawn_hook;
+pub(crate) use runner::output_with_policy_and_spawn_hook_and_stream;
 pub(crate) use runner::output_with_policy_and_stdin;
 
 #[cfg(test)]
@@ -194,6 +195,7 @@ fn spawn_drain<R: Read + Send + 'static>(
     overflow: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     limit: u64,
+    mut sink: Option<Box<dyn FnMut(&[u8]) + Send>>,
 ) -> JoinHandle<std::io::Result<Vec<u8>>> {
     // `stop` gates only the nonblocking Unix drain; the Windows path blocks to
     // the job-close EOF and never consults it.
@@ -214,6 +216,9 @@ fn spawn_drain<R: Read + Send + 'static>(
                         overflow.store(true, Ordering::Relaxed);
                         let keep = limit.saturating_sub(prev).min(n as u64) as usize;
                         buf.extend_from_slice(&chunk[..keep]);
+                        if let Some(sink) = sink.as_mut() {
+                            sink(&chunk[..keep]);
+                        }
                         // Overflow: the result is already fail-closed, so nothing
                         // still in the pipe is worth preserving. Return NOW rather
                         // than draining to EOF — this is what bounds the `Ok(n)`
@@ -227,6 +232,9 @@ fn spawn_drain<R: Read + Send + 'static>(
                         return Ok(buf);
                     }
                     buf.extend_from_slice(&chunk[..n]);
+                    if let Some(sink) = sink.as_mut() {
+                        sink(&chunk[..n]);
+                    }
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {
                     if stop.load(Ordering::Relaxed) {
@@ -478,6 +486,7 @@ mod tests {
             overflow.clone(),
             stop,
             CAPTURE_LIMIT,
+            None,
         );
 
         let (tx, rx) = mpsc::channel();

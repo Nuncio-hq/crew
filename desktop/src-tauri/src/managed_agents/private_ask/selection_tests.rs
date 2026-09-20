@@ -5,7 +5,9 @@
 //! assembles; nothing here reaches past `resolve_observed_selection`, which is
 //! the function the command's own path calls.
 
+use super::super::retrieval::{retrieve, Retrieval, RetrievalManifest, RetrievedPage};
 use super::super::tests::{canonical_tempdir, executable, owned_receipt, runtime_installation};
+use super::super::GroundedSource;
 use super::*;
 use crate::managed_agents::effective_config::{ConfigSource, EffectiveAgentConfig, ResolvedField};
 use crate::managed_agents::global_config::GlobalAgentConfig;
@@ -65,7 +67,9 @@ fn publication() -> SnapshotPublication {
         source_files: vec!["src/lib.rs".into()],
         commit: commit.clone(),
         language: "en".into(),
-        content: "# lib\n".into(),
+        // The body names the fixture question's term, so a real retrieval
+        // finds this page — these tests exercise resolution past retrieval.
+        content: "# lib\nThe answer function returns 42.\n".into(),
     }];
     build_snapshot(SnapshotBuild {
         owner: &owner,
@@ -198,28 +202,63 @@ impl Observation {
     }
 }
 
+/// The real retrieval for the fixture question: the production seam, with the
+/// viewer-granted reader stubbed only at the byte boundary retrieval defines.
+/// Tests that need to see an *empty* coverage record pass a question the
+/// snapshot does not cover rather than bypassing retrieval.
+fn real_retrieval(question: &str, snapshot: &VerifiedSnapshot) -> Retrieval {
+    retrieve(
+        question,
+        snapshot,
+        Some("git"),
+        std::time::Instant::now() + std::time::Duration::from_secs(30),
+        |_, _| Ok::<_, std::io::Error>(fixture_source()),
+    )
+}
+
 fn resolve(
     observation: &Observation,
     scope: PrivateAskScope,
     fixture: &tempfile::TempDir,
     snapshot: &VerifiedSnapshot,
 ) -> Result<PrivateAskSelection, PrivateAskFailure> {
-    resolve_with_grounding(observation, scope, fixture, snapshot, Vec::new())
+    let question = "What does answer do?".to_string();
+    let retrieval = real_retrieval(&question, snapshot);
+    match resolve_observed_selection(
+        scope,
+        question,
+        Vec::new(),
+        observation.agent(),
+        snapshot,
+        retrieval,
+        owned_receipt(fixture),
+        1_000,
+        AttemptIdentity::fresh(),
+    ) {
+        Ok(ResolveStep::Ready(selection)) => Ok(selection),
+        Ok(ResolveStep::Insufficient(_)) => {
+            panic!("the fixture question is covered by the fixture snapshot")
+        }
+        Err(failure) => Err(failure),
+    }
 }
 
-fn resolve_with_grounding(
+/// Resolve with the caller's retrieval supplied whole — for tests that
+/// exercise what resolution does with a coverage result it cannot change.
+fn resolve_with_retrieval(
     observation: &Observation,
     scope: PrivateAskScope,
     fixture: &tempfile::TempDir,
     snapshot: &VerifiedSnapshot,
-    grounding: Vec<GroundedSource>,
-) -> Result<PrivateAskSelection, PrivateAskFailure> {
+    retrieval: Retrieval,
+) -> Result<ResolveStep, PrivateAskFailure> {
     resolve_observed_selection(
         scope,
         "What does answer do?".into(),
+        Vec::new(),
         observation.agent(),
         snapshot,
-        grounding,
+        retrieval,
         owned_receipt(fixture),
         1_000,
         AttemptIdentity::fresh(),
@@ -287,17 +326,23 @@ fn a_request_cannot_name_the_acl_projection_or_the_session_generation() {
             agent
         }
     };
-    let widened = resolve_observed_selection(
+    let question = "What does answer do?".to_string();
+    let widened = match resolve_observed_selection(
         scope(),
-        "What does answer do?".into(),
+        question.clone(),
+        Vec::new(),
         widened,
         &snapshot,
-        Vec::new(),
+        real_retrieval(&question, &snapshot),
         owned_receipt(&fixture),
         1_000,
         AttemptIdentity::fresh(),
     )
-    .expect("widened");
+    .expect("widened")
+    {
+        ResolveStep::Ready(selection) => selection,
+        ResolveStep::Insufficient(_) => panic!("the fixture question is covered"),
+    };
     assert_ne!(widened.acl_fingerprint(), acl);
 }
 
@@ -417,30 +462,77 @@ fn fixture_source() -> crew_wiki::source_access::VerifiedSourceFile {
     }
 }
 
+/// The question the snapshot cannot cover resolves as `Insufficient`, not a
+/// selection — and the refusal carries the coverage record, so the viewer sees
+/// *what* was not covered rather than a bare no.
+///
+/// Production line: the `retrieval.insufficient()` check in
+/// `resolve_observed_selection`. Remove it and an empty grounding produces a
+/// Ready selection that would prompt the model to invent.
 #[test]
-fn grounding_is_collected_from_the_snapshots_own_references() {
-    // Production line: `collect_grounding`, which `selection_native::grounding`
-    // supplies a grant-backed reader to. A reader that cannot read is not a
-    // failed Ask — an install with no chosen source folder still asks.
+fn a_question_the_snapshot_cannot_cover_is_insufficient() {
+    let fixture = canonical_tempdir();
     let publication = publication();
     let snapshot = verified(&publication);
+    let observation = Observation::new(fixture.path());
 
-    let grounded = collect_grounding(&snapshot, "git", |_, _| Ok::<_, ()>(fixture_source()));
-    assert_eq!(grounded.len(), 1);
-    assert_eq!(grounded[0].path(), "src/lib.rs");
-
-    // A reference that cannot be read is skipped, not fatal.
-    assert!(collect_grounding(&snapshot, "git", |_, _| Err::<
-        crew_wiki::source_access::VerifiedSourceFile,
-        (),
-    >(()))
-    .is_empty());
-
-    // A grant anchored to a different checkout mode grounds nothing: its bytes
-    // are not this snapshot's bytes, and the revision prefix says so.
-    assert!(
-        collect_grounding(&snapshot, "folder", |_, _| Ok::<_, ()>(fixture_source())).is_empty()
+    let question = "How are glaciers calibrated?".to_string();
+    let retrieval = retrieve(
+        &question,
+        &snapshot,
+        Some("git"),
+        std::time::Instant::now() + std::time::Duration::from_secs(30),
+        |_, _| Ok::<_, std::io::Error>(fixture_source()),
     );
+    assert!(retrieval.insufficient());
+
+    match resolve_with_retrieval(&observation, scope(), &fixture, &snapshot, retrieval)
+        .expect("insufficiency is an outcome, not a refusal")
+    {
+        ResolveStep::Insufficient(manifest) => {
+            assert!(manifest.included_pages.is_empty());
+            assert!(manifest.included_sources.is_empty());
+            // The grant existed — the manifest says coverage failed, not access.
+            assert!(manifest.source_grant);
+        }
+        ResolveStep::Ready(_) => panic!("a question with no grounding must not be ready"),
+    }
+}
+
+/// A follow-up carries the thread's prior turns into the request — as data
+/// the prompt bounds, supplied by scoped history rather than the caller's
+/// prose.
+#[test]
+fn a_selection_carries_the_prior_turns_it_was_resolved_with() {
+    let fixture = canonical_tempdir();
+    let publication = publication();
+    let snapshot = verified(&publication);
+    let observation = Observation::new(fixture.path());
+
+    let prior = vec![super::super::PriorTurn {
+        question: "What does answer do?".into(),
+        markdown: "It returns 42.".into(),
+    }];
+    let question = "Why does answer return 42?".to_string();
+    // A follow-up scores against the snapshot like any question — its terms
+    // hit the fixture body.
+    let retrieval = real_retrieval(&question, &snapshot);
+    let selection = match resolve_observed_selection(
+        scope(),
+        question,
+        prior,
+        observation.agent(),
+        &snapshot,
+        retrieval,
+        owned_receipt(&fixture),
+        1_000,
+        AttemptIdentity::fresh(),
+    ) {
+        Ok(ResolveStep::Ready(selection)) => selection,
+        _ => panic!("a covered follow-up resolves ready"),
+    };
+    assert_eq!(selection.prior().len(), 1);
+    assert_eq!(selection.prior()[0].markdown, "It returns 42.");
 }
 
 /// A repository with far more readable source than the prompt bound still
@@ -463,20 +555,47 @@ fn grounding_past_the_prompt_bound_is_trimmed_rather_than_refused() {
     let oversupplied: Vec<GroundedSource> = (0..40)
         .map(|index| {
             let content = "x".repeat(8 * 1024);
-            GroundedSource {
+            let source = GroundedSource {
                 path: format!("src/file{index}.rs"),
                 start_line: 1,
                 end_line: 1,
                 source_hash: crew_wiki::source_snapshot::source_hash(content.as_bytes()),
                 content,
                 snapshot_head_event_id: snapshot.index().head_event_id().to_owned(),
-            }
+            };
+            source
         })
         .collect();
+    // The retrieval result the request is built from: one page hit and the
+    // forty reads it stands on, with the manifest naming them all included.
+    let retrieval = Retrieval {
+        pages: vec![RetrievedPage {
+            slug: "lib".into(),
+            title: "Lib".into(),
+            content: "# lib\nThe answer function returns 42.\n".into(),
+            excerpted: false,
+        }],
+        manifest: RetrievalManifest {
+            included_pages: vec![super::super::retrieval::ManifestPage {
+                slug: "lib".into(),
+                title: "Lib".into(),
+                score: 1,
+            }],
+            included_sources: oversupplied
+                .iter()
+                .map(super::super::retrieval::ManifestSource::from)
+                .collect(),
+            source_grant: true,
+            ..RetrievalManifest::default()
+        },
+        grounding: oversupplied,
+    };
 
-    let selection =
-        resolve_with_grounding(&observation, scope(), &fixture, &snapshot, oversupplied)
-            .expect("an over-supplied repository still resolves to a selection");
+    let selection = match resolve_with_retrieval(&observation, scope(), &fixture, &snapshot, retrieval)
+        .expect("an over-supplied repository still resolves") {
+        ResolveStep::Ready(selection) => selection,
+        ResolveStep::Insufficient(_) => panic!("the fixture retrieval is not empty"),
+    };
 
     let kept = selection.grounding().len();
     assert!(
@@ -489,6 +608,19 @@ fn grounding_past_the_prompt_bound_is_trimmed_rather_than_refused() {
     assert!(prompt.len() <= super::super::PRIVATE_ASK_INPUT_LIMIT);
     // The trimmed set is a prefix of what was supplied, in order.
     assert_eq!(selection.grounding()[0].path(), "src/file0.rs");
+    // Production line: `drop_source_from_manifest` in `fit_request` — what the
+    // prompt bound dropped is the omitted list, so the manifest describes the
+    // prompt that was actually built.
+    assert_eq!(
+        selection.manifest().included_sources.len(),
+        kept,
+        "the manifest's included list is the prompt's own grounding"
+    );
+    assert_eq!(
+        selection.manifest().omitted_sources.len(),
+        40 - kept,
+        "every dropped source is an omission, not a silence"
+    );
 }
 
 /// A resolved selection answers through the production path: resolve, probe,
@@ -532,11 +664,20 @@ fn a_resolved_selection_answers_through_the_production_path() {
         lifecycle: ManagedAgentRuntimeLifecycle::Ready,
     });
 
-    let grounding = collect_grounding(&snapshot, "git", |_, _| Ok::<_, ()>(fixture_source()));
-    assert_eq!(grounding.len(), 1, "the fixture snapshot grounds one file");
-    let response = resolve_with_grounding(&observation, scope(), &fixture, &snapshot, grounding)
-        .expect("a bound agent resolves")
-        .answer();
+    let retrieval = real_retrieval("What does answer do?", &snapshot);
+    assert_eq!(
+        retrieval.grounding.len(),
+        1,
+        "the fixture snapshot grounds one file"
+    );
+    let response = resolve(
+        &observation,
+        scope(),
+        &fixture,
+        &snapshot,
+    )
+    .expect("a bound agent resolves")
+    .answer();
     let _ = session.kill();
     let _ = session.wait();
     let response = response.expect("a resolved selection answers");
