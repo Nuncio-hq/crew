@@ -1239,3 +1239,248 @@ claims. `buzz-acp`'s registered strict transport tests cover capability-gated
 wire selection, exact request/turn echo validation, terminal outcomes, and the
 no-fallback path. Run the focused native filters before the full CI gate; these
 production-bound tests do not replace installed Activity acceptance.
+
+## Private Wiki Ask contract (#365)
+
+The private Ask **answers** from a resolved selection, and the resolver in front
+of it is real: `selection_tests.rs` drives `resolve_observed_selection` — the
+function the command's own path calls — and `binding_tests.rs` drives the
+contained run end to end: capture the probe, retain it, project it, admit it,
+run the one-shot, resolve the answer's own citations.
+
+**What a caller may name is exactly three things**: the attempt id, the agent,
+and the repository coordinate. The persona, the model, the executable, the
+access projection, the harness generation, the snapshot and the grounding are
+all observed natively, and `selection_tests.rs` asserts that two different
+observations of the same request resolve to different `acl_fingerprint` and
+`session_generation` values while the request itself is unchanged.
+
+**An agent with no live harness generation cannot be asked.** It has no ACP
+session-ledger entry to be shown to have been left alone, and the refusal is
+`the selected agent's running session could not be observed` — not
+`AgentUnbound`, which means there is no such agent (D-083).
+
+Every fence below the binding is live, so its tests assert the **reason** a
+request is refused and never merely that it was — the egress proof runs a real
+loopback proxy rather than describing one, and the capability probe is produced
+by a real contained run rather than assembled by a fixture.
+
+### Targets
+
+```bash
+# Narrow: the whole adapter, including the macOS real-process proofs.
+cargo test --manifest-path desktop/src-tauri/Cargo.toml -p buzz-desktop private_ask
+
+# The repository recipe, which also re-runs the relay-side wiki contract.
+just private-ask-contract
+```
+
+`private_ask/containment_tests.rs` and `private_ask/isolation_tests.rs` are
+`#![cfg(all(unix, target_os = "macos"))]`: they spawn real processes under
+`sandbox-exec`, so they run on the macOS CI lane only. `fail_closed_tests.rs`
+carries the assertion every platform must still make — a run root that cannot be
+confined, and a platform without this boundary at all, refuse a profile rather
+than returning "no profile needed" — so a Linux lane still proves the adapter
+fails closed.
+
+### What each proof binds to
+
+| Proof | Binds to | Falsified by |
+|-------|----------|--------------|
+| `privacy_tests.rs` | The relay egress census in `egress_guard.rs` | Routing any part of an Ask through a publish boundary; deleting the counter |
+| `containment_tests.rs` | `PrivateAskLaunchPlan::command`'s `sandbox-exec` wrapper and the policy's allow-lists | Removing the wrapper; widening `file-read*`; the control run proves the fixture is genuinely hostile |
+| `session_evidence_tests.rs` | `SessionSnapshot::capture` reading the harness's own ledger directory, and the mirrored derivation of where that directory is | Accepting a missing, empty or unreadable ledger directory as a digest; drifting from `buzz-acp`'s own `session_ledger_dir_for_scope` |
+| `selection_tests.rs` | `resolve_observed_selection` — the resolver's deciding half | Taking `acl_fingerprint` or `session_generation` from a request; resolving a scope that names another agent, relay or repository; resolving an agent with an empty ledger directory; treating a non-`Ready` harness generation as idle |
+| `capability_tests.rs` | `PrivateAskCapability::from_probe` | Certifying a dimension whose named evidence does not hold |
+| `egress_proxy_tests.rs` | The CONNECT parser and `EgressObservation::bounds_egress` | Accepting a non-CONNECT request, an IP-literal or foreign target; certifying a record with no refusal or no accepted provider connection |
+| `credential_tests.rs` + `privacy_tests.rs` | `stage_private_ask_credential`'s proxy gate and the environment-only handoff | Staging a token without a live proxy; putting it on argv, in the prompt, or in the run root |
+| `runtime_paths_tests.rs` | Shebang interpreter resolution and the `nlink > 1` fence | Stopping at `/usr/bin/env`; letting a hard link into the run root through |
+| `probe_program_tests.rs` | `parse_marker`'s nonce and completeness checks | Treating a missing, truncated, wrong-nonce or non-UTF-8 marker as success |
+| `probe_run_tests.rs` | `capture_probe` — a real contained run | Building the probe's policy from anything but the selected runtime; certifying a dimension the run escaped; coupling authentication to containment |
+| `probe_receipt_tests.rs` | `probe_receipt::{store, load}` | Honouring a stale, future-dated, foreign-install, foreign-program or different-executable receipt; restoring session isolation from disk |
+| `binding_tests.rs` | `binding::answer` — probe, project, admit, run | Answering under an expired receipt; answering a busy agent with no independence observation; returning an answer that cited outside the snapshot |
+| `citation_tests.rs` + `answer_tests.rs` | `citations::resolve`, called from `PrivateAskAttempt::run` | Restoring `request.grounding.clone()`; matching a cited path by prefix; treating an empty citation line as no citation |
+| `history_tests.rs` | `history::{record, load}` and its count/age bounds | Growing without bound; keeping a future-stamped entry; presenting a damaged file as a partial record |
+| `containment_read_roots_tests.rs` | The read-root fence in `private_ask_containment_profile` | Allowing a runtime directory that contains the run roots; comparing paths as strings rather than component-wise |
+| `cancel_registry_tests.rs` + `private_ask_commands_tests.rs` | `PrivateAskAttempts::{register, cancel}` and the command's registration guard | Aliasing one id across two runs; leaving an id in flight after the run returned or panicked; letting an unbounded number of attempts register |
+| `WikiAskBox.citations.test.mjs` | The composer's citation control and its `historyRecorded` notice, through the real Tauri invoke boundary | Rendering a citation as text when an opener exists; dropping the "not kept on this machine" note on the refused path |
+
+The containment tests are paired: an uncontained control run must reach every
+effect — write outside the run root, read a file outside it, open a socket,
+resolve a name, fork a `setsid` descendant — before the contained run's denials
+mean anything. A proof whose fixture cannot misbehave proves nothing.
+
+The hostile fixture also asks the run's own proxy for a destination that is not
+the provider, reading the proxy URL from the child environment exactly as a real
+runtime would. That CONNECT must be answered `403` **and** appear in the proxy's
+own record, which travels back with the answer on `PrivateAskResponse::egress`.
+Two clauses of `bounds_egress` are opposites and both matter: an empty refusal
+list means the proxy was never shown to say no, and an empty accepted list means
+nothing ever reached the provider — a policy that blocks everything must not
+read as one that is correctly scoped.
+
+Keep the read-isolation bait out of the runtime executable's directory. The
+policy allows that directory so the binary can load itself, so a secret parked
+there is legitimately readable and the proof would pass by accident.
+
+The same trap has a wider form, and it cost a round to find: install the fixture
+runtime **outside** the staging base. A fixture that writes its `claude` into the
+directory *containing* `<app-data>/agents` makes the runtime read allowance cover
+the whole staging tree, including the probe's own sentinel.
+
+Production now refuses that layout outright, so the fixtures must match a real
+installation: use `tests::runtime_installation(dir)`, which puts the runtime in
+its own directory beside the run roots. A fixture laid out the other way is
+refused before any policy text exists, and the failure reads as
+`ProcessContainmentUnverified` rather than as a read-isolation defect.
+
+`probe_run_tests.rs` asserts the probe's policy text equals the text a real
+answer would run under, rebuilt from the selected runtime. That equality is the
+whole basis for running a shipped probe program instead of the runtime: if the
+two ever diverge, `from_probe` rebuilds a profile that no longer matches and the
+trace silently stops certifying, so it is asserted directly rather than inferred
+from a passing projection.
+
+A unit test must never read the developer's keychain. The real credential reader
+shells out to `security find-generic-password`, so `observe_auth_evidence` has a
+`cfg(test)` canary seam mirroring `PrivateAskAttempt::stage_credential`. The
+proxy gate is not replaced, so both directions stay real and deterministic:
+credential present certifies authentication, credential absent does not, and
+containment stays verified across both.
+
+### Staging runbook for a dev-gated Ask
+
+What to set up, in order, and what the screen says at each step. Steps 1-4 are
+the existing staging harness; step 5 is where the Ask itself stops today.
+
+1. **Build with the surface open.** A debug build opens the surface on its own;
+   a release build needs `BUZZ_PRIVATE_ASK_DEV` set to exactly `1` (not `true`,
+   not a padded `1`). The value is read once at first use, so exporting it in a
+   running process does nothing. With the surface closed the composer renders
+   the ordinary unavailable Ask box; with it open, the developer composer
+   appears.
+2. **Hermes runtime binary, resolved from `PATH`.** The resolver binds to
+   whatever `hermes` resolves to on this machine's `PATH`, so that entry must be
+   the venv binary and not the `~/.local/bin/hermes` bash wrapper: the read
+   allow-list is derived from the named executable, and a wrapper leaves the
+   interpreter's prefix out of it. The acceptance profile runs the Hermes CLI
+   from its own virtualenv, installed **outside** `<app-data>/agents` — a runtime
+   directory that contains the staging base is refused before any policy text
+   exists, and the screen shows `runtime process containment is unverified`.
+3. **An HTTPS provider profile.** The staged Hermes profile must name a provider
+   the loopback proxy can bind: one `host:443` in the explicit host table. A
+   profile pointed at a plain-HTTP loopback endpoint is refused, and the screen
+   shows `runtime network egress is not bounded to the model provider`.
+4. **Two identities.** The viewer and an observer on the same relay, the
+   observer holding a wide live subscription. Nothing about the Ask may appear
+   on the observer's side; that is the privacy half, and the relay-side canary
+   in `buzz-relay` is its automated counterpart.
+5. **Start the selected agent and give it one turn** before asking, so its ACP
+   session ledger directory holds at least one entry. An agent that has never
+   run has no observable session and is refused with
+   `the selected agent's running session could not be observed`; an agent that
+   is not running at all does not appear in the composer's agent picker.
+6. **Choose the repository's source folder** in the Wiki source pane, if the
+   answer should be grounded. Without a grant the Ask still runs; it simply
+   carries no grounding, and an answer that cites anything is then refused by
+   the citation fence.
+
+Restarting the agent between Asks is expected to re-probe rather than refuse:
+`session_generation` is the running harness generation's digest, so a receipt
+captured under the previous generation is a cache miss. A repository with no
+published Wiki snapshot refuses with `private Ask grounding is invalid`.
+
+Then ask. **The expected outcome on a bound agent is an answer**, with the
+agent picker showing the running agent, the composer showing the answer, and
+any citation resolving into the source pane. A refusal names its own reason, and
+the reason is the evidence: `the selected agent's running session could not be
+observed` for an agent with no ledger entry, `selected agent is busy` for a
+generation mid-turn with no independence observation, `runtime network egress is
+not bounded to the model provider` for a provider the proxy cannot bind. Cancel
+during a run reports `the private Ask was cancelled`, and that sentence — not a
+process error — is what the owner-local list keeps. If an attempt cannot be
+written to that list, the composer says so under the answer.
+
+### Staging evidence list
+
+The macOS CI lane cannot establish that a *real* runtime behaves. An installed
+acceptance run on the Hermes profile `crew-hpc-acceptance`, with two identities,
+must capture:
+
+- Runtime binary path, version, effective model and profile; the argv with
+  secrets redacted; the exact Seatbelt policy text, including the
+  `(allow network-outbound (remote ip "localhost:<port>"))` line and the absence
+  of any mDNSResponder allowance.
+- Confirmation that no connection was dropped at the proxy's accept-time
+  concurrency cap during a real answer — a runtime opening more than four
+  simultaneous connections gets the extra ones closed silently.
+- The proxy's observation for the run: the port it bound, every accepted target
+  (all of which must equal the configured provider host), every refused target
+  with its reason, and the dial-failure count.
+- Sentinel digests before and after, and the descendant PID table.
+- Confirmation that the real runtime started under `(deny mach-lookup)` and the
+  narrowed read allow-list, and — if it did not — the exact denial from
+  `log stream --predicate 'sender == "Sandbox"'`, so the allow-list is widened
+  from evidence rather than from guesswork.
+- For Hermes: the prompt is on argv, so capture `ps` output confirming what is
+  visible, and confirm the staged profile copy carries no provider key.
+- Identity B's REQ/EOSE transcripts across the whole Ask, plus the backfill, and
+  the SQL canary count.
+- The private Ask probe receipt as stored on disk (the JSON file under the owned
+  probe base), so the executable fingerprint, the policy text, the probe-program
+  digest and `captured_at` are all readable evidence.
+- The employee session's ledger-directory digest and entry count, and the
+  harness PID, before and after the Ask — these are what the desktop itself
+  brackets the answering run with, so the runbook reading must agree with the
+  Ask's own verdict.
+- An Ask issued while the employee is **mid-turn**: it must refuse with
+  `selected agent is busy` immediately, with no probe child and no runtime child
+  in `ps`, and no new receipt under the owned probe base.
+- An Ask issued to an idle employee that then **takes a turn of its own while
+  the Ask runs**: this is the narrow window the busy fence cannot cover, and it
+  refuses as `runtime invocation independence is unverified` after the model
+  call. Record the ledger digest either side so the refusal is attributable.
+- A **second** Ask on the same selection, to confirm it answers without a new
+  probe child: the receipt's `captured_at` must not move, and no
+  `sandbox-exec`/`perl` probe process should appear.
+- A repository with well over 128 KiB of readable source, to confirm the Ask
+  answers with trimmed grounding rather than refusing as an over-long
+  question.
+- The answered attempt's owner-local history entry: question, answer, citation
+  paths and line ranges.
+- Base and head SHAs.
+
+Point the selection at the runtime's **real** executable, not at a shell
+wrapper. `~/.local/bin/hermes` is a bash script that execs the interpreter
+inside `~/.hermes/hermes-agent/venv/bin`; the policy's read allow-list is derived
+from the named executable, so a wrapper leaves the interpreter's installation
+unreadable and the run dies in the dynamic loader before `main`.
+
+The Hermes profile used for acceptance must name a provider in the explicit host
+table (`anthropic`, `openai`, `openrouter`). A profile configured against a
+loopback plain-HTTP endpoint cannot be bound by a CONNECT proxy and is refused
+with `runtime network egress is not bounded to the model provider`.
+
+### Two-identity relay canary
+
+`crates/buzz-relay` holds the relay-side half:
+`the_relay_canary_detector_finds_a_published_question_and_not_an_unpublished_one`.
+Identity B keeps a wide live REQ open, then backfills with `since`, and the
+events table is queried for the canary. What it proves is the **detector**, not
+the feature: the desktop adapter is not a dependency of that crate, so nothing
+there can make a private Ask happen. A control event B *must* receive proves the
+subscription is live and wide, and a positive-control canary the SQL query
+*must* find proves the query would have seen a published question. The binding
+proof that the desktop publishes nothing is
+`managed_agents::private_ask::privacy_tests`, which counts relay egress at the
+desktop's own guard; this test is the control that makes that proof's relay-side
+half readable.
+
+It needs the isolated PostgreSQL lane:
+
+```bash
+just test          # or: ./scripts/run-tests.sh integration
+```
+
+That lane requires the `docker compose` services (Postgres and Redis) to be
+running; without them it cannot run at all and must not be reported as passing.

@@ -15,6 +15,25 @@ pub struct SourceState {
     pub(super) grants: GrantStore,
 }
 
+impl SourceState {
+    /// The grant installed for one repository coordinate in this scope.
+    ///
+    /// Read-only and non-installing: it cannot create a grant, and a scope
+    /// that has moved on clears the store exactly as every other reader does.
+    pub(super) fn grant_for_coordinate(
+        &self,
+        token: &crate::app_state::owner_scope::OwnerScopeToken,
+        coordinate: &str,
+    ) -> Option<Arc<Grant>> {
+        let installed = self.grants.list(token).ok()?;
+        let capability_id = installed
+            .into_iter()
+            .find(|info| info.repository_coordinate == coordinate)?
+            .capability_id;
+        self.grants.get(token, &capability_id).ok()
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceContent {

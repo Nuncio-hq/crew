@@ -51,6 +51,9 @@ pub(crate) mod readiness;
 #[cfg(test)]
 mod key_delete_test_support;
 #[allow(dead_code)]
+pub(crate) mod private_ask;
+pub(crate) mod private_ask_commands;
+#[allow(dead_code)]
 pub(crate) mod recap_adapter;
 #[allow(dead_code)]
 pub(crate) mod recap_capability;
