@@ -20,6 +20,12 @@ import {
 } from "@/features/wiki/lib/privateAskDev";
 import { invokeTauri } from "@/shared/api/tauri";
 import { startManagedAgentRuntime } from "@/shared/api/tauriManagedAgents";
+import { WikiTaskDispatchPanel } from "@/features/wiki/ui/WikiTaskDispatchPanel";
+import {
+  peekWikiAskFocus,
+  takeWikiAskFocus,
+} from "@/features/wiki/lib/wikiTaskOrigin";
+import type { PrivateAskDraftInput } from "@/features/wiki/lib/privateAskDev";
 import {
   OFFICE_COMPOSER_SURFACE_CLASS,
   OFFICE_FIELD_BOX_CLASS,
@@ -70,6 +76,7 @@ function usePrivateAskDevStatus(): PrivateAskDevStatus {
 export function WikiAskBox({
   onOpenSource,
   owner,
+  projectId,
   repoD,
   scopeLabel,
 }: {
@@ -77,6 +84,9 @@ export function WikiAskBox({
   door: "library" | "project";
   onOpenSource?: (citation: PrivateAskCitation) => void;
   owner?: string;
+  /** Stable project route identity for draft scoping; "library" on the
+   * company surface when no project route hosts the pane. */
+  projectId?: string;
   repoD?: string;
   scopeLabel: string;
 }) {
@@ -89,6 +99,7 @@ export function WikiAskBox({
       <PrivateAskDevComposer
         coordinate={owner && repoD ? `${owner}:${repoD}` : null}
         onOpenSource={onOpenSource}
+        projectId={projectId ?? "library"}
         scopeLabel={scopeLabel}
         status={status}
       />
@@ -282,6 +293,7 @@ const PHASE_LABEL: Record<string, string> = {
 function PrivateAskDevComposer({
   coordinate,
   onOpenSource,
+  projectId,
   scopeLabel,
   status,
 }: {
@@ -290,6 +302,7 @@ function PrivateAskDevComposer({
    * and the composer says so rather than asking about an unnamed repository. */
   coordinate: string | null;
   onOpenSource?: (citation: PrivateAskCitation) => void;
+  projectId: string;
   scopeLabel: string;
   status: PrivateAskDevStatus;
 }) {
@@ -297,6 +310,14 @@ function PrivateAskDevComposer({
     privateAskReducer,
     initialPrivateAskState,
   );
+  /**
+   * #367 — the editable task draft a validated answer opens. Produced by
+   * `private_ask_draft` (the #366 seam), opened into the dispatch panel; the
+   * panel owns the draft's lifecycle from there. `null` while closed.
+   */
+  const [draftInput, setDraftInput] =
+    React.useState<PrivateAskDraftInput | null>(null);
+  const [draftError, setDraftError] = React.useState<string | null>(null);
   /**
    * The agents this machine could address, and the one chosen. The picker
    * remembers per repository — a preference, not conversation state — keyed
@@ -375,6 +396,48 @@ function PrivateAskDevComposer({
   React.useEffect(() => {
     void refreshHistory();
   }, [refreshHistory]);
+
+  /**
+   * #367 — an author returning through a kickoff's source backlink stashed
+   * the private attempt id before navigating. Once the scoped history list
+   * is here, reopen exactly that attempt — never another viewer's record
+   * (the stash only exists when this viewer's own journal resolved it).
+   */
+  React.useEffect(() => {
+    if (!coordinate) return;
+    const focus = peekWikiAskFocus(coordinate);
+    // Settle only once the scoped history has arrived — peeking before that
+    // would drop the hint with the attempt still unrestored.
+    if (!focus || state.history.length === 0) return;
+    takeWikiAskFocus(coordinate);
+    const entry = state.history.find(
+      (candidate) => candidate.attemptId === focus.attemptId,
+    );
+    if (entry) {
+      dispatch({ type: "opened", entry });
+    }
+  }, [coordinate, state.history]);
+
+  const openDraft = React.useCallback(() => {
+    if (!coordinate || !state.followUpOf) return;
+    setDraftError(null);
+    void invokeTauri<PrivateAskDraftInput | null>("private_ask_draft", {
+      coordinate,
+      attemptId: state.followUpOf,
+    })
+      .then((input) => {
+        if (input) {
+          setDraftInput(input);
+        } else {
+          setDraftError(
+            "This answer is not on record as a draft source — ask again or reopen it from history.",
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        setDraftError(error instanceof Error ? error.message : String(error));
+      });
+  }, [coordinate, state.followUpOf]);
 
   /**
    * Progress is the attempt's own events, matched by the id this composer
@@ -774,6 +837,38 @@ function PrivateAskDevComposer({
             ) : null}
             {state.phase === "answered" ? (
               <ManifestPanel manifest={state.manifest} />
+            ) : null}
+            {state.phase === "answered" && state.followUpOf ? (
+              <div className="mt-2">
+                {draftInput ? null : (
+                  <Button
+                    data-testid="wiki-ask-dev-draft"
+                    onClick={openDraft}
+                    size="sm"
+                    type="button"
+                    variant="secondary"
+                  >
+                    Create task draft
+                  </Button>
+                )}
+                {draftError ? (
+                  <p
+                    aria-live="polite"
+                    className="mt-1 text-2xs text-muted-foreground"
+                    data-testid="wiki-ask-dev-draft-error"
+                    role="status"
+                  >
+                    {draftError}
+                  </p>
+                ) : null}
+                {draftInput ? (
+                  <WikiTaskDispatchPanel
+                    draft={draftInput}
+                    onClose={() => setDraftInput(null)}
+                    projectId={projectId}
+                  />
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}

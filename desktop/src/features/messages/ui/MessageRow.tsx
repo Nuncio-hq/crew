@@ -57,6 +57,7 @@ import {
 } from "./MessageHeader";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { SentFromThreadLine } from "./SentFromThreadLine";
+import { WikiTaskOriginLine } from "./WikiTaskOriginLine";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
 import { AgentReceiptMessageBody } from "./AgentReceiptMessageBody";
 import { renderMessageStatusMetadata } from "./message-status-metadata";
@@ -691,6 +692,7 @@ export const MessageRow = React.memo(
     const messageBodyNode = (
       <>
         <SentFromThreadLine channelId={channelId} tags={message.tags} />
+        <WikiTaskOriginLine tags={message.tags} />
         {renderBody()}
         <FailureNoticeRetryButton channelId={channelId} message={message} />
         {continuationMetadataNode}

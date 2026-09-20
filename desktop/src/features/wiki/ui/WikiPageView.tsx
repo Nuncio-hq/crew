@@ -846,6 +846,7 @@ export function WikiPageView({
           // source references, so an answer cannot conjure a foreign file.
           onOpenSource={openSourcePane}
           owner={owner}
+          projectId={navigationProjectId}
           repoD={repoD}
           scopeLabel={
             askScope === "library"

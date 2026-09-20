@@ -649,6 +649,31 @@ proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
 and ACL-safe origin links. These are gates, not source-handoff implementations.
 
+#367's dispatch consumer lands on the shared journal as
+`OperationKind::ThreadHandoff` records in
+`desktop/src-tauri/src/commands/wiki_task_dispatch.rs`. Prepare validates the
+reviewed intent (bounded title/prompt, ≤64 typed source references, channel +
+member-agent ids), captures the owner/community/generation token, rechecks the
+relay-signed kind:39002 roster live — the chosen member must still be a member
+and still an agent — and durably creates-or-resumes the operation before
+signing. The kickoff event is a normal signed kind:9 channel root: `h` channel
+tag, `p` agent mention, and two `client` tags carrying the dispatch id and the
+repository coordinate only — question/attempt ids never leave the device. The
+operation's creation second is the signing `created_at`, so every retry of one
+Start republishes byte-identical signed bytes; the first CAS persists
+`event_id` + `signed_event`, and submit refuses a record whose persisted id
+does not match. Submit rechecks scope and live membership, republishes the
+persisted bytes, and CAS-records Complete/Failed with a bounded attempt count;
+an accepted event id reconciles by an exact `ids`/`kinds` query. Abandon
+refuses accepted work and — unless forced — refuses an attempted dispatch whose
+publication is unresolved, marking only the forced case
+`abandoned_with_unresolved_publish`. Renderer drafts live under a separate
+`wiki:task:` key in the draft store's own bounded partition; saving one cannot
+evict an unrelated composer draft. The origin line on the kickoff resolves the
+author's private attempt only through their own operation record; other
+viewers reach the coordinate's authorized Wiki surface or the library, never
+the author's history.
+
 Coordinator-approved handbook compatibility (not a new founder claim): workspace-menu Company Wiki →
 existing `goWiki()` / `/wiki` / `WikiLibraryScreen` Company Wiki card. Reuse
 its kind 30023 content and ACL, with no new generator action, route migration

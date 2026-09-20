@@ -2775,3 +2775,57 @@ Start thread — is unchanged and remains #367's: this surface only exposes the
 read-only `PrivateAskDraftInput` an answered attempt yields (question, attempt,
 selected answer text, manifest, origin), and producing it creates no channel
 task.
+
+## D-085 — Wiki task dispatch is an explicit durable handoff, not prefill
+
+- **Status:** Accepted amendment to D-061 item 4 (dispatch half); dev-gated, not user-enabled
+- **Date:** 2026-09-20
+- **Issue:** #367
+
+D-061 item 4's remaining half — Start thread from an answer — is now real:
+the dispatch the Auto/Q&A/Plan prefill-only behavior implied is replaced by an
+explicit editable draft plus a signed, durable kickoff. D-084 owns the answer
+side; this amendment owns the handoff.
+
+**The draft is private editable state, not a composer borrow.** One answered
+attempt yields one `wiki:task:` draft key built from project id, repository
+coordinate and attempt id under the viewer/community-scoped draft store.
+Title, prompt, channel, agent and per-citation inclusion persist atomically
+through Save and survive reload and reopen; Cancel drops only unsaved edits
+and never touches a channel's unrelated composer draft. The `wiki:` namespace
+evicts in its own bounded partition — a Wiki save cannot evict composer
+drafts, and composer churn cannot drop the draft. Title-only drafts persist;
+`meta` counts as authored content under the empty-drop guard.
+
+**One Start is one durable intent.** The renderer persists a dispatch id into
+the draft before touching the network; the native `wiki_task_dispatch_*`
+commands record a `ThreadHandoff` operation in the shared owner-operation
+journal and sign exactly one kind:9 channel root bound to the operation's
+creation second. Retries — click, reconcile after a lost acknowledgement,
+resume after a crash — reuse the persisted event identity; a record whose
+persisted id no longer matches refuses instead of minting a second root.
+Acceptance is the relay's acknowledgement of that exact event id; reconcile is
+an exact `ids`/`kinds` query, and abandon rules follow the publication
+boundary (accepted work cannot be abandoned, an ambiguous publish refuses
+unforced abandonment). This is exactly-once *intent*, not an external
+exactly-once claim: a forced abandon after an attempted publish is recorded
+`abandoned_with_unresolved_publish`.
+
+**Only reviewed material ships.** The event body is the edited title and
+prompt plus a `Sources:` list of the citations the author left checked —
+bounded (≤64 references, ≤200-char title, ≤1024-char paths). The `p` mention
+names only the explicitly chosen member agent, re-verified live against the
+relay-signed kind:39002 roster at both prepare and submit; a member who lost
+`bot` status or membership between open and Start blocks the send rather than
+falling back to a contact point or implicit target. No question id, attempt
+id, private history, tool output or credential enters the event — the only
+provenance tags are the dispatch id and the repository coordinate.
+
+**The backlink is author-safe and other-viewer-safe.** A rendered kickoff
+carries a "From a private Wiki answer" line reading the two `client` markers.
+The author's click resolves their own operation record back to the draft key —
+project, coordinate, attempt — and reopens that exact attempt after the scoped
+history arrives. Any other viewer's journal cannot resolve the operation:
+they are navigated to the coordinate's authorized project Wiki (or the
+library when nothing resolves), and a failure label replaces the link rather
+than pretending to a private transcript.

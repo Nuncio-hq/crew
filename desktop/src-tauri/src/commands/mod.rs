@@ -125,11 +125,15 @@ mod wiki_runtime_settings;
 mod wiki_search;
 mod wiki_snapshot;
 mod wiki_source;
+mod wiki_task_dispatch;
+#[cfg(all(test, unix))]
+mod wiki_task_dispatch_tests;
 pub(crate) use wiki_publication_commands::*;
 pub(crate) use wiki_publication_worker::start as start_wiki_publication_worker;
 pub(crate) use wiki_runtime_settings::*;
 pub(crate) use wiki_search::*;
 pub(crate) use wiki_snapshot::*;
+pub(crate) use wiki_task_dispatch::*;
 mod window_chrome;
 mod window_vibrancy;
 mod workflows;
