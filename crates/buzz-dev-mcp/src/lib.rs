@@ -336,7 +336,7 @@ impl DevMcp {
 
     #[tool(
         name = "ask_question",
-        description = "Ask the Crew Wiki (repo pages + company notes). mode: auto | qa | plan. Grounded in the wiki TOC and source files."
+        description = "Ask the Crew Wiki (repo pages + company notes). mode: auto | qa | plan. Keyword heuristic over the wiki TOC — not the grounded private Ask path."
     )]
     async fn ask_question(
         &self,

@@ -91,6 +91,16 @@ fn parse_mode(raw: Option<&str>) -> AskMode {
     }
 }
 
+/// MCP-facing keyword search over the Wiki plan — a deterministic helper for
+/// tool callers, NOT the user-facing private Ask path.
+///
+/// This heuristic scores page titles and `source_files` names by substring
+/// and, when nothing matches, falls back to the plan's first page. That first
+/// page is labelled "the Wiki TOC" for tool callers, never presented as an
+/// answer grounded in evidence: #366's private Ask resolves its own
+/// question-scored retrieval (`managed_agents::private_ask::retrieval`) inside
+/// the verified snapshot, and an unanswerable question is `insufficient`
+/// there — this fallback is never reachable from that flow.
 pub async fn ask_question(p: AskQuestionParams) -> Result<CallToolResult, ErrorData> {
     let root = workdir();
     let (snapshot, plan) = match plan_repo(&root) {
@@ -124,6 +134,12 @@ pub async fn ask_question(p: AskQuestionParams) -> Result<CallToolResult, ErrorD
         }
     }
     if hits.is_empty() {
+        // Keyword heuristic fallback for the MCP tool only: it names the
+        // plan's first page so a tool caller has somewhere to start reading.
+        // The excerpt is just the page slug — no source bytes — so nothing
+        // here can be mistaken for grounded evidence. The private Ask flow
+        // (#366) never consults this path; its retrieval is question-scored
+        // inside the verified snapshot and reports insufficiency instead.
         if let Some(page) = plan.sections.first().and_then(|s| s.pages.first()) {
             hits.push(GroundingHit {
                 title: page.title.clone(),

@@ -2722,7 +2722,61 @@ Every dimension above fails closed: an unverified property refuses the request
 and names its own reason. Discovery is not certification, and a flag is not a
 denial.
 
-## D-084 — Contact-fallback routing commits beside the original
+## D-084 — Private Wiki Ask answers from the selected agent, privately, with fences
+
+- **Status:** Accepted amendment to D-061 item 4; dev-gated, not user-enabled
+- **Date:** 2026-09-20
+- **Issue:** #366
+
+D-061's Ask model was Auto / Q&A / Plan prefill: canned grounding, a Plan card
+ending in a prefilled channel kickoff. The dev-gated private Ask replaces that
+for the scoped single-repo question: the answer comes from the **selected
+agent's own runtime** under the D-083 one-shot contract, grounded in the
+coherent verified snapshot the viewer is looking at, and the Plan-mode
+prefill/sidebar examples are removed from the user-facing path rather than
+running beside it.
+
+**Grounding is a retrieval, not a fixture.** `private_ask::retrieval` scores the
+question's terms against every page in the verified snapshot (title, source
+paths, body — strongest first), keeps a bounded prefix, and reads only the
+source bytes behind a live `wiki_source` grant, inside the same deadline the
+renderer-facing read uses. What was and was not consulted is a
+`RetrievalManifest` — included and omitted pages and sources, with scores —
+that travels with the answer into history and onto the screen. A question the
+snapshot cannot cover is `insufficient`, never answered with the first page or
+an invented source range; the MCP `wiki_tools::ask_question` keyword fallback is
+labelled a deterministic tool heuristic and is unreachable from this path.
+Cited paths are resolved against the typed grounding exactly as #364's locator
+requires — a citation to anything the run was never given refuses the answer.
+
+**History is private, scoped, and finite.** `private_ask::history` records under
+a scope key built from community, viewer, repository coordinate and question —
+attempt id plus terminal status, prompt, validated answer and citations, source
+revision and selected agent. Run identity is persisted before launch; an
+attempt that dies between launch and terminal write reads back `interrupted`,
+not `answered`. Retention is bounded (entries per scope, history bytes per
+viewer, age), corruption fails the file rather than presenting a partial
+record, and `private_ask_forget` deletes by attempt. Nothing of it is a Nostr
+event and nothing of it is in globally keyed storage — the only renderer
+preference is the per-repository remembered agent.
+
+**Attempts are fenced.** `idle → retrieving → running → answered | refused |
+insufficient | cancelled | interrupted`, surfaced as `private-ask:progress`
+and `private-ask:chunk` events carrying the attempt id. A retry keeps the
+question id and mints a new attempt id; a late completion from an older or
+cancelled attempt cannot overwrite the active answer or another viewer's
+record. Follow-ups name the parent attempt and walk its own answered history —
+there is no implicit re-ask and no auto-retry of an unknown run.
+
+**Limits are enforced at the producer,** not the displayed substring: prompt
+context, response and stderr bytes, runtime plus certified cleanup, concurrent
+attempts per viewer and per question. The dispatch half of D-061 item 4 —
+Start thread — is unchanged and remains #367's: this surface only exposes the
+read-only `PrivateAskDraftInput` an answered attempt yields (question, attempt,
+selected answer text, manifest, origin), and producing it creates no channel
+task.
+
+## D-086 — Contact-fallback routing commits beside the original
 
 - **Status:** Accepted (contract v4, founder-approved 2026-09-17); staging-relay acceptance pending
 - **Date:** 2026-09-20

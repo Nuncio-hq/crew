@@ -1036,5 +1036,5 @@ atomically. The desktop receipt mirror
 (`validateAgentReceiptThreadRelationship`) enforces the same binding:
 a receipt replying to a 46044 decision must carry exactly one matching claim
 tag, and a claim tag on any other parent is rejected. Crash coverage is
-documented and tested in D-084; the lease/generation fence bounds a crashed
+documented and tested in D-086; the lease/generation fence bounds a crashed
 holder's claim to its TTL.
