@@ -262,8 +262,12 @@ existing 120/min relay ceiling shared with chat. The plaintext frame cap,
 Priority cannot move a terminal past its own over-frame backlog or any
 null-channel barrier; fairness, relay quota and transport can also delay it.
 The three-channel deterministic regression reaches completion in slot one
-instead of slot three. This is queue/pacer evidence, not installed-runtime
-latency: baseline/candidate timing and real-data screenshots await #348/#338.
+instead of slot three, and a local real-relay baseline/candidate run (#352)
+measured a completion queued behind a two-channel backlog at ~7.6 s
+(front-channel) versus ~0.4 s (priority) with cadence and frame caps
+unchanged. This is queue/pacer evidence, not installed-runtime latency:
+the #348 staging remeasure and real-data installed-runtime screenshots
+under #338 remain open.
 
 Validated receipts already match the exact agent, triggering event, session
 and turn when projecting a healthy thread's Ready to review badge. This is
@@ -706,6 +710,12 @@ grant loader/producer, and the existing bounded discovery process helper
 extended with caller-owned stdin, cancellation and per-stream budgets. The
 registered recap service binds those pieces at one production seam and keeps
 its command unavailable without the grant and matching retention row.
+The desktop frontend under `desktop/src/features/recap/` consumes only that
+command seam: a Thread recap section in Settings and a lazy Context panel call
+`get_recap_settings`/`save_recap_settings`/`get_thread_recap`/
+`generate_thread_recap`/`cancel_thread_recap`, render the backend-reported
+`availability` and `settings_error` verbatim, and keep every uncertified or
+unsupported selection visible-but-disabled rather than fabricating support.
 Hermes binds the selected profile path, canonical directory device/inode
 identity and bounded content digest. Plan construction copies the selected
 profile into the disposable run; immediately before launch, the source and
@@ -714,15 +724,28 @@ its configured MCP
 path and rule injection, binds a one-shot prompt, and checks the written usage
 model before accepting output. Empty toolsets, `--safe-mode`, or an ACP
 read-only session do not certify tool isolation: the producer requires an
-actual native observer rather than provider output claims; that observer must
-bind the executed plan and report hostile-tool denial before effect plus an
-unchanged controlled sentinel. No observer is wired yet, so the
-certification entrypoint rejects the parsed envelope and cannot project a
-positive grant. On macOS its plan is launched
-through the fixed `sandbox-exec` process-fork denial policy; the ordinary Unix
-process-group limitation and any escaped-descendant caveat still apply to the
-bounded owner. Neither recipe has a positive staging grant in the current
-inventory, so these adapter tests are not runtime acceptance.
+actual native observer rather than provider output claims. That observer is
+`recap_observer::verify_recap_runtime`, a fail-closed command that resolves the
+catalog contract and exact executable, then drives two bounded probes of the
+candidate through `HermesOneShotGateway`, a loopback-only provider facade the
+disposable profile is locked onto. The hostile phase serves exactly one canned
+`function_call` against the run-root sentinel and certification requires the
+runtime's follow-up `function_call_output` to deny it by call id; the forwarded
+phase relays the single admitted request to the pinned Codex responses endpoint
+with the provider keyring credential and records the wire-observed effective
+model. Contract selection controls which runtimes are even probeable: only the
+`StagingProfile` recipe replaces the provider endpoint, so explicit-model
+runtimes report `unsupported_tool_isolation` before any credential lookup, and
+runtimes without a contract report `unsupported_one_shot`. Process containment
+is required for both probes: on macOS the plan and the `--version` probe run
+under the fixed `sandbox-exec` process-fork denial policy; Windows uses the Job
+Object path; other platforms return `unsupported_process_containment`. The
+ordinary Unix process-group limitation and any escaped-descendant caveat still
+apply to the bounded owner. A successful run projects the grant and scoped
+retention row through `certify_runtime_probe_for_captured_scope`, which fences
+the captured owner scope before writing. Neither recipe has a positive staging
+grant in the current inventory, so these adapter tests are not runtime
+acceptance.
 
 The staging ownership loader reads only native `app_data_dir()` plus
 `crew-staging-ownership-v1.json`. It verifies compiled demo identity, actual
@@ -782,6 +805,33 @@ cannot admit a run without the separately bound runtime-ready grant.
 Mutable source, wrappers, executable upgrades, model, profile, platform or
 enforcement changes invalidate any future positive proof.
 Exact local path observations and one-run logs belong to #351/task evidence.
+
+### Certification contract (2026-09-20)
+
+`verify_recap_runtime` is wired; the founder-staging macOS host ran the real
+Hermes probe end to end (ignored test `managed_agents::recap_observer::tests::
+live_hermes_probe_observes_tool_denial_and_effective_model`, gated to hosts
+with `RECAP_LIVE_*` env). The executor VM still fails closed
+`unsupported_process_containment` on Linux.
+
+| Runtime / contract | Probeable on | Current result |
+| --- | --- | --- |
+| `hermes` v0.21.3 (`StagingProfile`, `-p <profile>` + locked gateway profile; resolved binary `~/.hermes/hermes-agent/venv/bin/hermes`, sha256 `c601ddf3…6bb8f`) | macOS (seatbelt) | PASS on macos-aarch64 — hostile phase terminally rejected `crew-recap-hostile-tool-v1` before effect (sentinel untouched, process reaped+contained); forwarded phase observed `effective_model=gpt-5.6-sol` on `POST /responses` via OAuth; `unsupported_process_containment` on Linux VM |
+| `claude` (`ExplicitModel`) | n/a | `unsupported_tool_isolation` — no profile rewiring seam, so wire-observed model/tool evidence is impossible |
+| `buzz-agent`, other catalog entries without `recap_contract` | n/a | `unsupported_one_shot` |
+| `pi` | n/a | not in `KnownAcpRuntime`; `runtime_mismatch` — BLOCKED |
+
+Probe host contract: the executable must be the concrete venv binary (a shallow
+`~/.local/bin` launcher fails `sandbox_install_root` by design); the staging
+profile must be `profiles/<name>`-shaped and inside the profile copy budget
+(the ~41 MB working profile needs trimming to the owned subset); `$TMPDIR`
+must resolve to a canonical path because `validate_owned_base` rejects
+symlinked bases.
+
+Cache key: `capability_fingerprint` hashes the exact resolved path, executable
+content SHA-256, model and profile — any binary or selection change forces a
+reprobe. Hostile and forwarded phases share the 120 s / 256-KiB-per-stream /
+5 s-grace bounds; the version probe is 10 s / 64 KiB.
 
 No candidate has an allocated recap profile, requested/effective model, or auth
 grant; no strict descendant containment or recap generation was exercised. The
@@ -1034,3 +1084,32 @@ nothing about the answer.
 The resolver in front of the binding is `private_ask/selection_native.rs`, so
 the developer surface reaches a real selection or a typed refusal. See D-083 for
 what each producer observes and for the named limits.
+
+## Contact-fallback decision seam (#412)
+
+Automatic routing of mention-less messages to a channel's configured contact
+is a relay-side decision, not a client heuristic. When a kind-9 stream
+message carries the `crew-contact-fallback` capability tag and no `p` mention
+tags, ingest evaluates the channel's latest contact canvas (kind 40100,
+`contact:` in the ` ```crew ` fence) inside the same Postgres transaction
+that stores the original: `buzz_db::contact::decide_contact_route` writes
+`contact_routes` (unique on `(community_id, original_event_id)`), the
+relay-signed kind `46044` proof event, a `contact_claims` row, and the quota
+spend — or records the explicit `no_route` outcome. The proof's `p` tag names
+the contact agent; `event_mentions` is written in the same transaction so
+`#p` history reads and live fan-out both reach it. Replays re-dispatch the
+stored proof without re-deciding.
+
+The contact harness (buzz-acp) consumes only the proven decision: it verifies
+the proof is signed by the relay identity (NIP-11 `self`) and that content
+and tags agree before acting, then fences the work via kind `24210`
+`KIND_CONTACT_CONTROL` verbs (`claim`/`start`/`cancel`) which carry a
+`h`+`decision`+`generation` contract handled by
+`handle_contact_control_event`. Its kind `46043` receipt attaches a
+`claim` tag `<decision>:<generation>` that `insert_contact_receipt` settles
+atomically. The desktop receipt mirror
+(`validateAgentReceiptThreadRelationship`) enforces the same binding:
+a receipt replying to a 46044 decision must carry exactly one matching claim
+tag, and a claim tag on any other parent is rejected. Crash coverage is
+documented and tested in D-086; the lease/generation fence bounds a crashed
+holder's claim to its TTL.

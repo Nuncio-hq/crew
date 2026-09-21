@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { installMockBridge, openNewMessagePage } from "../helpers/bridge";
+import {
+  installMockBridge,
+  openChannelBrowser,
+  openNewMessagePage,
+} from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
 
 const AGENT = "a7".repeat(32);
@@ -41,7 +45,11 @@ test("New Message keeps authenticated owner without a user-search duplicate", as
 test("member-add keeps authenticated owner without a user-search duplicate", async ({
   page,
 }) => {
-  await page.getByTestId("channel-general").click();
+  // The sidebar no longer lists stream channels; reach #general via the
+  // channel browser (Cmd/Ctrl+Shift+O) and select the member row.
+  await openChannelBrowser(page);
+  await page.getByTestId("browse-channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.getByTestId("channel-members-trigger").click();
   await page
     .getByTestId("channel-management-search-users")

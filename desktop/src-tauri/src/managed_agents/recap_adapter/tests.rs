@@ -14,6 +14,13 @@ fn plan() -> RecapLaunchPlan {
     .unwrap()
 }
 
+fn gateway() -> crate::managed_agents::recap_hermes_gateway::HermesGatewayConnection {
+    crate::managed_agents::recap_hermes_gateway::HermesGatewayConnection {
+        base_url: "http://127.0.0.1:43123".into(),
+        token: "a".repeat(64),
+    }
+}
+
 fn final_output(model: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "type": "result", "subtype": "success", "is_error": false,
@@ -218,8 +225,15 @@ fn hermes_plan_copies_profile_and_requires_matching_usage_model() {
     let executable = fixture.path().join("hermes");
     std::fs::write(&executable, b"fixture").unwrap();
 
-    let plan =
-        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap();
+    let plan = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap();
     let usage = plan.usage_file.clone().unwrap();
     std::fs::write(&usage, r#"{"model":"hermes-low"}"#).unwrap();
     assert!(root.join("hermes/profiles/scout/config.yaml").is_file());
@@ -255,6 +269,7 @@ fn hermes_profile_copy_rejects_symlinked_entries() {
         "hermes-low",
         &profile,
         b"input",
+        &gateway(),
     )
     .unwrap_err();
     assert_eq!(error, RecapRunFailure::ProfileUnavailable);
@@ -277,8 +292,15 @@ fn hermes_plan_rechecks_profile_content_and_directory_identity() {
     let executable = fixture.path().join("hermes");
     std::fs::write(&executable, b"fixture").unwrap();
 
-    let plan =
-        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap();
+    let plan = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap();
     let admission = RecapAdmission {
         runtime_id: "hermes".into(),
         executable: RecapExecutableIdentity {
@@ -325,8 +347,15 @@ fn hermes_plan_requires_supported_process_containment() {
     let executable = fixture.path().join("hermes");
     std::fs::write(&executable, b"fixture").unwrap();
 
-    let error =
-        hermes_recap_plan(&executable, &root, "hermes-low", &profile, b"thread input").unwrap_err();
+    let error = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap_err();
     assert_eq!(error, RecapRunFailure::UnsupportedContainment);
 }
 
@@ -381,6 +410,7 @@ fn equal_profile_names_in_other_scopes_do_not_match_the_captured_profile() {
         "hermes-low",
         &profile_a,
         b"thread input",
+        &gateway(),
     )
     .unwrap();
     let plan_b = hermes_recap_plan(
@@ -389,6 +419,7 @@ fn equal_profile_names_in_other_scopes_do_not_match_the_captured_profile() {
         "hermes-low",
         &profile_b,
         b"thread input",
+        &gateway(),
     )
     .unwrap();
     assert_ne!(plan_a.profile_identity, plan_b.profile_identity);
@@ -427,4 +458,69 @@ fn hermes_profile_ref_accepts_only_home_or_named_profile_shape() {
         hermes_profile_ref(Path::new("/staging/profiles/default")),
         None
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn sandbox_profile_denies_tools_and_routes_all_network_through_the_gateway() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let profile = fixture.path().join("profiles").join("scout");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    let executable = fixture.path().join("usr").join("bin").join("fakehermes");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::write(&executable, b"fixture").unwrap();
+    let root = fixture.path().join("run");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let plan = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap();
+    let Some(policy) = plan.sandbox_profile.as_deref() else {
+        panic!("macOS plan must contain the launch in seatbelt")
+    };
+    assert_eq!(policy.matches("(allow network-outbound").count(), 1);
+    assert!(policy.contains("(allow network-outbound (remote ip \"localhost:43123\"))"));
+    assert!(policy.contains("(deny default)"));
+    assert!(policy.contains("(deny process-fork)"));
+    assert!(policy.contains("(allow process-exec)"));
+    assert!(policy.contains(&format!("subpath \"{}\"", root.display())));
+    assert!(policy.contains("literal \"/dev/null\""));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn shallow_hermes_launcher_cannot_claim_the_gateway_only_policy() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let profile = fixture.path().join("profiles").join("scout");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(profile.join("config.yaml"), "model: hermes-low\n").unwrap();
+    let executable = fixture.path().join("bin").join("fakehermes");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::write(&executable, b"fixture").unwrap();
+    let root = fixture.path().join("run");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let error = hermes_recap_plan(
+        &executable,
+        &root,
+        "hermes-low",
+        &profile,
+        b"thread input",
+        &gateway(),
+    )
+    .unwrap_err();
+    assert_eq!(error, RecapRunFailure::UnsupportedContainment);
 }

@@ -1358,8 +1358,8 @@ pub fn resolve_channel_filters(
     rules: &[SubscriptionRule],
 ) -> HashMap<Uuid, ChannelFilter> {
     use buzz_core::kind::{
-        KIND_AGENT_USER_INPUT_ANSWER, KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER,
-        KIND_WORKFLOW_APPROVAL_REQUESTED,
+        KIND_AGENT_USER_INPUT_ANSWER, KIND_CONTACT_DECISION, KIND_STREAM_MESSAGE,
+        KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
     };
 
     let target_channels: Vec<Uuid> = if let Some(ref overrides) = config.channels_override {
@@ -1382,6 +1382,7 @@ pub fn resolve_channel_filters(
                     KIND_WORKFLOW_APPROVAL_REQUESTED,
                     KIND_STREAM_REMINDER,
                     KIND_AGENT_USER_INPUT_ANSWER,
+                    KIND_CONTACT_DECISION,
                 ]
             });
             let require_mention = !config.no_mention_filter;
@@ -1462,8 +1463,8 @@ pub fn resolve_dynamic_channel_filter(
     rules: &[crate::filter::SubscriptionRule],
 ) -> Option<ChannelFilter> {
     use buzz_core::kind::{
-        KIND_AGENT_USER_INPUT_ANSWER, KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER,
-        KIND_WORKFLOW_APPROVAL_REQUESTED,
+        KIND_AGENT_USER_INPUT_ANSWER, KIND_CONTACT_DECISION, KIND_STREAM_MESSAGE,
+        KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
     };
 
     // In Mentions/All mode, if the operator explicitly constrained channels
@@ -1489,6 +1490,7 @@ pub fn resolve_dynamic_channel_filter(
                     KIND_WORKFLOW_APPROVAL_REQUESTED,
                     KIND_STREAM_REMINDER,
                     KIND_AGENT_USER_INPUT_ANSWER,
+                    KIND_CONTACT_DECISION,
                 ]
             })),
             require_mention: !config.no_mention_filter,

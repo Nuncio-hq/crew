@@ -4,6 +4,7 @@ import {
   Bot,
   Cpu,
   Download,
+  FileText,
   FlaskConical,
   HardDrive,
   Keyboard,
@@ -42,11 +43,13 @@ import { HostedCommunitiesSettingsCard } from "./HostedCommunitiesSettingsCard";
 import { ProfileSettingsCard } from "./ProfileSettingsCard";
 import { UpdateChecker } from "../UpdateChecker";
 import { VoiceSettingsCard } from "./VoiceSettingsCard";
+import { RecapSettingsCard } from "@/features/recap/ui/RecapSettingsCard";
 
 export type SettingsSection =
   | "profile"
   | "notifications"
   | "voice"
+  | "recap"
   | "experimental"
   | "agents"
   | "channel-templates"
@@ -69,6 +72,7 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "profile",
   "notifications",
   "voice",
+  "recap",
   "experimental",
   "agents",
   "channel-templates",
@@ -136,6 +140,11 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     value: "voice",
     label: "Voice",
     icon: Volume2,
+  },
+  {
+    value: "recap",
+    label: "Thread recap",
+    icon: FileText,
   },
   {
     value: "experimental",
@@ -243,6 +252,8 @@ export function renderSettingsSection(
       );
     case "voice":
       return <VoiceSettingsCard />;
+    case "recap":
+      return <RecapSettingsCard />;
     case "experimental":
       return <ExperimentalFeaturesCard />;
     case "agents":

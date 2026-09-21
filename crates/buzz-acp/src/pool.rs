@@ -942,6 +942,11 @@ pub struct PromptContext {
     pub org_roster_cache: crate::org_roster::OrgRosterCache,
     /// Self-initiated budget counters (Crew). Turn-start enforcement.
     pub org_budget: Arc<crate::org_roster::OrgBudgetTracker>,
+    /// Contact-fallback claims this session holds: decision event id (hex) →
+    /// claim generation. A terminal receipt e-tagging a held decision must
+    /// carry the matching `claim` tag so the relay completes the claim in the
+    /// receipt's own transaction.
+    pub contact_claims: Mutex<HashMap<String, i64>>,
 }
 
 impl AgentPool {
@@ -7899,7 +7904,7 @@ async fn publish_agent_receipts(
     let events = causals
         .iter()
         .map(|causal| {
-            buzz_sdk::build_agent_receipt(
+            let builder = buzz_sdk::build_agent_receipt(
                 causal.routing_channel_id,
                 &buzz_sdk::ThreadRef {
                     root_event_id: causal.root_event_id,
@@ -7907,9 +7912,26 @@ async fn publish_agent_receipts(
                 },
                 &content,
             )
-            .map_err(|error| format!("failed to build agent receipt: {error}"))?
-            .sign_with_keys(&ctx.agent_keys)
-            .map_err(|error| format!("failed to sign agent receipt: {error}"))
+            .map_err(|error| format!("failed to build agent receipt: {error}"))?;
+            // A receipt e-tagging a held contact decision must name the claim
+            // (decision:generation) — the relay binds it to the claim row and
+            // completes the claim in the receipt's insert transaction.
+            let claim = ctx
+                .contact_claims
+                .lock()
+                .map_err(|_| "contact claim registry poisoned".to_string())?
+                .get(&causal.parent_event_id.to_hex())
+                .map(|generation| format!("{}:{}", causal.parent_event_id.to_hex(), generation));
+            let builder = match claim {
+                Some(value) => builder.tag(
+                    nostr::Tag::parse(["claim", value.as_str()])
+                        .map_err(|e| format!("failed to build claim tag: {e}"))?,
+                ),
+                None => builder,
+            };
+            builder
+                .sign_with_keys(&ctx.agent_keys)
+                .map_err(|error| format!("failed to sign agent receipt: {error}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let current_event_ids = events
@@ -12804,6 +12826,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             session_ledger_dir: std::env::temp_dir().join("buzz-acp-session-ledger-pool-tests"),
             org_roster_cache: crate::org_roster::empty_roster_cache(),
             org_budget: Arc::new(crate::org_roster::OrgBudgetTracker::default()),
+            contact_claims: Mutex::new(HashMap::new()),
         }
     }
 

@@ -647,6 +647,17 @@ type E2eConfig = {
       scope_value: string;
       kinds: string; // JSON-encoded integer array, e.g. "[9,40002]"
     }>;
+    /**
+     * Thread-recap fixtures (#356). Mirrors managed_agents::recap_commands:
+     * `runtimes` replaces the fail-closed unsupported inventory for the listed
+     * ids, `settings` seeds the persisted owner-local snapshot, `artifacts`
+     * seeds `${channelId}:${rootEventId}` lookups, `generateResults` sequences
+     * `generate_thread_recap` outcomes (a `{error}` entry rejects), and
+     * `holdGenerateUntilCancel` keeps generate pending until the matching
+     * `cancel_thread_recap` arrives. `settingsError` makes
+     * `get_recap_settings` throw that code.
+     */
+    recap?: MockRecapConfig;
     /** Synthetic observer frames returned by the archive IPC mocks. */
     archivedObserverEvents?: RelayEvent[];
     // Event IDs that `get_event` should report as definitively not found.
@@ -3645,6 +3656,292 @@ type MockSaveSubscriptionRow = {
 };
 let mockSaveSubscriptions: MockSaveSubscriptionRow[] = [];
 
+// ---- Thread recap mock (#356) ----------------------------------------------
+// Mirrors managed_agents::recap_commands: owner-local settings + fail-closed
+// runtime inventory + per-thread artifact freshness. All shapes use the
+// camelCase wire names the Tauri commands serialize.
+
+type MockRecapBounds = {
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  maxWallTimeMs: number;
+  cleanupGraceMs: number;
+};
+
+export type MockRecapSettings = {
+  version: number;
+  mode: "off" | "manual";
+  runtimeId: string | null;
+  requestedModel: string | null;
+  profileRef: string | null;
+  capabilityFingerprint: string | null;
+  bounds: MockRecapBounds;
+};
+
+export type MockRecapRuntime = {
+  id: string;
+  label: string;
+  kind: string;
+  availability: "supported" | "unsupported";
+  reason: string | null;
+  capabilityFingerprint: string | null;
+  profiles: { id: string; label: string }[];
+  models: string[];
+};
+
+export type MockRecapRecap = {
+  generationId: string;
+  text: string;
+  generatedAt: number;
+  runtimeId: string;
+  requestedModel: string | null;
+  effectiveModel: string | null;
+  profileRef: string | null;
+  provenance: string;
+  sourceManifestHash: string;
+  sourceEventIds: string[];
+  omittedMessageCount: number;
+  sourceOverflow?: boolean;
+  oldestIncludedEventId: string | null;
+  newestIncludedEventId: string | null;
+};
+
+type MockRecapArtifact = {
+  recap: MockRecapRecap;
+  /** Source revision recorded when the artifact was committed. */
+  revision: number;
+};
+
+/** Thread-recap fixture block accepted by `mock.recap` (#356). */
+export type MockRecapConfig = {
+  runtimes?: MockRecapRuntime[];
+  settings?: Partial<MockRecapSettings>;
+  artifacts?: Record<string, { recap: MockRecapRecap; stale?: boolean }>;
+  generateResults?: Array<MockRecapRecap | { error: string }>;
+  holdGenerateUntilCancel?: boolean;
+  settingsError?: string;
+};
+
+const MOCK_RECAP_DEFAULT_BOUNDS: MockRecapBounds = {
+  maxInputBytes: 128 * 1024,
+  maxOutputBytes: 256 * 1024,
+  maxWallTimeMs: 120_000,
+  cleanupGraceMs: 5_000,
+};
+
+function mockRecapDefaultSettings(): MockRecapSettings {
+  return {
+    version: 1,
+    mode: "off",
+    runtimeId: null,
+    requestedModel: null,
+    profileRef: null,
+    capabilityFingerprint: null,
+    bounds: { ...MOCK_RECAP_DEFAULT_BOUNDS },
+  };
+}
+
+// Fail-closed inventory matching the real fail-closed state: every catalogued
+// runtime is present but unsupported until a runtime-ready grant exists.
+const MOCK_RECAP_UNSUPPORTED_RUNTIMES: MockRecapRuntime[] = [
+  {
+    id: "hermes",
+    label: "Hermes",
+    kind: "hermes",
+    availability: "unsupported",
+    reason: "A separately issued native runtime-ready grant is required.",
+    capabilityFingerprint: null,
+    profiles: [],
+    models: [],
+  },
+  {
+    id: "claude",
+    label: "Claude Code",
+    kind: "cli",
+    availability: "unsupported",
+    reason: "A separately issued native runtime-ready grant is required.",
+    capabilityFingerprint: null,
+    profiles: [],
+    models: [],
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    kind: "cli",
+    availability: "unsupported",
+    reason: "A separately issued native runtime-ready grant is required.",
+    capabilityFingerprint: null,
+    profiles: [],
+    models: [],
+  },
+];
+
+let mockRecapSettings: MockRecapSettings = mockRecapDefaultSettings();
+let mockRecapArtifacts: Record<string, MockRecapArtifact> = {};
+/** Per `${channelId}:${rootEventId}` source revision; replies/edits/deletes bump it. */
+const mockRecapSourceRevision = new Map<string, number>();
+/** Sequenced generate outcomes; last entry repeats once exhausted. */
+let mockRecapGenerateResults: Array<MockRecapRecap | { error: string }> = [];
+let mockRecapHoldGenerateUntilCancel = false;
+/** Active generations keyed by `${channelId}:${rootEventId}`; mirrors the
+ * one-generation-per-thread registry fence. */
+const mockRecapActiveGenerations = new Map<
+  string,
+  { generationId: string; held?: { reject: (error: Error) => void } }
+>();
+
+function resetMockRecap(config: E2eConfig | undefined) {
+  const recap = config?.mock?.recap;
+  mockRecapSettings = recap?.settings
+    ? { ...mockRecapDefaultSettings(), ...recap.settings }
+    : mockRecapDefaultSettings();
+  mockRecapArtifacts = {};
+  mockRecapSourceRevision.clear();
+  for (const [key, seeded] of Object.entries(recap?.artifacts ?? {})) {
+    mockRecapArtifacts[key] = {
+      recap: seeded.recap,
+      revision: seeded.stale ? -1 : (mockRecapSourceRevision.get(key) ?? 0),
+    };
+  }
+  mockRecapGenerateResults = [...(recap?.generateResults ?? [])];
+  mockRecapHoldGenerateUntilCancel = recap?.holdGenerateUntilCancel ?? false;
+  mockRecapActiveGenerations.clear();
+}
+
+function mockRecapRuntimes(config: E2eConfig | undefined): MockRecapRuntime[] {
+  const override = config?.mock?.recap?.runtimes;
+  if (!override) return MOCK_RECAP_UNSUPPORTED_RUNTIMES.map((r) => ({ ...r }));
+  const unsupportedIds = new Set(override.map((r) => r.id));
+  return [
+    ...override.map((r) => ({ ...r })),
+    ...MOCK_RECAP_UNSUPPORTED_RUNTIMES.filter(
+      (r) => !unsupportedIds.has(r.id),
+    ).map((r) => ({ ...r })),
+  ];
+}
+
+function mockRecapSnapshot(
+  config: E2eConfig | undefined,
+  settings: MockRecapSettings,
+) {
+  return {
+    settings,
+    runtimes: mockRecapRuntimes(config),
+    settingsError: null,
+  };
+}
+
+/** Mirror of validate_settings in recap_commands.rs (minus scope capture). */
+function mockRecapValidateSettings(
+  settings: MockRecapSettings,
+  runtimes: MockRecapRuntime[],
+): MockRecapSettings {
+  if (
+    settings.version !== 1 ||
+    settings.bounds?.maxInputBytes !==
+      MOCK_RECAP_DEFAULT_BOUNDS.maxInputBytes ||
+    settings.bounds?.maxOutputBytes !==
+      MOCK_RECAP_DEFAULT_BOUNDS.maxOutputBytes ||
+    settings.bounds?.maxWallTimeMs !==
+      MOCK_RECAP_DEFAULT_BOUNDS.maxWallTimeMs ||
+    settings.bounds?.cleanupGraceMs !== MOCK_RECAP_DEFAULT_BOUNDS.cleanupGraceMs
+  ) {
+    throw new Error("invalid_settings");
+  }
+  const normalized: MockRecapSettings = { ...settings };
+  if (settings.mode === "off") {
+    normalized.runtimeId = null;
+    normalized.requestedModel = null;
+    normalized.profileRef = null;
+    normalized.capabilityFingerprint = null;
+    return normalized;
+  }
+  if (!settings.runtimeId) throw new Error("missing_selection");
+  const runtime = runtimes.find((option) => option.id === settings.runtimeId);
+  if (runtime?.availability !== "supported") {
+    throw new Error("runtime_not_ready");
+  }
+  if (
+    (settings.capabilityFingerprint ?? null) !== runtime.capabilityFingerprint
+  ) {
+    throw new Error("capability_changed");
+  }
+  if (runtime.kind === "hermes") {
+    if (!settings.profileRef) throw new Error("missing_selection");
+    if (
+      !runtime.profiles.some((profile) => profile.id === settings.profileRef)
+    ) {
+      throw new Error("profile_mismatch");
+    }
+  } else if (settings.profileRef) {
+    throw new Error("profile_mismatch");
+  }
+  if (!settings.requestedModel) throw new Error("missing_selection");
+  if (!runtime.models.includes(settings.requestedModel)) {
+    throw new Error("invalid_model_selection");
+  }
+  return normalized;
+}
+
+function mockRecapRevisionKey(channelId: string, rootEventId: string) {
+  return `${channelId}:${rootEventId}`;
+}
+
+function mockRecapBumpRevision(channelId: string, rootEventId: string) {
+  const key = mockRecapRevisionKey(channelId, rootEventId);
+  mockRecapSourceRevision.set(key, (mockRecapSourceRevision.get(key) ?? 0) + 1);
+}
+
+/** Mirror of recap_status: a stored artifact is stale once the observed source
+ * revision differs from the revision recorded at generation time. */
+function mockRecapLookup(channelId: string, rootEventId: string) {
+  const artifact =
+    mockRecapArtifacts[mockRecapRevisionKey(channelId, rootEventId)];
+  if (!artifact) {
+    return { status: "no_recap", recap: null, reason: null };
+  }
+  const current =
+    mockRecapSourceRevision.get(mockRecapRevisionKey(channelId, rootEventId)) ??
+    0;
+  // Mirror recap_status in recap_commands/source.rs: a bounded-window artifact
+  // reports stale with the source_overflow reason even when its revision is
+  // still current — a late edit outside the window could have been missed.
+  const overflow = Boolean(artifact.recap.sourceOverflow);
+  const stale = artifact.revision !== current || overflow;
+  return {
+    status: stale ? "stale" : "current",
+    recap: artifact.recap,
+    reason: stale && overflow ? "source_overflow" : null,
+  };
+}
+
+function mockRecapFixtureRecap(
+  generationId: string,
+  settings: MockRecapSettings,
+  channelId: string,
+  rootEventId: string,
+): MockRecapRecap {
+  const revisionKey = mockRecapRevisionKey(channelId, rootEventId);
+  const revision = mockRecapSourceRevision.get(revisionKey) ?? 0;
+  return {
+    generationId,
+    // Fixture-labelled text: no real model produced this summary.
+    text: `[fixture] Mock recap of thread ${rootEventId.slice(0, 8)} at source revision ${revision}.`,
+    generatedAt: Date.now(),
+    runtimeId: settings.runtimeId ?? "unknown",
+    requestedModel: settings.requestedModel,
+    effectiveModel: settings.requestedModel,
+    profileRef: settings.profileRef,
+    provenance: "verified",
+    sourceManifestHash: `mock-manifest-${revision}`,
+    sourceEventIds: [rootEventId],
+    omittedMessageCount: 0,
+    sourceOverflow: false,
+    oldestIncludedEventId: rootEventId,
+    newestIncludedEventId: rootEventId,
+  };
+}
+
 type MockObservedUnreadScope = {
   generation: string;
   revision: number;
@@ -5786,6 +6083,20 @@ function emitMockChannelMessage(
     if (pending) event.pending = true;
     recordMockMessage(channelId, event);
     if (emitLive) emitMockLiveEvent(channelId, event);
+    // Edits (kind:40003) and deletions (kind:5) reference their target via an
+    // e-tag; advance that thread's recap source revision so a stored artifact
+    // reports stale, mirroring the real manifest-hash freshness check.
+    if (eventKind === 40003 || eventKind === 5) {
+      const store = getMockMessageStore(channelId);
+      for (const tag of event.tags) {
+        if (tag[0] !== "e" || typeof tag[1] !== "string") continue;
+        const target = store.find((candidate) => candidate.id === tag[1]);
+        const targetRoot = target
+          ? (getThreadReferenceFromTags(target.tags).rootEventId ?? target.id)
+          : tag[1];
+        mockRecapBumpRevision(channelId, targetRoot);
+      }
+    }
     return event;
   }
 
@@ -5820,6 +6131,9 @@ function emitMockChannelMessage(
   if (pending) event.pending = true;
   recordMockMessage(channelId, event);
   if (emitLive) emitMockLiveEvent(channelId, event);
+  // A reply inside a thread changes its recap source (manifest) — the next
+  // get_thread_recap lookup must report the stored artifact as stale.
+  mockRecapBumpRevision(channelId, rootEventId);
   const rootEvent = history.find((candidate) => candidate.id === rootEventId);
   if (rootEvent && emitLive) {
     const summary = buildMockChannelThreadSummary(
@@ -12362,6 +12676,7 @@ export function maybeInstallE2eTauriMocks() {
   resetMockObservedUnread();
   resetMockTeamCatalogEvents(config);
   resetMockSaveSubscriptions(config);
+  resetMockRecap(config);
   resetMockObservedUnread();
   resetMockArchivedObserverEvents(config);
   resetMockPendingCommunityDeepLinks(config);
@@ -17031,6 +17346,164 @@ export function maybeInstallE2eTauriMocks() {
           } else {
             row.kinds = JSON.stringify(kinds);
           }
+        }
+        return null;
+      }
+      // ---- Thread recap commands (#356) ----
+      // Mirrors managed_agents::recap_commands: settings persist owner-locally,
+      // artifacts stay current until a source edit/reply bumps the revision,
+      // and generation validates the saved selection against the mock
+      // inventory instead of a provider.
+      case "get_recap_settings": {
+        const settingsError = activeConfig?.mock?.recap?.settingsError;
+        if (settingsError) throw new Error(settingsError);
+        // Mirror recoverable_settings: a well-shaped but currently unavailable
+        // selection is returned as-is with settings_error so the UI can offer
+        // repair; structurally invalid settings fall back to Off.
+        try {
+          mockRecapValidateSettings(
+            mockRecapSettings,
+            mockRecapRuntimes(activeConfig),
+          );
+          return mockRecapSnapshot(activeConfig, mockRecapSettings);
+        } catch (error) {
+          if (error instanceof Error && error.message === "invalid_settings") {
+            return {
+              ...mockRecapSnapshot(activeConfig, mockRecapDefaultSettings()),
+              settingsError: "invalid_settings",
+            };
+          }
+          return {
+            ...mockRecapSnapshot(activeConfig, mockRecapSettings),
+            settingsError: "settings_unavailable",
+          };
+        }
+      }
+      case "save_recap_settings": {
+        const input = (payload as { settings?: MockRecapSettings }).settings;
+        if (!input) throw new Error("invalid_settings");
+        const normalized = mockRecapValidateSettings(
+          input,
+          mockRecapRuntimes(activeConfig),
+        );
+        // A *changed* settings fingerprint marks previously stored artifacts
+        // stale; an identical save keeps them current, matching recap_status.
+        if (JSON.stringify(normalized) !== JSON.stringify(mockRecapSettings)) {
+          for (const key of Object.keys(mockRecapArtifacts)) {
+            mockRecapArtifacts[key].revision = -1;
+          }
+        }
+        mockRecapSettings = normalized;
+        return mockRecapSnapshot(activeConfig, normalized);
+      }
+      case "get_thread_recap": {
+        const input = payload as {
+          channelId?: string;
+          rootEventId?: string;
+        };
+        if (!input.channelId || !input.rootEventId) {
+          throw new Error("invalid_thread");
+        }
+        return mockRecapLookup(input.channelId, input.rootEventId);
+      }
+      case "generate_thread_recap": {
+        const input = payload as {
+          channelId?: string;
+          rootEventId?: string;
+          generationId?: string;
+        };
+        if (!input.channelId || !input.rootEventId || !input.generationId) {
+          throw new Error("invalid_thread");
+        }
+        const key = mockRecapRevisionKey(input.channelId, input.rootEventId);
+        // Register before validating settings, mirroring the real command's
+        // capture/register ordering for the settings-commit race.
+        if (mockRecapActiveGenerations.has(key)) {
+          throw new Error("generation_in_progress");
+        }
+        const generationId = input.generationId;
+        const active: {
+          generationId: string;
+          held?: { reject: (error: Error) => void };
+        } = { generationId };
+        mockRecapActiveGenerations.set(key, active);
+        // Settings validation happens before any run starts — an Off or
+        // uncertified selection fails the generation the same way the real
+        // command rejects it before spawning a worker.
+        let validated: MockRecapSettings;
+        try {
+          validated = mockRecapValidateSettings(
+            mockRecapSettings,
+            mockRecapRuntimes(activeConfig),
+          );
+          if (validated.mode !== "manual") throw new Error("recap_off");
+        } catch (error) {
+          mockRecapActiveGenerations.delete(key);
+          throw error;
+        }
+        if (mockRecapHoldGenerateUntilCancel) {
+          return new Promise<MockRecapRecap>((_resolve, reject) => {
+            active.held = { reject };
+          });
+        }
+        const sequenced =
+          mockRecapGenerateResults.length === 1
+            ? mockRecapGenerateResults[0]
+            : (mockRecapGenerateResults.shift() ?? null);
+        try {
+          if (
+            sequenced &&
+            typeof sequenced === "object" &&
+            "error" in sequenced
+          ) {
+            throw new Error(sequenced.error);
+          }
+          const recap = sequenced
+            ? { ...(sequenced as MockRecapRecap), generationId }
+            : mockRecapFixtureRecap(
+                generationId,
+                validated,
+                input.channelId,
+                input.rootEventId,
+              );
+          // A recap always cites its included sources; a fixture that left
+          // them empty defaults to the thread root (always included).
+          if (!recap.sourceEventIds?.length) {
+            recap.sourceEventIds = [input.rootEventId];
+            recap.oldestIncludedEventId ??= input.rootEventId;
+            recap.newestIncludedEventId ??= input.rootEventId;
+          }
+          mockRecapArtifacts[key] = {
+            recap,
+            revision: mockRecapSourceRevision.get(key) ?? 0,
+          };
+          return recap;
+        } finally {
+          mockRecapActiveGenerations.delete(key);
+        }
+      }
+      case "cancel_thread_recap": {
+        const input = payload as {
+          channelId?: string;
+          rootEventId?: string;
+          generationId?: string;
+        };
+        if (!input.channelId || !input.rootEventId || !input.generationId) {
+          throw new Error("invalid_thread");
+        }
+        const key = mockRecapRevisionKey(input.channelId, input.rootEventId);
+        const active = mockRecapActiveGenerations.get(key);
+        if (!active) throw new Error("generation_not_found");
+        if (active.generationId !== input.generationId) {
+          throw new Error("generation_mismatch");
+        }
+        mockRecapActiveGenerations.delete(key);
+        // The cancel response resolves before the held generation rejects,
+        // matching the real command: it flags the run and returns, while the
+        // generation task fails asynchronously.
+        const held = active.held;
+        if (held) {
+          setTimeout(() => held.reject(new Error("cancelled")), 0);
         }
         return null;
       }

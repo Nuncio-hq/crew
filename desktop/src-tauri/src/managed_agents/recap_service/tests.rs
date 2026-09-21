@@ -107,6 +107,10 @@ fn copied_profile_replacement_after_planning_is_rejected_before_spawn() {
         "hermes-low",
         &profile,
         b"private prompt",
+        &crate::managed_agents::recap_hermes_gateway::HermesGatewayConnection {
+            base_url: "http://127.0.0.1:43123".into(),
+            token: "a".repeat(64),
+        },
     )
     .unwrap();
     let profile_digest = super::super::recap_adapter::profile_tree_digest(&profile).unwrap();

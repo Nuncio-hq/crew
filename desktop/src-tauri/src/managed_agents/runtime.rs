@@ -533,8 +533,12 @@ pub fn spawn_agent_child(
         crate::managed_agents::resolve_managed_aware_agent_command(effective_command)?;
 
     // The caller supplies the explicit canonical pair relay. This is the only
-    // relay this child may connect to, regardless of the record/workspace default.
-    let effective_relay_url = runtime_key.relay_url.clone();
+    // relay this child may connect to, regardless of the record/workspace
+    // default. It must be dialed verbatim — never `runtime_key.relay_url`,
+    // which canonicalizes loopback (`localhost` → `127.0.0.1`) for identity;
+    // the relay binds communities on the Host header, so the rewritten
+    // authority is a different tenant and the WS upgrade 404s.
+    let effective_relay_url = crate::relay::effective_agent_relay_url(&record.relay_url, relay_url);
     // Augment PATH for DMG launches so child processes can find:
     //   - bundled CLI via ~/.local/bin symlink
     //   - nvm-managed node/npm (nvm initializes only in interactive shells)
@@ -955,7 +959,7 @@ fn start_managed_agent_process_supported(
     let mut process = spawn_agent_child(
         app,
         record,
-        &key.relay_url,
+        workspace_relay_url,
         false,
         owner_hex,
         replay_floor_unix,

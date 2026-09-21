@@ -1,5 +1,4 @@
 use super::*;
-use crate::managed_agents::recap_adapter::claude_recap_plan;
 
 fn candidate() -> RecapRuntimeContract {
     RecapRuntimeContract {
@@ -33,30 +32,24 @@ fn known_contract() -> RecapRuntimeContract {
         .recap_contract()
 }
 
+fn tool_evidence(request_observed: bool, sentinel_after: &str) -> RecapToolProbeEvidence {
+    RecapToolProbeEvidence {
+        probe_id: RECAP_TOOL_PROBE_ID.into(),
+        tool_name: "context_engine".into(),
+        request_observed,
+        denied_before_effect: true,
+        sentinel_before: "a".repeat(64),
+        sentinel_after: sentinel_after.into(),
+    }
+}
+
 fn adapter_observation(model: &str) -> RecapAdapterObservation {
-    let plan = claude_recap_plan(
-        Path::new("/staging/claude"),
-        Path::new("/staging/recap-runs/probe"),
+    RecapAdapterObservation::for_test(
+        b"bounded recap output".to_vec(),
         model,
-        b"probe",
+        true,
+        tool_evidence(true, &"a".repeat(64)),
     )
-    .unwrap();
-    let envelope = serde_json::json!({
-        "type": "recap_probe",
-        "result": "bounded recap output",
-        "effectiveModel": model,
-        "oneShotCompleted": true,
-        "toolProbe": {
-            "probeId": "crew-recap-hostile-tool-v1",
-            "toolName": "context_engine",
-            "requestObserved": true,
-            "deniedBeforeEffect": true,
-            "sentinelBefore": "a".repeat(64),
-            "sentinelAfter": "a".repeat(64)
-        }
-    });
-    plan.parse_probe_output(true, &serde_json::to_vec(&envelope).unwrap(), b"")
-        .unwrap()
 }
 
 fn probe() -> RecapProbeAttestation {
@@ -306,7 +299,7 @@ fn explicit_model_contract_rejects_profile_bearing_proof() {
 }
 
 #[test]
-fn provider_probe_output_without_native_observer_stays_unsupported() {
+fn observer_tuple_with_complete_evidence_certifies() {
     let raw = probe();
     let result = RecapRuntimeCertification::from_adapter_observation(
         RecapProbeTarget {
@@ -320,7 +313,18 @@ fn provider_probe_output_without_native_observer_stays_unsupported() {
         raw.state,
         raw.process,
     );
-    assert_eq!(result, Err(RecapFailure::UnverifiedCapability));
+    let certification = result.unwrap();
+    assert_eq!(certification.runtime_id, "claude");
+    assert_eq!(certification.effective_model, "claude-fable-5-1");
+    assert_eq!(
+        certification.guarantees,
+        RecapGuarantees {
+            one_shot: true,
+            tool_isolation: true,
+            state_isolation: true,
+            process_containment: true,
+        }
+    );
 }
 
 #[test]
@@ -331,29 +335,12 @@ fn certification_requires_catalog_identity_and_all_probe_evidence() {
                  request_observed: bool,
                  sentinel_after: &str|
      -> RecapAdapterObservation {
-        let plan = claude_recap_plan(
-            Path::new("/staging/claude"),
-            Path::new("/staging/recap-runs/probe"),
-            "claude-fable-5-1",
-            b"probe",
+        RecapAdapterObservation::for_test(
+            result.as_bytes().to_vec(),
+            effective_model,
+            one_shot_completed,
+            tool_evidence(request_observed, sentinel_after),
         )
-        .unwrap();
-        let envelope = serde_json::json!({
-            "type": "recap_probe",
-            "result": result,
-            "effectiveModel": effective_model,
-            "oneShotCompleted": one_shot_completed,
-            "toolProbe": {
-                "probeId": "crew-recap-hostile-tool-v1",
-                "toolName": "context_engine",
-                "requestObserved": request_observed,
-                "deniedBeforeEffect": true,
-                "sentinelBefore": "a".repeat(64),
-                "sentinelAfter": sentinel_after
-            }
-        });
-        plan.parse_probe_output(true, &serde_json::to_vec(&envelope).unwrap(), b"")
-            .unwrap()
     };
 
     let mut invalid = probe();

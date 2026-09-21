@@ -457,3 +457,39 @@ fn unchanged_session_policy_does_not_require_restart() {
     let thread = snapshot_under(AcpSessionPolicy::Thread);
     assert!(policy_transition_diff(&thread, &snapshot_under(AcpSessionPolicy::Thread)).is_empty());
 }
+
+#[test]
+fn spawn_dial_url_uses_verbatim_pair_relay_not_canonicalized_key() {
+    // The spawn boundary hands `BUZZ_RELAY_URL` the pair relay verbatim via
+    // `crate::relay::effective_agent_relay_url` (see `spawn_agent_child`):
+    // `ManagedAgentRuntimeKey` canonicalizes loopback spellings
+    // (`localhost` → `127.0.0.1`) for identity — runtime ids, receipts, log
+    // paths — while the relay binds communities on the HTTP `Host` header and
+    // does NOT equate loopback spellings (`nip11_or_ws_handler` →
+    // `bind_community` → `normalize_host`). A child launched with the
+    // canonicalized `ws://127.0.0.1:3000` against a community seeded as
+    // `localhost:3000` gets a 404 on the WS upgrade, so no managed agent
+    // could join a `just dev` relay. This pins the two contracts apart at
+    // the production seam both call.
+    let mut record = record();
+    record.pubkey = "ab".repeat(32);
+    // A stale creation-era pin must keep being ignored — the workspace pair
+    // relay is the only dial target.
+    record.relay_url = "wss://stale-creation-era-pin.example".into();
+
+    assert_eq!(
+        crate::relay::effective_agent_relay_url(&record.relay_url, "ws://localhost:3000"),
+        "ws://localhost:3000",
+        "dial URL must be the verbatim workspace pair relay, not the canonicalized key URL"
+    );
+    assert_eq!(
+        crate::managed_agents::ManagedAgentRuntimeKey::new(
+            record.pubkey.clone(),
+            "ws://localhost:3000",
+        )
+        .unwrap()
+        .relay_url,
+        "ws://127.0.0.1:3000",
+        "runtime key keeps the canonical loopback spelling for identity"
+    );
+}
