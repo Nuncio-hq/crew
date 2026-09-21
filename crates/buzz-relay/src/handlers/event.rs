@@ -15,7 +15,8 @@ use tracing::{debug, error, info, warn};
 use buzz_core::event::StoredEvent;
 use buzz_core::kind::{
     event_kind_u32, is_ephemeral, is_unshared_gated_event, AUTHOR_ONLY_KINDS,
-    KIND_AGENT_OBSERVER_FRAME, KIND_GIFT_WRAP, KIND_NIP43_LEAVE_REQUEST, KIND_PRESENCE_UPDATE,
+    KIND_AGENT_OBSERVER_FRAME, KIND_CONTACT_CONTROL, KIND_GIFT_WRAP, KIND_NIP43_LEAVE_REQUEST,
+    KIND_PRESENCE_UPDATE,
 };
 use buzz_core::observer::{
     content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -57,7 +58,7 @@ pub(crate) fn bounded_kind_label(kind: u32) -> String {
         44100..=44101 => kind.to_string(),
         44200 => kind.to_string(),
         45001..=45003 => kind.to_string(),
-        46001..=46012 | 46020 | 46030..=46031 | 46040..=46043 => kind.to_string(),
+        46001..=46012 | 46020 | 46030..=46031 | 46040..=46044 => kind.to_string(),
         48001 | 48100..=48104 | 48106 => kind.to_string(),
         49001 => kind.to_string(),
         _ => "other".to_string(),
@@ -1031,6 +1032,21 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 return;
             }
         }
+        if kind_u32 == KIND_CONTACT_CONTROL {
+            // Contact-fallback v4 control channel: claim/start/cancel verbs
+            // mutate the fenced claim row and are acknowledged by the OK
+            // reply — the event itself is symbolic and never fanned out.
+            match handle_contact_control_event(&event, &conn, &state, &pubkey_bytes).await {
+                Ok(message) => {
+                    conn.send(RelayMessage::ok(&event_id_hex, true, &message));
+                }
+                Err(message) => {
+                    reject("invalid");
+                    conn.send(RelayMessage::ok(&event_id_hex, false, &message));
+                }
+            }
+            return;
+        }
         match handle_ephemeral_event(
             event,
             conn_id,
@@ -1253,6 +1269,135 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 conn.send(RelayMessage::ok(&event_id_hex, false, &msg));
             }
         }
+    }
+}
+
+/// Handle a kind:24210 contact-control command (`claim`/`start`/`cancel`).
+///
+/// Tags: `["verb", "claim"|"start"|"cancel"]`, `["decision", <hex>]`,
+/// `["h", <channel id hex>]`; `start`/`cancel` additionally carry
+/// `["generation", <n>]` and `claim` may carry `["ttl", <secs>]` (bounded).
+/// The holder is always the event signer — callers cannot act for another
+/// key. Success replies are `OK true "<verb>:<generation>"`.
+async fn handle_contact_control_event(
+    event: &Event,
+    conn: &ConnectionState,
+    state: &Arc<AppState>,
+    pubkey_bytes: &[u8],
+) -> Result<String, String> {
+    let event_clone = event.clone();
+    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_clone)).await;
+    match verify_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(format!("invalid: {e}")),
+        Err(_) => return Err("error: internal error".to_string()),
+    }
+
+    fn tag_value<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
+        event.tags.iter().find_map(|t| {
+            let s = t.as_slice();
+            (s.first().map(String::as_str) == Some(name))
+                .then(|| s.get(1).map(String::as_str))
+                .flatten()
+        })
+    }
+
+    let verb = tag_value(event, "verb").unwrap_or_default();
+    let decision_hex = tag_value(event, "decision")
+        .ok_or_else(|| "invalid: contact control requires a decision tag".to_string())?;
+    let decision_bytes =
+        hex::decode(decision_hex).map_err(|_| "invalid: decision tag is not hex".to_string())?;
+    if decision_bytes.len() != 32 {
+        return Err("invalid: decision tag must be 32 bytes".to_string());
+    }
+    let channel_tag = tag_value(event, "h")
+        .ok_or_else(|| "invalid: contact control requires an h tag".to_string())?;
+    let channel_id = uuid::Uuid::parse_str(channel_tag)
+        .map_err(|_| "invalid: h tag is not a channel uuid".to_string())?;
+    let generation = match tag_value(event, "generation") {
+        Some(text) => Some(
+            text.parse::<i64>()
+                .map_err(|_| "invalid: generation tag is not an integer".to_string())?,
+        ),
+        None => None,
+    };
+    let community = conn.tenant.community();
+
+    match verb {
+        "claim" => {
+            if generation.is_some() {
+                return Err("invalid: claim does not carry a generation".to_string());
+            }
+            let ttl_secs = match tag_value(event, "ttl") {
+                Some(text) => text
+                    .parse::<i64>()
+                    .map_err(|_| "invalid: ttl tag is not an integer".to_string())?,
+                None => 60,
+            }
+            .clamp(5, 600);
+            match state
+                .db
+                .claim_contact_decision(
+                    community,
+                    &decision_bytes,
+                    channel_id,
+                    pubkey_bytes,
+                    ttl_secs,
+                )
+                .await
+            {
+                Ok(buzz_db::contact::ContactClaimResult::Granted { generation }) => {
+                    Ok(format!("claim:{generation}"))
+                }
+                Ok(buzz_db::contact::ContactClaimResult::Denied(reason)) => {
+                    Err(format!("restricted: contact claim denied: {reason}"))
+                }
+                Ok(buzz_db::contact::ContactClaimResult::Missing) => {
+                    Err("invalid: no routed contact decision with that id".to_string())
+                }
+                Err(e) => Err(format!("error: database error: {e}")),
+            }
+        }
+        "start" | "cancel" => {
+            let generation =
+                generation.ok_or_else(|| format!("invalid: {verb} requires a generation tag"))?;
+            let outcome = if verb == "start" {
+                state
+                    .db
+                    .start_contact_claim(
+                        community,
+                        &decision_bytes,
+                        channel_id,
+                        pubkey_bytes,
+                        generation,
+                    )
+                    .await
+            } else {
+                state
+                    .db
+                    .cancel_contact_claim(
+                        community,
+                        &decision_bytes,
+                        channel_id,
+                        pubkey_bytes,
+                        generation,
+                    )
+                    .await
+            };
+            match outcome {
+                Ok(buzz_db::contact::ContactControlResult::Applied) => {
+                    Ok(format!("{verb}:{generation}"))
+                }
+                Ok(buzz_db::contact::ContactControlResult::Denied(reason)) => {
+                    Err(format!("restricted: contact {verb} denied: {reason}"))
+                }
+                Ok(buzz_db::contact::ContactControlResult::Missing) => {
+                    Err("invalid: no routed contact decision with that id".to_string())
+                }
+                Err(e) => Err(format!("error: database error: {e}")),
+            }
+        }
+        _ => Err("invalid: contact control verb must be claim, start, or cancel".to_string()),
     }
 }
 

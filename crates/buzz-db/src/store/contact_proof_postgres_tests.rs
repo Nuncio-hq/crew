@@ -80,6 +80,11 @@ impl Fixture {
         // before tests exercise an old writer that predates that catalog.
         sqlx::raw_sql(
             r#"
+            -- Parent triggers on the partitioned `events` table propagate to
+            -- leaf clones; drop the parents first so the per-leaf drops below
+            -- are dependency-clean no-ops.
+            DROP TRIGGER IF EXISTS contact_classify_original_v1 ON events;
+            DROP TRIGGER IF EXISTS contact_guard_original_v1 ON events;
             DO $$
             DECLARE
                 relation_name regclass;

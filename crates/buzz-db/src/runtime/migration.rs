@@ -702,7 +702,7 @@ mod postgres_tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 46);
+        assert_eq!(migrations.len(), 47);
         // Crew's existing wiki allowlist keeps its applied migration identity.
         assert_eq!(migrations[30].version, 31);
         assert!(migrations[30].sql.as_str().contains("30023, 30623"));
@@ -1310,6 +1310,23 @@ mod postgres_tests {
         assert!(desired_schema.contains("CREATE TABLE contact_routes"));
         assert!(desired_schema.contains("CREATE TABLE contact_quota"));
         assert!(desired_schema.contains("CREATE FUNCTION contact_guard_original_v1()"));
+
+        // Contact-fallback decision seam (#412): additive migration — the
+        // fenced claim lifecycle and the per-leaf deferred guard installer live
+        // in their own version, never folded into 0046 or 0001.
+        assert_eq!(migrations[46].version, 47);
+        let seam = migrations[46].sql.as_str();
+        assert!(seam.contains("CREATE TABLE contact_claims"));
+        assert!(seam.contains("contact_routes ADD COLUMN canvas_id"));
+        assert!(seam.contains("CREATE FUNCTION contact_cancel_claim_on_original_delete_v1()"));
+        assert!(seam.contains("CREATE FUNCTION contact_install_leaf_guards_v1(leaf regclass)"));
+        assert!(seam.contains("CREATE FUNCTION contact_verify_catalog_v1()"));
+        assert!(seam.contains("CREATE FUNCTION contact_purge_executor_exempt_v1"));
+        assert!(seam.contains("REFERENCES contact_routes (community_id, decision_id)"));
+        assert!(desired_schema.contains("CREATE TABLE contact_claims"));
+        assert!(desired_schema.contains("CREATE FUNCTION contact_verify_catalog_v1()"));
+        assert!(desired_schema.contains("CREATE FUNCTION contact_purge_executor_exempt_v1"));
+        assert!(desired_schema.contains("canvas_id"));
     }
 
     #[test]
@@ -1852,6 +1869,7 @@ mod postgres_tests {
         let mut schema_fences = schema.fence_attachments.clone();
         schema_fences.remove("contact_routes");
         schema_fences.remove("contact_quota");
+        schema_fences.remove("contact_claims");
         assert_eq!(
             expected_fences, schema_fences,
             "write-fence attachment targets differ after recovery policy"
@@ -2818,21 +2836,21 @@ mod postgres_tests {
             "all NIP-FI tables must be absent after migration 0045: {present:?}"
         );
 
-        // Migration 0045 predates the contact-retention tables that are part of
-        // the current deletion manifest. Advance through that additive
-        // migration before validating the head catalog; validating at 0045
+        // Migration 0045 predates the contact evidence tables that are part of
+        // the current deletion manifest. Advance through the additive contact
+        // migrations before validating the head catalog; validating at 0045
         // would correctly report those not-yet-created relations as drift.
         MIGRATOR
-            .run_to(46, &pool)
+            .run_to(47, &pool)
             .await
-            .expect("migration 0046 must apply after ledger removal");
+            .expect("migrations through 0047 must apply after ledger removal");
 
         // The deletion catalog must validate with ledger relations gone and
-        // the current contact-retention surface present.
+        // the current contact evidence surface present.
         crate::deletion::DeletionStore::new(pool.clone())
             .validate_catalog()
             .await
-            .expect("deletion catalog validates after migration 0046");
+            .expect("deletion catalog validates after migration 0047");
     }
 
     #[tokio::test]

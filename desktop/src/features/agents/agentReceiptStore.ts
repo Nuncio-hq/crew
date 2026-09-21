@@ -5,7 +5,11 @@ import { validatesCanonicalEventAncestry } from "@/features/agents/receiptParent
 import { parseAgentReceipt } from "@/features/messages/lib/agentReceipt.mjs";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import type { RelayEvent } from "@/shared/api/types";
-import { KIND_AGENT_RECEIPT, KIND_REACTION } from "@/shared/constants/kinds";
+import {
+  KIND_AGENT_RECEIPT,
+  KIND_CONTACT_DECISION,
+  KIND_REACTION,
+} from "@/shared/constants/kinds";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
 export type AgentReceiptSummary = {
@@ -171,7 +175,23 @@ export function validateAgentReceiptThreadRelationship(
   ) {
     return false;
   }
-  return parentTargets.some((tag) => tag[1] === event.pubkey);
+  if (!parentTargets.some((tag) => tag[1] === event.pubkey)) return false;
+
+  // Mirror of the relay's claim binding (contact-fallback v4): a receipt
+  // replying to a kind:46044 contact decision must name that decision in
+  // exactly one `claim` tag of the form "<decision_hex>:<generation>", and a
+  // claim tag on a receipt to any other parent is invalid.
+  const claimTags = event.tags.filter((tag) => tag[0] === "claim");
+  if (parentEvent.kind === KIND_CONTACT_DECISION) {
+    if (claimTags.length !== 1) return false;
+    const value = claimTags[0]?.[1] ?? "";
+    const [decisionHex, generationText, ...rest] = value.split(":");
+    if (rest.length > 0 || decisionHex !== parentEvent.id) return false;
+    if (!/^[0-9]+$/.test(generationText ?? "")) return false;
+  } else if (claimTags.length > 0) {
+    return false;
+  }
+  return true;
 }
 
 export function subscribeAgentReceipts(listener: () => void) {

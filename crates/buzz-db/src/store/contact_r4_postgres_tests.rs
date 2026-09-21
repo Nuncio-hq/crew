@@ -8,7 +8,9 @@ use chrono::{DateTime, Utc};
 use nostr::{Event, EventBuilder, Keys, Kind, Tag, Timestamp};
 use sqlx::{Postgres, Transaction};
 
-// Provisional local Crew allocation; no wire handler or capability is enabled.
+// Claimed in `crates/buzz-core/src/kind.rs` by #412: durable relay-only
+// decision proof + ephemeral control wire. The constants stay local so the
+// fixture's authored kinds cannot drift against the registry silently.
 const CONTACT_PROOF: u16 = 46044;
 const CONTACT_CONTROL: u16 = 24210;
 
@@ -347,17 +349,32 @@ async fn contact_proof_r4_quota_full_preserves_chat_and_replay_classification() 
 }
 
 #[test]
-fn contact_proof_r4_provisional_kind_allocation_is_unclaimed_and_control_ephemeral() {
-    assert!(!buzz_core::kind::is_ephemeral(u32::from(CONTACT_PROOF)));
-    assert!(buzz_core::kind::is_ephemeral(u32::from(CONTACT_CONTROL)));
-    assert!(!buzz_core::kind::ALL_KINDS.contains(&u32::from(CONTACT_PROOF)));
-    assert!(!buzz_core::kind::ALL_KINDS.contains(&u32::from(CONTACT_CONTROL)));
-    assert_ne!(
+fn contact_proof_r4_claimed_kind_allocation_is_relay_only_and_control_ephemeral() {
+    // #412 registered both kinds: the durable proof is relay-only (clients can
+    // never submit it) and the control wire stays ephemeral. The fixture kind
+    // constants must equal the registered ones.
+    assert_eq!(
         u32::from(CONTACT_PROOF),
-        buzz_core::kind::KIND_AGENT_RECEIPT
+        buzz_core::kind::KIND_CONTACT_DECISION
     );
-    // Names are deliberately local until ingress/search/feed gates are added.
-    // Reserving constants here is not relay-only proof authorization.
+    assert_eq!(
+        u32::from(CONTACT_CONTROL),
+        buzz_core::kind::KIND_CONTACT_CONTROL
+    );
+    assert!(!buzz_core::kind::is_ephemeral(
+        buzz_core::kind::KIND_CONTACT_DECISION
+    ));
+    assert!(buzz_core::kind::is_relay_only_kind(
+        buzz_core::kind::KIND_CONTACT_DECISION
+    ));
+    assert!(buzz_core::kind::is_ephemeral(
+        buzz_core::kind::KIND_CONTACT_CONTROL
+    ));
+    assert!(!buzz_core::kind::is_relay_only_kind(
+        buzz_core::kind::KIND_CONTACT_CONTROL
+    ));
+    assert!(buzz_core::kind::ALL_KINDS.contains(&buzz_core::kind::KIND_CONTACT_DECISION));
+    assert!(buzz_core::kind::ALL_KINDS.contains(&buzz_core::kind::KIND_CONTACT_CONTROL));
 }
 
 #[tokio::test]

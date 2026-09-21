@@ -1059,3 +1059,32 @@ nothing about the answer.
 The resolver in front of the binding is `private_ask/selection_native.rs`, so
 the developer surface reaches a real selection or a typed refusal. See D-083 for
 what each producer observes and for the named limits.
+
+## Contact-fallback decision seam (#412)
+
+Automatic routing of mention-less messages to a channel's configured contact
+is a relay-side decision, not a client heuristic. When a kind-9 stream
+message carries the `crew-contact-fallback` capability tag and no `p` mention
+tags, ingest evaluates the channel's latest contact canvas (kind 40100,
+`contact:` in the ` ```crew ` fence) inside the same Postgres transaction
+that stores the original: `buzz_db::contact::decide_contact_route` writes
+`contact_routes` (unique on `(community_id, original_event_id)`), the
+relay-signed kind `46044` proof event, a `contact_claims` row, and the quota
+spend — or records the explicit `no_route` outcome. The proof's `p` tag names
+the contact agent; `event_mentions` is written in the same transaction so
+`#p` history reads and live fan-out both reach it. Replays re-dispatch the
+stored proof without re-deciding.
+
+The contact harness (buzz-acp) consumes only the proven decision: it verifies
+the proof is signed by the relay identity (NIP-11 `self`) and that content
+and tags agree before acting, then fences the work via kind `24210`
+`KIND_CONTACT_CONTROL` verbs (`claim`/`start`/`cancel`) which carry a
+`h`+`decision`+`generation` contract handled by
+`handle_contact_control_event`. Its kind `46043` receipt attaches a
+`claim` tag `<decision>:<generation>` that `insert_contact_receipt` settles
+atomically. The desktop receipt mirror
+(`validateAgentReceiptThreadRelationship`) enforces the same binding:
+a receipt replying to a 46044 decision must carry exactly one matching claim
+tag, and a claim tag on any other parent is rejected. Crash coverage is
+documented and tested in D-086; the lease/generation fence bounds a crashed
+holder's claim to its TTL.

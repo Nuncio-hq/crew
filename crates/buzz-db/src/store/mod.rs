@@ -18,6 +18,9 @@ pub mod channel_members;
 mod channel_recovery_postgres_tests;
 /// Community lifecycle and host-map persistence.
 pub mod community;
+/// Crew contact-fallback routing: atomic decision records, relay-signed
+/// proofs, and the fenced claim lifecycle (issue #412).
+pub mod contact;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.
 pub mod deletion;
 /// Direct message channel persistence.

@@ -148,6 +148,9 @@ async fn ensure_partition(
     {
         Ok(_) => {
             info!("added partition {partition_name}");
+            if table_name == "events" {
+                install_contact_leaf_guards(connection, &partition_name).await?;
+            }
             Ok(())
         }
         Err(sqlx::Error::Database(db_err))
@@ -165,6 +168,21 @@ async fn ensure_partition(
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// Install the deferred contact-routing guards on a new events leaf. The
+/// migration-0047 installer is idempotent and only accepts attached leaves, so
+/// calling it on every `ensure_partition` keeps the catalog complete without
+/// duplicating DDL.
+async fn install_contact_leaf_guards(
+    connection: &mut sqlx::PgConnection,
+    partition_name: &str,
+) -> Result<()> {
+    sqlx::query("SELECT contact_install_leaf_guards_v1($1::regclass)")
+        .bind(partition_name)
+        .execute(&mut *connection)
+        .await?;
+    Ok(())
 }
 
 // Exercise the real connection-bound DDL inside a fixture-owned transaction.
