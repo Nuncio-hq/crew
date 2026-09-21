@@ -15,6 +15,8 @@ use std::process::Command;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "macos")]
+use url::Url;
 
 use super::recap_capability::RecapToolProbeEvidence;
 
@@ -29,10 +31,10 @@ const HERMES_PROFILE_DEPTH_LIMIT: usize = 32;
 const HERMES_PROFILE_BYTES_LIMIT: u64 = 32 * 1024 * 1024;
 const HERMES_USAGE_LIMIT: u64 = 64 * 1024;
 
-/// Redacted facts parsed from one native certification-probe result. This is
-/// produced by [`RecapLaunchPlan::parse_probe_output`], rather than assembled
-/// by a renderer or settings caller. The raw probe envelope is never retained
-/// after these bounded fields are extracted.
+/// Redacted facts recorded by the native observer for one certification
+/// probe, rather than parsed from provider-reported output. The bounded
+/// child output, usage-file model, completion state and hostile-tool
+/// evidence are assembled by [`Self::from_native_evidence`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecapAdapterObservation {
     output: Vec<u8>,
@@ -56,6 +58,24 @@ impl RecapAdapterObservation {
 
     pub(crate) fn tool_probe(&self) -> &RecapToolProbeEvidence {
         &self.tool_probe
+    }
+
+    /// Assemble an observation only from evidence the native observer itself
+    /// recorded: bounded child output, the usage-file model, completion state,
+    /// and the gateway's hostile-tool denial evidence. No provider-reported
+    /// field is accepted here.
+    pub(crate) fn from_native_evidence(
+        output: Vec<u8>,
+        effective_model: String,
+        one_shot_completed: bool,
+        tool_probe: RecapToolProbeEvidence,
+    ) -> Self {
+        Self {
+            output,
+            effective_model,
+            one_shot_completed,
+            tool_probe,
+        }
     }
 
     #[cfg(test)]
@@ -119,6 +139,11 @@ pub(crate) struct RecapLaunchPlan {
     profile_identity: Option<super::recap_capability::RecapProfileIdentity>,
     profile_destination: Option<PathBuf>,
     profile_destination_identity: Option<super::recap_capability::RecapProfileIdentity>,
+    /// Digest of the locked synthetic profile actually written to the
+    /// destination. It differs from `profile_digest` (the admitted source)
+    /// because the gateway connection and token replace the copied provider
+    /// configuration.
+    profile_destination_digest: Option<String>,
     usage_file: Option<PathBuf>,
     /// On macOS this is a fixed process-fork denial policy. The policy is
     /// passed to `/usr/bin/sandbox-exec`; the installed runtime and all of its
@@ -175,7 +200,7 @@ impl RecapLaunchPlan {
                             profile_identity(destination).ok().as_ref()
                                 == self.profile_destination_identity.as_ref()
                                 && profile_tree_digest(destination).ok().as_deref()
-                                    == Some(expected.as_str())
+                                    == self.profile_destination_digest.as_deref()
                         })
             }
             _ => false,
@@ -228,48 +253,6 @@ impl RecapLaunchPlan {
                 Ok(result)
             }
         }
-    }
-
-    /// Parse the fixed certification envelope emitted by a native adapter
-    /// probe. A normal recap result is intentionally not enough: the envelope
-    /// must carry an observed hostile-tool denial and its unchanged sentinel.
-    /// Installed runtimes that cannot emit this evidence remain unsupported.
-    pub(crate) fn parse_probe_output(
-        &self,
-        exit_success: bool,
-        stdout: &[u8],
-        stderr: &[u8],
-    ) -> Result<RecapAdapterObservation, RecapRunFailure> {
-        if stdout.len() > RECAP_OUTPUT_LIMIT || stderr.len() > RECAP_OUTPUT_LIMIT {
-            return Err(RecapRunFailure::OutputLimit);
-        }
-        if !exit_success {
-            return Err(RecapRunFailure::NonzeroExit);
-        }
-        let envelope: RecapProbeEnvelope =
-            serde_json::from_slice(stdout).map_err(|_| RecapRunFailure::InvalidOutput)?;
-        if envelope.kind != "recap_probe"
-            || envelope.result.trim().is_empty()
-            || envelope.result.contains('\0')
-            || envelope.effective_model.trim().is_empty()
-            || envelope.effective_model != envelope.effective_model.trim()
-            || envelope.effective_model.chars().any(char::is_control)
-        {
-            return Err(RecapRunFailure::InvalidOutput);
-        }
-        Ok(RecapAdapterObservation {
-            output: envelope.result.into_bytes(),
-            effective_model: envelope.effective_model,
-            one_shot_completed: envelope.one_shot_completed,
-            tool_probe: RecapToolProbeEvidence {
-                probe_id: envelope.tool_probe.probe_id,
-                tool_name: envelope.tool_probe.tool_name,
-                request_observed: envelope.tool_probe.request_observed,
-                denied_before_effect: envelope.tool_probe.denied_before_effect,
-                sentinel_before: envelope.tool_probe.sentinel_before,
-                sentinel_after: envelope.tool_probe.sentinel_after,
-            },
-        })
     }
 }
 
@@ -352,6 +335,7 @@ pub(crate) fn claude_recap_plan(
         profile_identity: None,
         profile_destination: None,
         profile_destination_identity: None,
+        profile_destination_digest: None,
         usage_file: None,
         sandbox_profile: None,
     })
@@ -369,6 +353,7 @@ pub(crate) fn hermes_recap_plan(
     model: &str,
     profile: &Path,
     input: &[u8],
+    gateway: &super::recap_hermes_gateway::HermesGatewayConnection,
 ) -> Result<RecapLaunchPlan, RecapRunFailure> {
     if input.len() > RECAP_INPUT_LIMIT {
         return Err(RecapRunFailure::InputLimit);
@@ -396,7 +381,17 @@ pub(crate) fn hermes_recap_plan(
     {
         return Err(RecapRunFailure::ProfileUnavailable);
     }
+    // Containment resolves before the locked profile is written so an
+    // unsupported platform fails before mutating the disposable copy.
+    let sandbox_profile = hermes_containment_profile(executable, root, &gateway.base_url)?;
+    // The copied profile's own provider configuration is replaced by the
+    // locked gateway profile: the child's only provider route and token are
+    // the one-shot loopback endpoint, and the digest recorded below is the
+    // digest of that locked tree.
+    super::recap_hermes_gateway::write_locked_profile(&destination, gateway, model)
+        .map_err(|_| RecapRunFailure::StateIsolation)?;
     let destination_identity = profile_identity(&destination)?;
+    let destination_digest = profile_tree_digest(&destination)?;
 
     let usage_file = root.join("usage.json");
     prepare_usage_file(&usage_file)?;
@@ -423,7 +418,6 @@ pub(crate) fn hermes_recap_plan(
     // root at the disposable copy before its pre-argparse profile selector
     // runs; the source profile is never mounted or mutated in place.
     env.insert("HERMES_HOME".into(), root.join("hermes").into_os_string());
-    let sandbox_profile = macos_containment_profile(executable)?;
     Ok(RecapLaunchPlan {
         kind: RecapLaunchKind::Hermes,
         executable: executable.to_owned(),
@@ -436,6 +430,7 @@ pub(crate) fn hermes_recap_plan(
         profile_identity: Some(source_identity),
         profile_destination: Some(destination),
         profile_destination_identity: Some(destination_identity),
+        profile_destination_digest: Some(destination_digest),
         usage_file: Some(usage_file),
         sandbox_profile,
     })
@@ -539,8 +534,96 @@ pub(crate) fn native_containment_profile(
     }
 }
 
-fn macos_containment_profile(executable: &Path) -> Result<Option<String>, RecapRunFailure> {
-    native_containment_profile(executable)
+/// Seatbelt policy for the Hermes one-shot: deny default, allow exec,
+/// deny fork, read only the install tree and disposable root (never ambient
+/// $HOME), write only under the root, and egress only to the loopback
+/// gateway port. Fail closed on any other Unix platform.
+fn hermes_containment_profile(
+    executable: &Path,
+    root: &Path,
+    gateway_base_url: &str,
+) -> Result<Option<String>, RecapRunFailure> {
+    #[cfg(target_os = "macos")]
+    {
+        if !is_executable(Path::new("/usr/bin/sandbox-exec")) {
+            return Err(RecapRunFailure::UnsupportedContainment);
+        }
+        let executable = executable
+            .canonicalize()
+            .map_err(|_| RecapRunFailure::UnsupportedContainment)?;
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or(RecapRunFailure::UnsupportedContainment)?;
+        let install = sandbox_install_root(&executable, &home)?;
+        let gateway =
+            Url::parse(gateway_base_url).map_err(|_| RecapRunFailure::UnsupportedContainment)?;
+        let port = gateway
+            .port()
+            .ok_or(RecapRunFailure::UnsupportedContainment)?;
+        if gateway.scheme() != "http"
+            || gateway.host_str() != Some("127.0.0.1")
+            || gateway.path() != "/"
+            || gateway.query().is_some()
+            || gateway.fragment().is_some()
+        {
+            return Err(RecapRunFailure::UnsupportedContainment);
+        }
+        let quote = |path: &Path| {
+            let value = path
+                .to_str()
+                .ok_or(RecapRunFailure::UnsupportedContainment)?;
+            if value.contains(['"', '\n', '\r']) {
+                return Err(RecapRunFailure::UnsupportedContainment);
+            }
+            Ok(value.to_owned())
+        };
+        let home = quote(&home)?;
+        let install = quote(&install)?;
+        let root = quote(root)?;
+        Ok(Some(format!(
+            r#"(version 1)
+(deny default)
+(allow process-exec)
+(deny process-fork)
+(allow file-read-metadata)
+(allow file-read-data (require-not (subpath "{home}")))
+(allow file-read-data (subpath "{install}") (subpath "{root}"))
+(allow file-write* (subpath "{root}") (literal "/dev/null"))
+(allow network-outbound (remote ip "localhost:{port}"))
+(allow sysctl-read)
+(allow mach-lookup
+  (global-name "com.apple.SystemConfiguration.configd")
+  (global-name "com.apple.system.logger"))"#
+        )))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (executable, root, gateway_base_url);
+        Ok(None)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (executable, root, gateway_base_url);
+        Err(RecapRunFailure::UnsupportedContainment)
+    }
+}
+
+/// Derive the runtime install root from the resolved executable and reject
+/// layouts where the derived root would swallow the ambient home directory.
+#[cfg(target_os = "macos")]
+fn sandbox_install_root(executable: &Path, home: &Path) -> Result<PathBuf, RecapRunFailure> {
+    let install = executable
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or(RecapRunFailure::UnsupportedContainment)?;
+    if home == install || home.starts_with(install) {
+        // A shallow launcher such as ~/.local/bin/hermes would otherwise make
+        // its derived install root the entire user home and undo the ambient-
+        // home read denial. Acceptance must resolve the concrete installation.
+        return Err(RecapRunFailure::UnsupportedContainment);
+    }
+    Ok(install.to_owned())
 }
 
 #[derive(Default)]
@@ -896,37 +979,6 @@ fn is_executable(path: &Path) -> bool {
 #[derive(Deserialize)]
 struct HermesUsage {
     model: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RecapProbeEnvelope {
-    #[serde(rename = "type")]
-    kind: String,
-    result: String,
-    #[serde(rename = "effectiveModel")]
-    effective_model: String,
-    #[serde(rename = "oneShotCompleted")]
-    one_shot_completed: bool,
-    #[serde(rename = "toolProbe")]
-    tool_probe: RecapToolProbeEnvelope,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RecapToolProbeEnvelope {
-    #[serde(rename = "probeId")]
-    probe_id: String,
-    #[serde(rename = "toolName")]
-    tool_name: String,
-    #[serde(rename = "requestObserved")]
-    request_observed: bool,
-    #[serde(rename = "deniedBeforeEffect")]
-    denied_before_effect: bool,
-    #[serde(rename = "sentinelBefore")]
-    sentinel_before: String,
-    #[serde(rename = "sentinelAfter")]
-    sentinel_after: String,
 }
 
 #[derive(Deserialize)]

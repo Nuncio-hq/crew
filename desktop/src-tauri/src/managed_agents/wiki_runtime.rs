@@ -775,7 +775,7 @@ fn canonical_profile_source(source: &Path) -> Result<PathBuf, WikiRuntimeFailure
 /// `$HOME/.local/share/claude/versions` and Hermes' wrapper searches
 /// `$HOME/.hermes/hermes-agent`. Direct binaries and unrelated shims are
 /// preserved unchanged.
-fn resolve_installed_wrapper(runtime_id: &str, resolved: PathBuf) -> Option<PathBuf> {
+pub(crate) fn resolve_installed_wrapper(runtime_id: &str, resolved: PathBuf) -> Option<PathBuf> {
     let file = std::fs::File::open(&resolved).ok()?;
     let mut source = Vec::new();
     file.take(64 * 1024).read_to_end(&mut source).ok()?;

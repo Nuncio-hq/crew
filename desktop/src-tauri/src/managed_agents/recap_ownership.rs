@@ -3,7 +3,7 @@
 use super::recap_adapter::RecapAdapterObservation;
 use super::recap_capability::{
     verify_executable, RecapCertificationParts, RecapExecutableIdentity, RecapGuarantees,
-    RecapProbeTarget, RecapProcessObservation, RecapProfileIdentity, RecapRuntimeCertification,
+    RecapProbeTarget, RecapProcessObservation, RecapRuntimeCertification,
     RecapRuntimeReadyProof, RecapSelection, RecapStateObservation,
 };
 use super::recap_state::{
@@ -11,7 +11,6 @@ use super::recap_state::{
     RecapStateFailure,
 };
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::collections::HashMap;
@@ -98,87 +97,13 @@ pub(super) struct NativeIdentity {
     pub uid: u32,
 }
 
-#[derive(Deserialize)]
-struct OwnershipDocument {
-    schema: String,
-    version: u8,
-    environment_id: String,
-    status: String,
-    mac: MacOwnership,
-}
-
-#[derive(Deserialize)]
-struct MacOwnership {
-    owner_uid: u32,
-    home: PathBuf,
-    build_demo_slug: String,
-    bundle_id: String,
-    keyring_service: String,
-    deep_link_scheme: String,
-    roots: Roots,
-    excluded_roots: Vec<PathBuf>,
-    auth_references: Vec<serde_json::Value>,
-    runtime_generation_allowed: bool,
-}
-
-#[derive(Deserialize)]
-struct Roots {
-    app_data: PathBuf,
-    config_home: PathBuf,
-    nest: PathBuf,
-    profiles: PathBuf,
-    workspaces: PathBuf,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeReadyDocument {
-    schema: String,
-    version: u8,
-    environment_id: String,
-    ownership_sha256: String,
-    status: String,
-    owner_uid: u32,
-    home: PathBuf,
-    app_data: PathBuf,
-    bundle_id: String,
-    runtime_id: String,
-    executable: RuntimeExecutable,
-    selection: RuntimeSelection,
-    auth_reference: String,
-    auth_service: String,
-    effective_model: String,
-    output_digest: String,
-    tool_probe_digest: String,
-    guarantees: RuntimeGuarantees,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeExecutable {
-    resolved_path: PathBuf,
-    version: String,
-    fingerprint: String,
-    platform: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeSelection {
-    model: String,
-    profile: Option<PathBuf>,
-    profile_digest: Option<String>,
-    profile_identity: Option<RecapProfileIdentity>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeGuarantees {
-    one_shot: bool,
-    tool_isolation: bool,
-    state_isolation: bool,
-    process_containment: bool,
-}
+#[path = "recap_ownership/documents.rs"]
+mod documents;
+use documents::{
+    OwnershipDocument, RuntimeExecutable, RuntimeGuarantees, RuntimeReadyDocument, RuntimeSelection,
+};
+#[cfg(test)]
+use documents::{MacOwnership, Roots};
 
 impl VerifiedStagingOwnership {
     pub(super) fn from_native(native: NativeIdentity) -> Result<Self, RecapStateFailure> {
@@ -473,6 +398,42 @@ impl VerifiedStagingOwnership {
             guarantees,
         )
         .map_err(|_| RecapStateFailure::RuntimeNotReady)
+    }
+
+    /// Resolve a named Hermes staging profile to its canonical path below
+    /// the verified ownership profiles root. The home default profile and
+    /// any path outside the recorded root are refused outright.
+    pub(crate) fn recap_profile_path(
+        &self,
+        profile_ref: &str,
+    ) -> Result<PathBuf, RecapStateFailure> {
+        self.validate()?;
+        if profile_ref != profile_ref.trim()
+            || super::hermes_profile::validate_hermes_profile_name(profile_ref).is_err()
+            || profile_ref == super::hermes_profile::HERMES_HOME_PROFILE_NAME
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        let root = &self.document.mac.roots.profiles;
+        let profile = root.join(profile_ref);
+        let canonical = profile
+            .canonicalize()
+            .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        if canonical != profile
+            || !canonical.starts_with(root)
+            || super::recap_adapter::hermes_profile_ref(&canonical).as_deref() != Some(profile_ref)
+        {
+            return Err(RecapStateFailure::RuntimeNotReady);
+        }
+        super::recap_state::directory_identity(&canonical)
+            .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+        Ok(canonical)
+    }
+
+    /// The verified native keyring service this ownership receipt binds
+    /// provider credentials under.
+    pub(crate) fn recap_keyring_service(&self) -> &str {
+        &self.native.keyring_service
     }
 
     /// Persist a positive certification and project the existing strict
@@ -796,25 +757,38 @@ pub(crate) fn runtime_ready_proof_for_captured_scope(
     ownership.runtime_ready_proof_with_store(&store)
 }
 
-/// Consume a typed native adapter observation through the active catalog and
-/// retention scope. The adapter creates the observation by parsing its bounded
-/// probe envelope; this native entrypoint then creates the opaque certification
-/// and projects the strict runtime-ready grant. Renderer settings and catalog
-/// discovery cannot provide the individual probe facts.
-pub(crate) fn certify_runtime_probe_for_app<R: tauri::Runtime>(
+/// The complete observer tuple captured during one bounded probe run.
+pub(crate) struct RecapProbeOutcome {
+    pub(crate) target: RecapProbeTarget,
+    pub(crate) adapter: RecapAdapterObservation,
+    pub(crate) state: RecapStateObservation,
+    pub(crate) process: RecapProcessObservation,
+    pub(crate) certified_at: u64,
+}
+
+/// Project a certification into the retention database captured before a
+/// bounded observer run. The final scope fence prevents a workspace or
+/// identity switch during the probe from issuing a grant for another owner.
+pub(crate) fn certify_runtime_probe_for_captured_scope<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-    target: RecapProbeTarget,
-    adapter: RecapAdapterObservation,
-    state: RecapStateObservation,
-    process: RecapProcessObservation,
-    certified_at: u64,
+    ownership: &VerifiedStagingOwnership,
+    expected_scope: &crate::app_state::owner_scope::OwnerScopeToken,
+    retention_db_path: &Path,
+    outcome: RecapProbeOutcome,
 ) -> Result<(), RecapStateFailure> {
-    // No native observer currently binds provider output to the executed
-    // command, executable, selection, state snapshot and process reaping.
-    // Keep this entrypoint present for the eventual observer wiring, but never
-    // turn self-reported adapter fields into a runtime-ready grant.
-    let _ = (app, target, adapter, state, process, certified_at);
-    Err(RecapStateFailure::RuntimeNotReady)
+    let certification = RecapRuntimeCertification::from_adapter_observation(
+        outcome.target,
+        outcome.adapter,
+        outcome.state,
+        outcome.process,
+    )
+    .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    let certified_at = outcome.certified_at;
+    crate::app_state::owner_scope::assert_current_blocking(app.clone(), expected_scope)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    let store = super::retention::open_retention_db(retention_db_path)
+        .map_err(|_| RecapStateFailure::RuntimeNotReady)?;
+    ownership.issue_runtime_ready_grant(&store, &certification, certified_at)
 }
 
 fn atomic_write_runtime_grant(app_data: &Path, bytes: &[u8]) -> Result<(), RecapStateFailure> {
@@ -872,87 +846,6 @@ fn read_private_document(path: &Path, limit: usize) -> Result<Vec<u8>, RecapStat
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-#[cfg(all(test, unix))]
-impl VerifiedStagingOwnership {
-    /// Build a real receipt-backed fixture for adapter tests without exposing
-    /// a production constructor for native identity.
-    pub(crate) fn for_test(root: &Path) -> Result<Self, RecapStateFailure> {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-        let home = root.canonicalize().map_err(|_| RecapStateFailure::Io)?;
-        let uid = std::fs::metadata(&home)
-            .map_err(|_| RecapStateFailure::Io)?
-            .uid();
-        let config_base = home.join("config");
-        let app_data = config_base.join("com.nuncio.crew.staging-test");
-        let config_home = config_base.join("buzz-demo-staging-test");
-        let nest = home.join(".buzz-demo-staging-test");
-        let profiles = home.join("crew-staging-test/profiles");
-        let workspaces = home.join("crew-staging-test/workspaces");
-        let agents = app_data.join("agents");
-        for path in [
-            &app_data,
-            &config_home,
-            &nest,
-            &profiles,
-            &workspaces,
-            &agents,
-        ] {
-            std::fs::create_dir_all(path).map_err(|_| RecapStateFailure::Io)?;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-                .map_err(|_| RecapStateFailure::Io)?;
-        }
-        let excluded: Vec<_> = [".buzz", ".buzz-dev", ".codex", ".claude", ".hermes"]
-            .iter()
-            .map(|name| home.join(name))
-            .chain([config_base.join("com.nuncio.crew")])
-            .collect();
-        let document = serde_json::json!({
-            "schema": "crew-staging-ownership",
-            "version": 1,
-            "environment_id": "crew-staging-test",
-            "status": "OWNERSHIP_ONLY_NOT_RUNTIME_READY",
-            "mac": {
-                "owner_uid": uid,
-                "home": home,
-                "build_demo_slug": "staging-test",
-                "bundle_id": "com.nuncio.crew.staging-test",
-                "keyring_service": "buzz-desktop-demo.staging-test",
-                "deep_link_scheme": "buzz-demo-staging-test",
-                "runtime_generation_allowed": false,
-                "auth_references": [],
-                "excluded_roots": excluded,
-                "roots": {
-                    "app_data": app_data,
-                    "config_home": config_home,
-                    "nest": nest,
-                    "profiles": profiles,
-                    "workspaces": workspaces
-                }
-            }
-        });
-        let manifest = app_data.join(OWNERSHIP_FILENAME);
-        std::fs::write(
-            &manifest,
-            serde_json::to_vec(&document).map_err(|_| RecapStateFailure::Io)?,
-        )
-        .map_err(|_| RecapStateFailure::Io)?;
-        std::fs::set_permissions(manifest, std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| RecapStateFailure::Io)?;
-        Self::from_native(NativeIdentity {
-            home,
-            app_data,
-            config_home,
-            config_base,
-            slug: "staging-test".into(),
-            bundle_id: "com.nuncio.crew.staging-test".into(),
-            keyring_service: "buzz-desktop-demo.staging-test".into(),
-            scheme: "buzz-demo-staging-test".into(),
-            uid,
-        })
-    }
 }
 
 /// Create one 0o700 directory this process owns.

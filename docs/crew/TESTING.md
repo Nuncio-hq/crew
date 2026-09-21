@@ -1063,8 +1063,9 @@ NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limi
 for the current unsupported inventory.
 
 Test boundaries include explicit model/profile admission, executable and
-profile content identity invalidation, and provider envelopes rejected without
-a native observer. Fixed Claude and Hermes argv with a fake tool sentinel,
+profile content identity invalidation, and certification that requires the
+native observer's own state/process evidence rather than adapter claims alone.
+Fixed Claude and Hermes argv with a fake tool sentinel,
 native final-result and
 usage-model parsing, copied-profile and symlink rejection, private unlinked
 stdin and size limits, durable process-pending state, copied/symlinked ownership
@@ -1101,12 +1102,22 @@ no-tool Claude/Hermes recipe arguments, prompt cap, pending-process cleanup
 guard, source overflow watermark, or EPERM reap condition must fail the
 corresponding production-seam regression. Synthetic argv/output tests and
 authorized design reviews do not establish provider auth, effective generation
-model, native tool isolation or a working recap. The provider envelope parser
-is deliberately insufficient for certification: until a native observer binds
-it to the actual plan and independently records state/process outcomes, the
-producer returns `UnverifiedCapability` and does not write a grant. Real
+model, native tool isolation or a working recap. The observer seam is
+`recap_observer::verify_recap_runtime`: `HermesOneShotGateway` tests cover the
+single-admission CAS before body read (replays rejected without buffering),
+wrong model/tools/stream/token, the canned hostile `function_call` and its
+follow-up classification (denial naming the probe call id certifies, executed
+or unrelated output fails), locked-profile rewriting of the copied profile onto
+the loopback endpoint and token, and forwarded wire capture of the effective
+model. `recap_capability::certify_observation` re-validates every admission
+field of the observer tuple; the mutation case (removing the effective-model
+check) turns `certification_requires_catalog_identity_and_all_probe_evidence`
+red. Real
 staging generation remains blocked until one exact runtime combination proves
-all those properties and #348 supplies the native auth/profile binding.
+all those properties on a supported platform and #348 supplies the native
+auth/profile binding; Linux reports `unsupported_process_containment` and
+explicit-model contracts report `unsupported_tool_isolation` before any
+credential lookup.
 Evidence screenshots must label a source/tooling summary as such; they cannot
 substitute for the designated staging runtime acceptance required by #351/#356.
 
