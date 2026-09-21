@@ -27,7 +27,7 @@ pub(crate) fn output_with_policy_and_stdin(
     policy: BoundedPolicy,
     cancelled: &AtomicBool,
 ) -> Result<BoundedOutcome, BoundedFailure> {
-    output_with_policy_and_stdin_and_spawn_hook(command, input, policy, cancelled, |_| Ok(()))
+    output_with_policy_and_stdin_and_spawn_hook(command, input, policy, cancelled, |_| Ok(()), None)
 }
 
 /// Run a bounded child and invoke `on_spawn` after tree ownership is secured.
@@ -41,7 +41,32 @@ pub(crate) fn output_with_policy_and_spawn_hook(
     cancelled: &AtomicBool,
     on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
 ) -> Result<BoundedOutcome, BoundedFailure> {
-    output_with_policy_and_stdin_and_spawn_hook(command, None, policy, cancelled, on_spawn)
+    output_with_policy_and_stdin_and_spawn_hook(command, None, policy, cancelled, on_spawn, None)
+}
+
+/// Run a bounded child, observe the owned PID, and stream each stdout chunk
+/// to `stdout_sink` as it is drained.
+///
+/// The sink sees bytes the capture buffer keeps — it observes the answer
+/// stream as the producer boundary enforces it, not after. A sink is read-only
+/// observation: it cannot slow the drain thread's reads or widen the capture
+/// bound, because the drain does not block on it and the budget accounting
+/// runs before the sink sees the chunk.
+pub(crate) fn output_with_policy_and_spawn_hook_and_stream(
+    command: Command,
+    policy: BoundedPolicy,
+    cancelled: &AtomicBool,
+    on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
+    stdout_sink: super::OutputSink,
+) -> Result<BoundedOutcome, BoundedFailure> {
+    output_with_policy_and_stdin_and_spawn_hook(
+        command,
+        None,
+        policy,
+        cancelled,
+        on_spawn,
+        stdout_sink,
+    )
 }
 
 fn output_with_policy_and_stdin_and_spawn_hook(
@@ -50,6 +75,7 @@ fn output_with_policy_and_stdin_and_spawn_hook(
     policy: BoundedPolicy,
     cancelled: &AtomicBool,
     on_spawn: impl FnOnce(u32) -> Result<(), BoundedFailure>,
+    stdout_sink: super::OutputSink,
 ) -> Result<BoundedOutcome, BoundedFailure> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(BoundedFailure::Cancelled);
@@ -132,6 +158,7 @@ fn output_with_policy_and_stdin_and_spawn_hook(
             stdout_overflow.clone(),
             stop.clone(),
             stdout_limit,
+            stdout_sink,
         )
     });
     let stderr_drain = stderr_pipe.map(|pipe| {
@@ -141,6 +168,7 @@ fn output_with_policy_and_stdin_and_spawn_hook(
             stderr_overflow.clone(),
             stop.clone(),
             stderr_limit,
+            None,
         )
     });
     let overflow = || {
