@@ -45,17 +45,35 @@ let runCalls = [];
 let cancelCalls = [];
 let runResult = null;
 let runError = null;
+/** Handlers the component registered for `private-ask:*` events. */
+const eventHandlers = {};
+
+dom.window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+  unregisterListener: () => {},
+};
 
 dom.window.__TAURI_INTERNALS__ = {
   transformCallback: (callback) => callback,
   invoke: async (command, payload) => {
     switch (command) {
+      case "plugin:event|listen":
+        eventHandlers[payload.event] = payload.handler;
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
       case "private_ask_dev_status":
         return { enabled: true, blockedReason: null };
       case "private_ask_history":
         return [];
       case "private_ask_agents":
-        return [{ pubkey: "b".repeat(64), name: "Scout" }];
+        return [
+          {
+            pubkey: "b".repeat(64),
+            name: "Scout",
+            relayUrl: "wss://relay.example/",
+            status: "ready",
+          },
+        ];
       case "private_ask_run":
         runCalls.push(payload);
         if (runError) throw new Error(runError);
@@ -81,9 +99,13 @@ beforeEach(() => {
   cancelCalls = [];
   runError = null;
   runResult = {
+    questionId: "question-1",
+    status: "answered",
     markdown: "The answer.",
     refusal: null,
     citations: [CITATION],
+    sourceRevision: "git:rev",
+    manifest: null,
     historyRecorded: true,
   };
 });
@@ -157,9 +179,13 @@ test("a refusal that could not be kept says so too", async () => {
   // The refused path used to drop this: the backend recorded it with
   // `let _ = record(...)` and the refusal came back as a bare error string.
   runResult = {
+    questionId: "question-1",
+    status: "refused",
     markdown: "",
     refusal: "selected agent is unavailable",
     citations: [],
+    sourceRevision: null,
+    manifest: null,
     historyRecorded: false,
   };
   await mountAndAsk(undefined);
@@ -182,18 +208,117 @@ test("a command that could not run at all is still shown as a refusal", async ()
 });
 
 test("the run names the agent and the repository, and nothing else", async () => {
-  // The backend accepts exactly three caller-supplied values: the attempt id,
-  // the agent, and the repository coordinate. Everything the answer is
-  // admitted against is observed natively, so a payload that carried a scope,
-  // a model, or an ACL would be a payload the resolver must ignore.
+  // The backend accepts only surface-minted ids plus the agent, the
+  // repository coordinate, the question and the follow-up it names.
+  // Everything the answer is admitted against is observed natively, so a
+  // payload that carried a scope, a model, or an ACL would be a payload the
+  // resolver must ignore.
   await mountAndAsk(undefined);
   assert.equal(runCalls.length, 1);
   assert.deepEqual(Object.keys(runCalls[0]).sort(), [
     "agentId",
     "attemptId",
     "coordinate",
+    "followUpOf",
     "question",
+    "questionId",
   ]);
   assert.equal(runCalls[0].agentId, "b".repeat(64));
   assert.equal(runCalls[0].coordinate, `${"a".repeat(64)}:crew`);
+  // A fresh question names no parent and gets a thread id the surface minted.
+  assert.equal(runCalls[0].followUpOf, null);
+  assert.match(
+    runCalls[0].questionId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+});
+
+test("progress the pane shows is the attempt's own events, fenced by id", async () => {
+  let resolveRun;
+  const pending = new Promise((resolve) => {
+    resolveRun = resolve;
+  });
+  runResult = null;
+  const originalInvoke = dom.window.__TAURI_INTERNALS__.invoke;
+  dom.window.__TAURI_INTERNALS__.invoke = async (command, payload) => {
+    if (command === "private_ask_run") {
+      runCalls.push(payload);
+      await pending;
+      return {
+        attemptId: payload.attemptId,
+        questionId: payload.questionId,
+        status: "answered",
+        markdown: "done",
+        refusal: null,
+        citations: [],
+        sourceRevision: "git:rev",
+        manifest: null,
+        historyRecorded: true,
+      };
+    }
+    return originalInvoke(command, payload);
+  };
+  try {
+    render(
+      React.createElement(WikiAskBox, {
+        channelId: "channel-1",
+        door: "project",
+        owner: "a".repeat(64),
+        repoD: "crew",
+        scopeLabel: "Asking about Crew",
+      }),
+    );
+    await act(async () => {});
+    await act(async () => {});
+    fireEvent.change(screen.getByTestId("wiki-ask-dev-input"), {
+      target: { value: "What does answer do?" },
+    });
+    fireEvent.click(screen.getByTestId("wiki-ask-dev-submit"));
+    await act(async () => {});
+
+    const attemptId = runCalls[0].attemptId;
+    // The attempt's own report moves the phase.
+    act(() => {
+      eventHandlers["private-ask:progress"]({
+        payload: { attemptId, phase: "running" },
+      });
+    });
+    assert.equal(
+      screen.getByTestId("wiki-ask-dev-progress").textContent,
+      "The agent is answering…",
+    );
+    // A chunk is the attempt's own bytes.
+    act(() => {
+      eventHandlers["private-ask:chunk"]({
+        payload: { attemptId, text: "partial " },
+      });
+    });
+    assert.equal(
+      screen
+        .getByTestId("wiki-ask-dev-answer")
+        .textContent.includes("partial "),
+      true,
+    );
+    // A foreign attempt's event is fenced out.
+    act(() => {
+      eventHandlers["private-ask:chunk"]({
+        payload: { attemptId: "stale", text: "ghost" },
+      });
+    });
+    assert.equal(
+      screen.getByTestId("wiki-ask-dev-answer").textContent.includes("ghost"),
+      false,
+    );
+
+    await act(async () => {
+      resolveRun();
+      await pending;
+    });
+    assert.equal(
+      screen.getByTestId("wiki-ask-dev-answer").textContent.includes("done"),
+      true,
+    );
+  } finally {
+    dom.window.__TAURI_INTERNALS__.invoke = originalInvoke;
+  }
 });
