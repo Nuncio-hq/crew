@@ -444,8 +444,10 @@ fn start_pair(
     runtimes.remove(&key);
     terminate_untracked_pair_runtime(&app, &key)?;
 
-    let mut process =
-        spawn_agent_child(&app, record, &key.relay_url, lazy, owner.as_deref(), None)?;
+    // Pass the caller's verbatim pair relay — `key.relay_url` is
+    // canonicalized for identity and would 404 the child's WS upgrade on
+    // loopback deployments (see the dial-site note in `spawn_agent_child`).
+    let mut process = spawn_agent_child(&app, record, &relay_url, lazy, owner.as_deref(), None)?;
     let now = crate::util::now_iso();
     let receipt = ManagedAgentRuntimeReceipt {
         key: key.clone(),

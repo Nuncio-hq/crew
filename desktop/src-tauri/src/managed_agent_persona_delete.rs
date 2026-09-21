@@ -1,7 +1,9 @@
 //! Durable persona deletion coordinator and exact linked-record cascade.
 //!
 //! This module is deliberately separate from direct managed-agent deletion so
-//! the upstream-sized command module remains within Crew's file-size gate.
+//! the upstream-sized command module remains within Crew's file-size gate. It
+//! also hosts the boxed bodies of the instance `delete`/`retry` entries for
+//! the same reason; their wrappers live on the parent module.
 
 use super::*;
 use crate::{
@@ -872,3 +874,40 @@ mod tests;
 #[cfg(all(test, unix))]
 #[path = "managed_agent_persona_delete_reuse_tests.rs"]
 mod reuse_tests;
+
+/// Body of [`super::delete`]: the direct managed-instance removal. It lives in
+/// its own future because the command entry boxes it — the `capture` + `begin`
+/// + `resume` chain overflows the dispatched worker frame when inlined.
+pub(super) async fn delete_inner<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    pubkey: String,
+    force_remote_delete: bool,
+) -> Result<(), String> {
+    let token = capture(app.clone()).await?.token;
+    let record =
+        current_record(&app, &pubkey)?.ok_or_else(|| format!("agent {pubkey} not found"))?;
+    let operation = begin(&app, token.clone(), record, force_remote_delete).await?;
+    match resume(app.clone(), token, operation, true).await {
+        Ok(()) => {
+            crate::managed_agents::try_regenerate_nest(&app);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Body of [`super::retry`]: replay one unresolved deletion by operation ID.
+/// Boxed by the caller for the same dispatched-frame bound as `delete_inner`.
+pub(super) async fn retry_inner<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    operation_id: String,
+) -> Result<(), String> {
+    let token = capture(app.clone()).await?.token;
+    let operation = load_any_scope_operation(&app, &operation_id).await?;
+    assert_current(app.clone(), &token).await?;
+    if operation.kind != OperationKind::ManagedAgentDelete {
+        return Err("operation is not a managed-agent deletion".into());
+    }
+    ensure_active_scope(&token, &operation)?;
+    resume(app, token, operation, true).await
+}
