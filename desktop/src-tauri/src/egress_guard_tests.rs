@@ -294,6 +294,10 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
         1,
         0,
     ),
+    // Loopback submit relay in the #367 wiki task dispatch tests; production
+    // dispatch publishes through the guarded boundary-1 funnel via
+    // `submit_signed_event_at_with_keys`.
+    ("src/commands/wiki_task_dispatch_tests.rs", 1, 0),
     // Mock-relay routes in team-sharing tests (accept/reject stub +
     // recording stub for the delete-then-share gate + gated recording stub for
     // the two-flush serialization gate + stalling stub for the per-scope

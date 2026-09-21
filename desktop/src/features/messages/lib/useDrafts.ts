@@ -75,6 +75,14 @@ export type DraftState = {
    * the read path treats absent status as `"active"` (see `isValidDraftState`).
    */
   status: "active" | "sent";
+  /**
+   * Opaque structured payload owned by a draft family that cannot live in
+   * `content` — e.g. the `wiki:` task-draft namespace carries its title,
+   * selected agent, private origin, and reference checklist here while the
+   * prompt text stays in `content`. Present `meta` counts as meaningful
+   * content for the empty-drop guard so a title-only draft persists.
+   */
+  meta?: Record<string, unknown>;
 };
 
 /** Serialised shape stored in localStorage (same as DraftState for round-trips). */
@@ -83,6 +91,14 @@ type StoredDrafts = Record<string, DraftState>;
 const DRAFT_STORE_KEY_PREFIX = "buzz-drafts.v2";
 const LEGACY_DRAFT_STORE_KEY_PREFIX = "buzz-drafts.v1";
 const MAX_DRAFTS = 100;
+/**
+ * The private `wiki:` draft namespace is a separate eviction partition: a
+ * channel-composer flood can never silently evict a saved Wiki task draft,
+ * and Wiki drafts cannot starve out composer drafts either. Each partition
+ * keeps its own least-recently-updated cap.
+ */
+export const WIKI_DRAFT_KEY_PREFIX = "wiki:";
+export const WIKI_DRAFT_MAX_ENTRIES = 25;
 
 /**
  * Canonicalize a relay URL for use as a storage key scope.
@@ -308,6 +324,14 @@ function isValidDraftState(v: unknown): v is DraftState {
   } else if (d.status !== "active") {
     return false;
   }
+  // meta is an opaque plain object owned by the draft family that wrote it;
+  // per-family shape validation happens at that family's read path.
+  if (
+    d.meta !== undefined &&
+    (typeof d.meta !== "object" || d.meta === null || Array.isArray(d.meta))
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -320,19 +344,38 @@ function flushStore(map: Map<string, DraftState>): boolean {
   return setLocalStorageItemWithRecovery(storageKey(), JSON.stringify(obj));
 }
 
-/**
- * Evict the least-recently-updated entry until the map is within `MAX_DRAFTS`.
- */
-function evictOldest(map: Map<string, DraftState>): void {
-  if (map.size <= MAX_DRAFTS) return;
-  // Sort ascending by updatedAt; evict oldest until within cap.
-  const sorted = [...map.entries()].sort((a, b) =>
+function isWikiDraftKey(key: string): boolean {
+  return key.startsWith(WIKI_DRAFT_KEY_PREFIX);
+}
+
+function evictOldestInPartition(
+  entries: [string, DraftState][],
+  map: Map<string, DraftState>,
+  cap: number,
+): void {
+  if (entries.length <= cap) return;
+  const sorted = entries.sort((a, b) =>
     a[1].updatedAt.localeCompare(b[1].updatedAt),
   );
-  const excess = map.size - MAX_DRAFTS;
+  const excess = entries.length - cap;
   for (let i = 0; i < excess; i++) {
     map.delete(sorted[i][0]);
   }
+}
+
+/**
+ * Evict least-recently-updated entries per partition: composer/thread keys
+ * share `MAX_DRAFTS`, `wiki:` keys share `WIKI_DRAFT_MAX_ENTRIES`. A flood on
+ * one side can never evict the other's records.
+ */
+function evictOldest(map: Map<string, DraftState>): void {
+  const general: [string, DraftState][] = [];
+  const wiki: [string, DraftState][] = [];
+  for (const entry of map.entries()) {
+    (isWikiDraftKey(entry[0]) ? wiki : general).push(entry);
+  }
+  evictOldestInPartition(general, map, MAX_DRAFTS);
+  evictOldestInPartition(wiki, map, WIKI_DRAFT_MAX_ENTRIES);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -347,7 +390,11 @@ export function saveDraftEntry(draftKey: string, draft: DraftState): void {
 }
 
 function writeDraftEntry(draftKey: string, draft: DraftState): void {
-  if (draft.content.trim().length === 0 && draft.pendingImeta.length === 0) {
+  if (
+    draft.content.trim().length === 0 &&
+    draft.pendingImeta.length === 0 &&
+    draft.meta === undefined
+  ) {
     return;
   }
   const map = readStore();
@@ -377,6 +424,27 @@ export function clearDraftEntry(draftKey: string): void {
 }
 
 /**
+ * Stable stringify for the opaque `meta` payload: object keys sort
+ * recursively so two writers that ordered fields differently still compare
+ * equal. Undefined/absent meta normalizes to "".
+ */
+function canonicalMetaJson(meta: Record<string, unknown> | undefined): string {
+  if (meta === undefined) return "";
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (typeof value === "object" && value !== null) {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, item]) => [key, canonical(item)]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(canonical(meta));
+}
+
+/**
  * Return true only when every field of two DraftState values is identical,
  * including all ImetaMedia optional fields (dim, blurhash, thumb, duration,
  * image, filename, displayLabel, uploaded). Any divergence — including
@@ -394,7 +462,8 @@ function draftStatesEqual(a: DraftState, b: DraftState): boolean {
     a.status !== b.status ||
     a.pendingImeta.length !== b.pendingImeta.length ||
     (a.mentionRefs?.length ?? 0) !== (b.mentionRefs?.length ?? 0) ||
-    a.spoileredAttachmentUrls.length !== b.spoileredAttachmentUrls.length
+    a.spoileredAttachmentUrls.length !== b.spoileredAttachmentUrls.length ||
+    canonicalMetaJson(a.meta) !== canonicalMetaJson(b.meta)
   ) {
     return false;
   }

@@ -17,9 +17,9 @@
       "recordedAt": "2026-09-07"
     },
     "src/features/messages/ui/MessageRow.tsx": {
-      "lines": 1008,
-      "reason": "Upstream desktop-v0.5.23 is 987 lines; Crew evidence pass-through, agent receipt body, status metadata and mention-avatar map remain additive (+17).",
-      "recordedAt": "2026-09-07"
+      "lines": 1010,
+      "reason": "Upstream desktop-v0.5.23 is 987 lines; Crew evidence pass-through, agent receipt body, status metadata and mention-avatar map remain additive (+19); +2 mounts the #367 Wiki task origin backlink line.",
+      "recordedAt": "2026-09-20"
     },
     "src/features/messages/ui/MessageThreadPanel.tsx": {
       "lines": 986,
