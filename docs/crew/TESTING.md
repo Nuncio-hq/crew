@@ -1249,6 +1249,25 @@ session-ledger entry to be shown to have been left alone, and the refusal is
 `the selected agent's running session could not be observed` — not
 `AgentUnbound`, which means there is no such agent (D-083).
 
+#366 grounds that resolved selection in the viewer's own snapshot instead of a
+fixed page: `retrieval.rs` scores the question against every snapshot page,
+reads only source bytes behind a live grant, and reports what it did and did
+not consult as a `RetrievalManifest`; a question the snapshot cannot cover is
+`insufficient`. `history.rs` is a scoped owner-local store — community, viewer,
+coordinate, question and attempt — that persists run identity before launch,
+recovers `interrupted` for a run that never reached its terminal write, and
+bounds entries per scope, total bytes per viewer and entry age; `forget`
+deletes by attempt. The command surface (`private_ask_{run,cancel,history,
+attempt,forget,draft}`) fences every call by registered attempt id, keeps a
+retry as a new attempt under the same question id, and never answers a scope
+the caller did not name. The composer (`WikiAskBox.tsx` + `privateAskDev.ts`)
+reduces the same lifecycle — `idle → retrieving → running → answered |
+insufficient | refused | cancelled | interrupted` — from real
+`private-ask:progress`/`private-ask:chunk` events, so a late chunk from an
+older attempt cannot overwrite the answer on screen. The MCP
+`wiki_tools::ask_question` keyword heuristic is labelled a deterministic tool
+helper and is not reachable as a fallback from this path.
+
 Every fence below the binding is live, so its tests assert the **reason** a
 request is refused and never merely that it was — the egress proof runs a real
 loopback proxy rather than describing one, and the capability probe is produced
@@ -1289,10 +1308,12 @@ fails closed.
 | `probe_receipt_tests.rs` | `probe_receipt::{store, load}` | Honouring a stale, future-dated, foreign-install, foreign-program or different-executable receipt; restoring session isolation from disk |
 | `binding_tests.rs` | `binding::answer` — probe, project, admit, run | Answering under an expired receipt; answering a busy agent with no independence observation; returning an answer that cited outside the snapshot |
 | `citation_tests.rs` + `answer_tests.rs` | `citations::resolve`, called from `PrivateAskAttempt::run` | Restoring `request.grounding.clone()`; matching a cited path by prefix; treating an empty citation line as no citation |
-| `history_tests.rs` | `history::{record, load}` and its count/age bounds | Growing without bound; keeping a future-stamped entry; presenting a damaged file as a partial record |
+| `retrieval_tests.rs` | `retrieval::retrieve` — the scoring cut and manifest the resolver feeds | Answering with the first page regardless of the question; reading sources without a grant; a page past the bound going unrecorded in `omitted` |
+| `history_tests.rs` | `history::{upsert, load_scoped, prune, forget, follow_up_thread}` and its per-scope/byte/age bounds | Reading another scope's entries as this scope's; a launch that never terminated reading as `answered`; growing without bound; deleting by anything but attempt |
+| `privateAskDev.test.mjs` | The `privateAskDev` reducer — the UI's attempt fence | A settle or chunk carrying a different attempt id touching the visible state; a retry reusing the old attempt id |
+| `WikiAskBox.citations.test.mjs` + `WikiAskBox.lifecycle.test.mjs` | The composer's picker, composer keys, events, stop/retry, follow-up, history and manifest panels through the real Tauri invoke boundary | Rendering a citation as text when an opener exists; keeping a partial answer after a cancel; re-asking without a new attempt id; showing another coordinate's remembered agent |
 | `containment_read_roots_tests.rs` | The read-root fence in `private_ask_containment_profile` | Allowing a runtime directory that contains the run roots; comparing paths as strings rather than component-wise |
 | `cancel_registry_tests.rs` + `private_ask_commands_tests.rs` | `PrivateAskAttempts::{register, cancel}` and the command's registration guard | Aliasing one id across two runs; leaving an id in flight after the run returned or panicked; letting an unbounded number of attempts register |
-| `WikiAskBox.citations.test.mjs` | The composer's citation control and its `historyRecorded` notice, through the real Tauri invoke boundary | Rendering a citation as text when an opener exists; dropping the "not kept on this machine" note on the refused path |
 
 The containment tests are paired: an uncontained control run must reach every
 effect — write outside the run root, read a file outside it, open a socket,
@@ -1436,7 +1457,13 @@ must capture:
   answers with trimmed grounding rather than refusing as an over-long
   question.
 - The answered attempt's owner-local history entry: question, answer, citation
-  paths and line ranges.
+  paths and line ranges, the retrieval manifest's included/omitted pages and
+  sources, and the source revision it was resolved against.
+- A question the snapshot cannot cover, answered as `insufficient` — the
+  manifest names what was omitted, and no invented page or source range
+  appears.
+- A retry of the same question: the history shows a second attempt under the
+  same question id, and the first attempt's terminal record is unchanged.
 - Base and head SHAs.
 
 Point the selection at the runtime's **real** executable, not at a shell

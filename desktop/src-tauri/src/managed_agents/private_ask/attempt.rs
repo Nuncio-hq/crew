@@ -15,7 +15,7 @@ use super::{
     PRIVATE_ASK_TIMEOUT,
 };
 use crate::managed_agents::discovery::bounded_command::{
-    output_with_policy_and_spawn_hook, BoundedFailure, BoundedPolicy, OutputBudget,
+    output_with_policy_and_spawn_hook_and_stream, BoundedFailure, BoundedPolicy, OutputBudget,
 };
 use crate::managed_agents::recap_capability::{same_executable_proof, RecapExecutableIdentity};
 use crate::managed_agents::recap_ownership::VerifiedStagingOwnership;
@@ -48,8 +48,28 @@ pub(crate) fn check_question(
     Ok(())
 }
 
+/// What the attempt tells its reporter, and when.
+///
+/// Events are the *only* progress the UI is allowed to render — a phase the
+/// attempt never reached is a phase the UI never shows. `Retrieving` covers
+/// the whole resolution+grounding window; `Running` means the owned child
+/// exists; `Chunk` carries answer bytes as the drain keeps them.
+pub(crate) enum AskEvent {
+    /// Resolution and grounding are underway; no process exists yet.
+    Retrieving,
+    /// The owned child exists and the answer stream is open.
+    Running,
+    /// One kept chunk of the answer stream, UTF-8 completed by the attempt.
+    Chunk(String),
+}
+
+/// Where attempt events go. The command layer installs it; the attempt only
+/// reports.
+pub(crate) type AskReporter = Arc<dyn Fn(AskEvent) + Send + Sync>;
+
 /// The identity one attempt runs under: the id the owner-local record and the
-/// cancel registry are both keyed on, and the flag that stops it.
+/// cancel registry are both keyed on, the flag that stops it, and the reporter
+/// that lets the UI watch it.
 ///
 /// It is created by the registry, never by the attempt, because a cancel has to
 /// reach a run that has not started yet — an id minted inside `run()` could
@@ -58,6 +78,7 @@ pub(crate) fn check_question(
 pub(crate) struct AttemptIdentity {
     attempt_id: String,
     cancel: Arc<AtomicBool>,
+    reporter: Option<AskReporter>,
 }
 
 impl AttemptIdentity {
@@ -65,6 +86,25 @@ impl AttemptIdentity {
         Self {
             attempt_id: attempt_id.into(),
             cancel,
+            reporter: None,
+        }
+    }
+
+    /// This identity, reporting attempt events to `reporter`.
+    pub(crate) fn with_reporter(self, reporter: AskReporter) -> Self {
+        Self {
+            reporter: Some(reporter),
+            ..self
+        }
+    }
+
+    /// Report one event, if anything is listening. Reporting is observability,
+    /// never authority: a UI that misses an event still gets the terminal
+    /// result, and a reporter that panics cannot hurt the attempt — the panic
+    /// crosses the drain thread, which is already fail-closed.
+    pub(crate) fn report(&self, event: AskEvent) {
+        if let Some(reporter) = self.reporter.as_ref() {
+            reporter(event);
         }
     }
 
@@ -98,6 +138,13 @@ pub(crate) struct PrivateAskResponse {
     pub session_generation: String,
     pub markdown: String,
     pub citations: Vec<GroundedSource>,
+    /// The source revision the request was bound to — the answer's provenance,
+    /// restated so a reader never has to trust a renderer-supplied revision.
+    pub source_revision: String,
+    /// What the prompt actually consulted, after the prompt bound's own trim
+    /// reconciled it. Travels with the answer so the source panel and the
+    /// history record describe the same run.
+    pub manifest: super::retrieval::RetrievalManifest,
     /// What this run's own egress proxy observed. It travels with the answer
     /// because it is the evidence a capability decision is made from: a probe
     /// capture reads it here rather than reconstructing what it thinks happened.
@@ -113,6 +160,7 @@ pub(crate) struct PrivateAskAttempt {
     pub(super) run: Option<OwnedRecapRun>,
     pub(super) cancel: Arc<AtomicBool>,
     pub(super) attempt_id: String,
+    pub(super) reporter: Option<AskReporter>,
     pub(super) profile_staged: bool,
 }
 
@@ -145,8 +193,16 @@ impl PrivateAskAttempt {
             run: Some(run),
             cancel: attempt.cancel_flag(),
             attempt_id: attempt.attempt_id().to_owned(),
+            reporter: attempt.reporter.clone(),
             profile_staged: false,
         })
+    }
+
+    /// Report one event to this attempt's reporter, if it has one.
+    fn report(&self, event: AskEvent) {
+        if let Some(reporter) = self.reporter.as_ref() {
+            reporter(event);
+        }
     }
 
     /// Signal only this attempt.  The bounded runner owns process teardown.
@@ -358,7 +414,41 @@ impl PrivateAskAttempt {
         // a crash between spawn and completion leaves recovery with no process
         // identity, so the root stays pending forever instead of being reaped.
         let mut pid_error = None;
-        let output = output_with_policy_and_spawn_hook(
+        // The chunk sink: UTF-8 is completed across chunk boundaries here, on
+        // the drain's own cadence — a split multibyte sequence is reported as
+        // one character, not as replacement garbage.
+        let mut utf8_carry: Vec<u8> = Vec::new();
+        let sink = self.reporter.as_ref().map(|reporter| {
+            let reporter = Arc::clone(reporter);
+            Box::new(move |bytes: &[u8]| {
+                utf8_carry.extend_from_slice(bytes);
+                // Consume as many whole UTF-8 sequences as the carry holds.
+                let valid_up_to = match std::str::from_utf8(&utf8_carry) {
+                    Ok(_) => utf8_carry.len(),
+                    Err(error) if error.error_len().is_none() => error.valid_up_to(),
+                    // A genuinely invalid sequence is still reported — the
+                    // renderer shows U+FFFD rather than silently losing text.
+                    Err(error) => {
+                        let keep = error.valid_up_to();
+                        let lossy = String::from_utf8_lossy(&utf8_carry).into_owned();
+                        utf8_carry.clear();
+                        if keep == 0 && !lossy.is_empty() {
+                            reporter(AskEvent::Chunk(lossy));
+                        }
+                        return;
+                    }
+                };
+                if valid_up_to > 0 {
+                    let tail = utf8_carry.split_off(valid_up_to);
+                    let text = String::from_utf8(utf8_carry.clone()).unwrap_or_default();
+                    utf8_carry = tail;
+                    if !text.is_empty() {
+                        reporter(AskEvent::Chunk(text));
+                    }
+                }
+            }) as Box<dyn FnMut(&[u8]) + Send>
+        });
+        let output = output_with_policy_and_spawn_hook_and_stream(
             command,
             BoundedPolicy {
                 timeout: PRIVATE_ASK_TIMEOUT,
@@ -368,12 +458,17 @@ impl PrivateAskAttempt {
                 },
             },
             &self.cancel,
-            |pid| {
-                run.mark_process_started(pid).map_err(|failure| {
+            |pid| match run.mark_process_started(pid) {
+                Ok(()) => {
+                    self.report(AskEvent::Running);
+                    Ok(())
+                }
+                Err(failure) => {
                     pid_error = Some(failure);
-                    BoundedFailure::Cleanup
-                })
+                    Err(BoundedFailure::Cleanup)
+                }
             },
+            sink,
         );
         let output = match output {
             Ok(outcome) => outcome.output,
@@ -430,6 +525,8 @@ impl PrivateAskAttempt {
             session_generation: self.admission.state.session_generation.clone(),
             markdown,
             citations,
+            source_revision: self.admission.request.source_revision.clone(),
+            manifest: self.admission.request.manifest.clone(),
             egress,
         };
         run.cleanup().map_err(PrivateAskFailure::State)?;

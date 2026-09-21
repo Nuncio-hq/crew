@@ -65,6 +65,14 @@ impl VerifiedSnapshotPage {
     pub fn source_references(&self) -> &[SourceReference] {
         &self.reference.7
     }
+    /// The manifest's slug for this page.
+    pub fn slug(&self) -> &str {
+        &self.reference.0
+    }
+    /// The manifest's title for this page.
+    pub fn title(&self) -> &str {
+        &self.reference.4
+    }
 }
 
 impl VerifiedSnapshotIndex {
