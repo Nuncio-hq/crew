@@ -92,9 +92,14 @@ Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 - Source-level #337 projection checks and protocol-level NIP-43
   admission/readback from the #348 staging verification are covered. The #348
   [`crew-staging-348` environment lifecycle and production verification](TESTING.md#test-environments-and-real-data-staging-d-077)
-  are verified. Real #337 staging membership add-after-start, removal, and
-  readback, installed-runtime acceptance (#337/#338), and #357 release
-  acceptance remain open; fixtures do not establish live relay health.
+  are verified. Local real-relay proof now covers #337 membership
+  add-after-start, removal, and owner-side readback plus the #338 bounded
+  burst → exhaustion → slow-probe → authenticated-reset cycle, run against
+  `buzz-relay` + managed `buzz-acp` built from this source (real Postgres,
+  Redis, MinIO; observer frames decrypted on the owner side). Staging-relay
+  acceptance (ws://100.86.143.13:3348), installed-runtime acceptance
+  (#337/#338), and #357 release acceptance remain open; fixtures do not
+  establish live relay health.
 - Desktop Smoke/Integration E2E remains advisory (D-032, D-047); post-0.5.23
   drift is tracked in [#346](https://github.com/Nuncio-hq/crew/issues/346).
 - Observer priority preserves causal order and two-urgent/one-normal fairness
