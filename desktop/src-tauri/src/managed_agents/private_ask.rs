@@ -25,13 +25,16 @@ mod profile;
 mod prompt;
 mod provider;
 mod recovery;
+pub(crate) mod retrieval;
 mod runtime_paths;
 pub(crate) mod selection;
 mod selection_native;
 mod session_evidence;
 mod validation;
 #[allow(unused_imports)]
-pub(crate) use attempt::{AttemptIdentity, PrivateAskAttempt, PrivateAskResponse};
+pub(crate) use attempt::{
+    AskEvent, AskReporter, AttemptIdentity, PrivateAskAttempt, PrivateAskResponse,
+};
 pub(crate) use cancel_registry::{PrivateAskAttempts, RegisterFailure};
 use launch::PrivateAskLaunchPlan;
 #[cfg(test)]
@@ -42,7 +45,9 @@ use recovery::finish_after_process_with;
 use recovery::{
     finish_after_process, finish_before_spawn, leave_process_pending, leave_process_pending_state,
 };
-pub(crate) use selection_native::{dev_run, live_agents};
+pub(crate) use selection_native::{
+    ask_scope_key, dev_run, observed_agents, DevAskMeta, DevOutcome,
+};
 use validation::{is_hex64, valid_model, valid_profile, valid_scope_value, valid_source_revision};
 // The test modules below are children of this module and share its vocabulary;
 // these re-imports keep them compiling after the attempt half moved out.
@@ -60,9 +65,14 @@ pub(crate) const PRIVATE_ASK_INPUT_LIMIT: usize = 128 * 1024;
 /// Maximum bytes retained from one answer stream.
 pub(crate) const PRIVATE_ASK_OUTPUT_LIMIT: u64 = 256 * 1024;
 /// Maximum bytes retained from diagnostics.  Diagnostics never enter a result.
-pub(crate) const PRIVATE_ASK_STDERR_LIMIT: u64 = 64 * 1024;
+pub(crate) const PRIVATE_ASK_STDERR_LIMIT: u64 = 256 * 1024;
 /// Hard wall-clock bound for one private Ask attempt.
-pub(crate) const PRIVATE_ASK_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const PRIVATE_ASK_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The fixed reason a "not enough source" outcome carries. It is an outcome,
+/// not a failure — the attempt ran, the question was asked, and the verified
+/// snapshot is what says it cannot answer. The manifest shows the coverage.
+pub(crate) const PRIVATE_ASK_INSUFFICIENT: &str = "the verified Wiki does not cover this question";
 
 /// A capability state is intentionally explicit.  `Unverified` is the safe
 /// default for every discovered runtime and cannot be coerced into `Verified`.
@@ -109,7 +119,8 @@ impl PrivateAskScope {
 }
 
 /// One complete source excerpt authenticated by the #364 source revision.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct GroundedSource {
     path: String,
     start_line: u64,
@@ -133,6 +144,11 @@ impl GroundedSource {
 
     pub(crate) fn end_line(&self) -> u64 {
         self.end_line
+    }
+
+    /// Byte length of the retained content, for read-budget accounting.
+    pub(crate) fn content_len(&self) -> usize {
+        self.content.len()
     }
 
     fn validate(&self) -> Result<(), PrivateAskFailure> {
@@ -200,6 +216,18 @@ impl GroundedSource {
     }
 }
 
+/// One earlier turn of the same question thread, carried into the prompt as
+/// context for a follow-up.
+///
+/// Both fields come from this viewer's own owner-local history — an entry the
+/// question itself already produced. The bounds are applied where the history
+/// is read; here they are data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PriorTurn {
+    pub(crate) question: String,
+    pub(crate) markdown: String,
+}
+
 /// Input to the private adapter.  Source text is data and is delimited in the
 /// prompt; instructions inside it cannot add tools or change the selected scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,13 +235,22 @@ pub(crate) struct PrivateAskRequest {
     scope: PrivateAskScope,
     source_revision: String,
     question: String,
+    /// Earlier turns of this question thread, oldest first. Only present for a
+    /// follow-up; a fresh question has none.
+    prior: Vec<PriorTurn>,
+    /// The pages the question's terms matched, whole or excerpted. These are
+    /// answer context — they are NOT citeable; only `grounding` sources are.
+    pages: Vec<retrieval::RetrievedPage>,
     grounding: Vec<GroundedSource>,
+    /// What the prompt actually consulted and what it omitted. Written by
+    /// retrieval and kept truthful by `prompt::fit_request`.
+    manifest: retrieval::RetrievalManifest,
 }
 
 impl PrivateAskRequest {
     /// Bind one question to the exact repository and revision in a verified
     /// snapshot.  There is no free-form production constructor for a source
-    /// revision or grounding list.
+    /// revision, a retrieval, or a grounding list.
     ///
     /// `persona` is the selected agent's own effective persona. It is taken
     /// here rather than at admission because the prompt envelope it belongs to
@@ -222,8 +259,9 @@ impl PrivateAskRequest {
     pub(crate) fn from_verified_snapshot(
         scope: PrivateAskScope,
         question: String,
+        prior: Vec<PriorTurn>,
         snapshot: &crew_wiki::snapshot_v1::VerifiedSnapshot,
-        grounding: Vec<GroundedSource>,
+        retrieval: retrieval::Retrieval,
         persona: &str,
     ) -> Result<Self, PrivateAskFailure> {
         let manifest = snapshot.index().manifest();
@@ -231,7 +269,8 @@ impl PrivateAskRequest {
             return Err(PrivateAskFailure::ScopeMismatch);
         }
         let snapshot_head_event_id = snapshot.index().head_event_id();
-        if grounding
+        if retrieval
+            .grounding
             .iter()
             .any(|source| source.snapshot_head_event_id != snapshot_head_event_id)
         {
@@ -241,11 +280,20 @@ impl PrivateAskRequest {
             scope,
             source_revision: snapshot.index().source_revision().to_owned(),
             question,
-            grounding,
+            prior,
+            pages: retrieval.pages,
+            grounding: retrieval.grounding,
+            manifest: retrieval.manifest,
         };
-        prompt::fit_grounding(&mut request, persona)?;
+        prompt::fit_request(&mut request, persona)?;
         request.validate()?;
         Ok(request)
+    }
+
+    /// The page slugs carried into this request's prompt.
+    #[cfg(test)]
+    pub(crate) fn page_slugs(&self) -> Vec<&str> {
+        self.pages.iter().map(|page| page.slug.as_str()).collect()
     }
 
     fn validate(&self) -> Result<(), PrivateAskFailure> {
@@ -483,6 +531,10 @@ pub(crate) enum PrivateAskFailure {
     /// A running session's own state could not be read, so nothing can be
     /// claimed about whether a private Ask left it alone.
     SessionObservationUnavailable,
+    /// The earlier answered attempt a follow-up names is not in this viewer's
+    /// scoped history — deleted, expired, another scope's, or never answered.
+    /// Refusing is honest where guessing the thread would not be.
+    FollowUpUnavailable,
     InvalidState,
     ProfileUnavailable,
     Process(BoundedFailure),
@@ -518,6 +570,9 @@ impl std::fmt::Display for PrivateAskFailure {
             }
             Self::SessionObservationUnavailable => {
                 f.write_str("the selected agent's running session could not be observed")
+            }
+            Self::FollowUpUnavailable => {
+                f.write_str("the earlier answer this follows up on is not available")
             }
             Self::ProcessContainmentUnverified => {
                 f.write_str("runtime process containment is unverified")
@@ -661,9 +716,11 @@ pub(crate) fn admit_private_ask(
     })
 }
 
+/// `pub(crate)` so the command-layer tests (a sibling module) can reuse its
+/// fixtures. Under `cfg(test)` it never exists in a shipped build.
 #[cfg(test)]
 #[path = "private_ask/tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "private_ask/answer_tests.rs"]

@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 /// Each one owns a contained child process and a model call, so this is a
 /// resource bound rather than a policy: a developer surface that can be driven
 /// from a webview must not be able to start an unbounded number of them.
-pub(crate) const MAX_IN_FLIGHT_ASKS: usize = 4;
+pub(crate) const MAX_IN_FLIGHT_ASKS: usize = 2;
 
 /// Why an attempt could not be registered. Each maps to a distinct, honest
 /// message: "this id is already running" is not "too many are running".
@@ -96,6 +96,15 @@ impl PrivateAskAttempts {
             }
             None => false,
         }
+    }
+
+    /// Whether this attempt id still owns a live registration.
+    ///
+    /// This is the question the history's `running`-vs-`interrupted` reading
+    /// asks: a recorded attempt that is still registered is genuinely running;
+    /// one the process no longer holds vanished with it.
+    pub(crate) fn is_registered(&self, attempt_id: &str) -> bool {
+        entries(&self.inner).contains_key(attempt_id)
     }
 
     /// How many attempts are in flight. Used by the bound's own test.
