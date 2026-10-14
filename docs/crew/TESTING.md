@@ -653,7 +653,7 @@ retirement remains Regenerate-only: Cancel and Resume must preserve its typed
 proof and unresolved claim. Reconciled cancellation stays terminal.
 
 Schema v4 and permanent-dependency Regenerate are accepted designs whose runtime
-evidence remains pending in #362. Release acceptance must exercise both
+evidence landed with #362 (PRs #386/#400/#403). Release acceptance must exercise both
 forward migrations from an existing v1 journal, preserving all owners,
 communities, payloads, revisions and claims. Reopening v4 must be idempotent;
 an older reader must refuse it visibly. Injected migration, quota and commit
@@ -667,7 +667,7 @@ relay, a missing query result and transport failure must never become deletion
 proof. A new UUID must produce new immutable addresses even for unchanged source.
 
 Head and precondition retirement (accepted design; implementation and runtime
-evidence pending in #362) extends the same matrix. The native guarded-read
+evidence landed with #362) extends the same matrix. The native guarded-read
 fences are covered separately from the proof decision: identity generation,
 durable revision and worker lease are each moved against a real captured
 scope, a real journal row and a real transport, before the first request and
@@ -1046,9 +1046,9 @@ The source-level guard intentionally keeps Claude out of Wiki until its
 installed compatibility is verified. The containment wiring and its fork-denial
 regression do not imply a native Hermes launch, provider/auth check,
 effective-model receipt, or staging generation. The #363 installed-runtime
-acceptance must run
-in the #348 staging environment; #348 owns that environment and #363 owns the
-runtime acceptance result. Mutable Hermes source or wrappers require
+acceptance ran
+in the #348 staging environment; #348 provided that environment and #363
+closed with the runtime acceptance result. Mutable Hermes source or wrappers require
 revalidation.
 
 ## Recap capability source proof (#351)

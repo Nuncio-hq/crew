@@ -414,51 +414,56 @@ export const handoffContract = [
     source:
       "Coordinator reviewed and approved the concrete compatibility diff, 2026-09-09; not a new founder approval.",
     contract:
-      "Add a workspace-menu Company Wiki entry that reuses existing production goWiki() → /wiki → WikiLibraryScreen and its Company Wiki card for kind 30023 knowledge. Keep current content/ACL/route; no migration or separate store. This source renders only a labeled sample compatibility preview. Coordinator approved this concrete entry; #349 must verify the production replacement before removing the only global Wiki affordance.",
-    owner: "#344 review; #349 wiring; #364 compatibility",
+      "Add a workspace-menu Company Wiki entry that reuses existing production goWiki() → /wiki → WikiLibraryScreen and its Company Wiki card for kind 30023 knowledge. Keep current content/ACL/route; no migration or separate store. This source renders only a labeled sample compatibility preview. Coordinator approved this concrete entry; #349 wired the production replacement and the old global Wiki row is removed (PR #378).",
+    owner: "#344 review; #349 wiring shipped; #364 compatibility",
   },
   {
     id: "G-PROJECT",
     state: "project: create/link/manage/unlink",
-    status: "blocked",
-    source: "#361 source audit and model gate",
+    status: "accepted",
+    source:
+      "#361 closed: exact Repository mapping, optional folder, owner+d targeting and recovery proved in PR #378; installed-runtime acceptance remains #357.",
     contract:
-      "Resolve exact legacy/zero/one/multiple Repository mapping, optional folder, owner+d targeting, current-device path probe and live-session replacement policy. No name-based migration, remote-host assumption, or deleting a pre-existing channel on ambiguous writes.",
-    owner: "#361",
+      "Exact legacy/zero/one/multiple Repository mapping, optional folder, owner+d targeting, current-device path probe and live-session replacement policy. No name-based migration, remote-host assumption, or deleting a pre-existing channel on ambiguous writes.",
+    owner: "#361 (closed)",
   },
   {
     id: "G-PUB",
     state: "wiki: update/cancel/retry/current snapshot",
-    status: "blocked",
-    source: "#362 coherent publication gate",
+    status: "accepted",
+    source:
+      "#362 closed: coherent publication/retention proved in PRs #386/#400/#403, including production-worker recovery in a fresh headless context.",
     contract:
-      "Prove generation grammar, immutable page/manifest references, relay retention and legacy compatibility before schema-dependent publication. Old complete snapshot must survive partial publish/restart/second-client reads; no fabricated fallback success.",
-    owner: "#362",
+      "Generation grammar, immutable page/manifest references, relay retention and legacy compatibility are proven for schema-dependent publication. Old complete snapshot must survive partial publish/restart/second-client reads; no fabricated fallback success.",
+    owner: "#362 (closed)",
   },
   {
     id: "G-DURABLE",
     state:
       "Project operations; Wiki publication, private history and task draft/dispatch",
-    status: "blocked",
-    source: "#362 shared architecture gate",
+    status: "accepted",
+    source:
+      "#362 closed: bounded owner-local durable operation/journal seam named and landed; consumers merged in #361 (PR #378) and #366/#367 (PRs #418/#421). Per-issue installed acceptance for Ask consumers remains open.",
     contract:
-      "Name and approve a bounded owner-local durable operation/history seam; specialized theme/observer stores are not generic outboxes. Separate private history from signed shared-publication recovery; define ACL/encryption, limits, atomic persistence, migration and retry identities. Buzz events remain authoritative.",
-    owner: "#362 shared; #361, #366, #367 consumers",
+      "Bounded owner-local durable operation/history seam; specialized theme/observer stores are not generic outboxes. Private history stays separate from signed shared-publication recovery; ACL/encryption, limits, atomic persistence, migration and retry identities are defined. Buzz events remain authoritative.",
+    owner: "#362 shared (closed); #361 closed, #366/#367 consumers open",
   },
   {
     id: "G-GEN",
     state: "wiki: installed-runtime generation and immutable source",
-    status: "blocked",
-    source: "#363 runtime/snapshot gate",
+    status: "accepted",
+    source:
+      "#363 closed: independent installed-runtime generation and immutable source proved (PRs #393/#406; two recorded real generations with signed relay publications).",
     contract:
-      "Certify temporary runtime/profile/model invocation, read-only/no-tools or bounded snapshot tools, containment/cancel and immutable Git/folder source. No active-employee session reuse, dirty bytes labeled HEAD, or silent API/heuristic fallback.",
-    owner: "#363",
+      "Temporary runtime/profile/model invocation, read-only/no-tools or bounded snapshot tools, containment/cancel and immutable Git/folder source. No active-employee session reuse, dirty bytes labeled HEAD, or silent API/heuristic fallback.",
+    owner: "#363 (closed)",
   },
   {
     id: "G-ASK-PROOF",
     state: "wiki: private existing-agent Ask, History and draft origin",
     status: "blocked",
-    source: "#365 proof before #366 / #367 shipping",
+    source:
+      "#365 proof gate remains open: private Ask implementation merged (PRs #413/#418/#421 behind the private-ask dev gate) but #365's certification/privacy proof is incomplete.",
     contract:
       "Prove identity/ACL/privacy with two authenticated users, isolation from busy employee sessions, no channel/file/task side effect, bounded attempt-scoped stream/cancel/recovery and a certified runtime. Mock private state or prompt obedience is insufficient.",
     owner: "#365; #366, #367",
@@ -504,7 +509,8 @@ export const handoffContract = [
     id: "G-THREAD-1",
     state: "thread-working, done, completed, offline; tools",
     status: "accepted",
-    source: "Coordinator-approved G-THREAD-1 v3, 2026-09-09; actual Fable Medium reviewed v2 and explicitly accepted the selected channel-compatibility clarification. Not a new founder approval.",
+    source:
+      "Coordinator-approved G-THREAD-1 v3, 2026-09-09; actual Fable Medium reviewed v2 and explicitly accepted the selected channel-compatibility clarification. Not a new founder approval.",
     contract:
       "One thread-view right pane; Context on first explicit opening; Agent plans preserves D-056 authority. Bounded ephemeral selection keyed by relay/viewer/channel/root; thread navigation closes presentation, return restores selection without reopening or native launch. Narrow modal preserves chat draft/scroll and owns Escape. Historical information remains readable; exact-current-generation live controls only; Workbench redirects unchanged. D-078 G-THREAD-1 v3 defines D-057 overlay, D-058 explicit activation/hide cleanup, scoped PR, channel compatibility and popout limits; native proof remains #354/#357.",
     owner: "#354",
@@ -513,7 +519,8 @@ export const handoffContract = [
     id: "G-RECAP-1",
     state: "settings; Context recap",
     status: "proposed",
-    source: "Stage 0 recommendation, runtime capabilities unverified",
+    source:
+      "Stage 0 recommendation — certified one-shot recap probe merged (PR #419) and recap settings + Context panel merged (PR #416); #351/#356 issue acceptance remains open.",
     contract:
       "Owner-local derived cache in Context; no automatic channel post or instruction/acceptance authority. Capability, tool restriction, profile, provenance and watermark need certified runtime evidence.",
     owner: "#351, #356",
@@ -522,10 +529,11 @@ export const handoffContract = [
     id: "G-CONTACT-1",
     state: "channel, replies: unmentioned human send",
     status: "blocked",
-    source: "Existing receipt authority; #355 proof gate",
+    source:
+      "Existing receipt authority; #355 proof gate — R4 proven and approved successor #412 landed (PR #420); #355's contact acceptance remains open.",
     contract:
       "Relay-authoritative unique routing, durable replay/execution and compatibility proof, visible response/no bare acknowledgement, then approved implementation successor. Current receipt validation rejects mentionless direct triggers; client canvas selection cannot authorize them.",
-    owner: "#355 + approved successor",
+    owner: "#355 acceptance; successor #412 (closed)",
   },
   {
     id: "G-ACCEPTANCE-1",
@@ -540,7 +548,8 @@ export const handoffContract = [
     id: "G-LATENCY-1",
     state: "thread-working: lifecycle activity",
     status: "proposed",
-    source: "D-075 / #344 bounded ordering recommendation",
+    source:
+      "D-075 / #344 bounded ordering recommendation — baseline/candidate measurement recorded (PR #415); #352 remains open.",
     contract:
       "Preserve channel ordering, null barriers, quota/bytes/drop accounting. Any stronger target requiring within-channel reorder/coalescing needs explicit lead decision.",
     owner: "#352",
@@ -549,7 +558,8 @@ export const handoffContract = [
     id: "RUNTIME-ACCEPTANCE",
     state: "all visible controls",
     status: "blocked",
-    source: "Founder execution/release contract in #344",
+    source:
+      "Founder execution/release contract in #344 — #357 installed release acceptance remains open.",
     contract:
       "For each implemented issue, launch the actual candidate with designated real data and isolated authorized runtime/profile state; exercise handlers/readback/recovery and post safe immutable screenshots plus exact SHA/runtime/data identity on that issue. Related issues may share one unchanged build/run while retaining issue-to-case mapping. Prototype screenshots satisfy only Stage 0 reference evidence. Coordinator + actual Fable Medium must approve exact PR head before merge; #357 retains installed release acceptance.",
     owner: "#348, #357; #349–#356 and #361–#367",

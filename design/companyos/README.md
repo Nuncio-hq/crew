@@ -26,8 +26,8 @@ This handoff is local-only; no Sites deployment is authorized. Original private 
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Accepted product intent                                          | [PRODUCT.md](../../docs/crew/PRODUCT.md)                                                                  |
 | Why the direction changed                                        | [DECISIONS.md](../../docs/crew/DECISIONS.md), D-078                                                       |
-| Selected visual input                                            | Private Codex capture — local only, excluded                                                     |
-| Current app comparison                                           | Private Crew capture — local only, excluded                                            |
+| Selected visual input                                            | Private Codex capture — local only, excluded                                                              |
+| Current app comparison                                           | Private Crew capture — local only, excluded                                                               |
 | Review state IDs, actions, expected behavior, status, Buzz seams | [src/blueprint.js](src/blueprint.js), rendered in **Blueprint & notes**                                   |
 | Visual implementation                                            | `src/App.jsx`, focused components, `src/styles.css`                                                       |
 | Most recent visual verification                                  | [design-qa.md](design-qa.md)                                                                              |
@@ -56,12 +56,14 @@ not a production identity model.
 
 `src/blueprint.js` exports the authoritative `handoffContract` matrix, rendered
 in `index.html#authority`. Accepted flow is distinct from unproved backend
-semantics: G-PROJECT, G-PUB, G-DURABLE, G-GEN and G-ASK-PROOF remain explicit,
+semantics: G-PROJECT, G-PUB, G-DURABLE and G-GEN are discharged (their owning
+issues closed with evidence); G-ASK-PROOF remains open,
 alongside the existing thread/recap/contact/acceptance gates. A working sample
 button is not production evidence. The **Company Wiki** workspace-menu entry
 is a coordinator-approved compatibility choice for existing `/wiki` /
-`WikiLibraryScreen` / kind 30023 pages. #349 must verify the production replacement
-before the old sole global entry is removed. This is not a new founder claim. The sample library does not query real pages.
+`WikiLibraryScreen` / kind 30023 pages; #349 wired and verified the production
+replacement and the old sole global entry is removed (PR #378). This is not a
+new founder claim. The sample library does not query real pages.
 
 ## Working rules for implementation agents
 
@@ -183,7 +185,6 @@ The historical pre-roadmap audit is in `index.html#feasibility`, backed by `src/
 ## Project page review iteration (2026-09-09)
 
 Open `prototype.html?film=off&state=project` for the lightweight Channels / Workspace page and `state=channels` to open a general workspace conversation directly. The superseding v0.9 sidebar has no global Channels row or landing page. Browse channels remains available from the workspace name menu, including when all shared channels are linked into Projects. Click a project name or channel breadcrumb to open the Project page; the separate arrow expands its channels. Use the Projects `+` to review Add Project, including optional folder, sample Git/folder/unavailable results, and new/existing main channel. Add channel and Manage workspace also work in local sample state. Cancel/Escape discard drafts; Reset restores all fixtures. No native folder selection, Git mutation or relay write occurs. The demonstrated flow is accepted in #344; unproved backend contracts remain gated. The interaction contract is in `src/blueprint.js` and the existing design document, not a new spec.
-
 
 ## Project Wiki review
 

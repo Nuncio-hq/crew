@@ -192,13 +192,14 @@ The founder selected a Codex-style layout on 2026-09-08:
 - Main area: the selected channel, thread, or direct conversation.
 
 This direction supersedes D-066's prohibition on Projects in navigation. It
-is implemented in the #349 candidate, with release acceptance still pending.
-Projects and Workflows are stable navigation entries; old preview opt-outs no
-longer hide them. Other preview features retain their gates. It does not restore
-a separate Workbench thread picker.
+shipped with #349/#361 (PR #378); installed release acceptance remains with
+#357. Projects and Workflows are stable navigation entries; old preview opt-outs
+no longer hide them. Other preview features retain their gates. It does not
+restore a separate Workbench thread picker.
 The accepted Project Channels/Workspace page uses existing Project/Repository
-relationships. #361 resolves remaining legacy/zero/multiple-repository, exact
-path and recovery semantics; the visible word "Project" must not redefine identity.
+relationships. #361 resolved the legacy/zero/multiple-repository, exact path
+and recovery semantics (PR #378); the visible word "Project" must not redefine
+identity.
 
 The maintained [CompanyOS blueprint](../../design/companyos/README.md) owns
 the design reference: `design/companyos/index.html` explains each area and
@@ -366,7 +367,9 @@ answers and timers are not evidence of those services.
 Preserve company kind 30023 knowledge. The coordinator approved a Company Wiki
 entry in the workspace menu opening existing `/wiki` / `WikiLibraryScreen`.
 This approval covers the concrete compatibility entry, not a new founder claim.
-#349 must verify the replacement before removing the old sole global Wiki affordance. It does not create another knowledge store.
+The replacement shipped with #349 (PR #378): the workspace-menu Company Wiki
+entry opens `/wiki` / `WikiLibraryScreen` and the old sole global Wiki
+affordance is removed. It does not create another knowledge store.
 
 
 The coordinator-approved G-THREAD-1 v3 contract in D-078 defines the thread tools:
