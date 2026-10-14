@@ -1983,10 +1983,11 @@ workspace menu → **Company Wiki** should call existing `goWiki()` → `/wiki` 
 `WikiLibraryScreen`, retaining its Company Wiki card and kind 30023 content.
 The coordinator reviewed the concrete menu entry, route mapping, labeled sample
 and back action. This records coordinator approval, not a new founder claim.
-The reference includes a labeled sample of that entry. #349 must wire and verify
-a reviewed replacement before removing the only global Wiki affordance. This
-is a navigation compatibility choice, not approval to delete content or create
-a parallel company library.
+The reference includes a labeled sample of that entry. The production
+replacement shipped with #349 (PR #378): workspace menu → **Company Wiki**
+calls `goWiki()` → `/wiki` → `WikiLibraryScreen`, and the only global Wiki
+row is removed. This is a navigation compatibility choice, not approval to
+delete content or create a parallel company library.
 
 The [`handoffContract` matrix](../../design/companyos/src/blueprint.js) is the
 state/control authority for the handoff. Accepted UI does not satisfy backend
@@ -1995,6 +1996,22 @@ required; related issues may share an unchanged build/run with explicit mapping.
 Both coordinator and actual Claude Code CLI Fable Medium approve the exact
 final PR head before merge. Stage 0 reference screenshots are prototype evidence
 only, and #344 remains the open delivery roadmap.
+
+### D-078 Stage 0 gate reconciliation — 2026-10-14
+
+The [`handoffContract` matrix](../../design/companyos/src/blueprint.js) is
+reconciled against merged work. Discharged gates now record `accepted` with
+their landing evidence: G-PROJECT (#361 closed, PR #378), G-PUB and G-DURABLE
+(#362 closed, PRs #386/#400/#403) and G-GEN (#363 closed, PRs #393/#406).
+Company-handbook compatibility shipped with #349. Still open: G-ASK-PROOF
+(#365 certification; implementation merged behind the private-ask dev gate in
+PRs #413/#418/#421), G-CONTACT-1 (#355 contact acceptance; approved successor
+#412 closed via PR #420), G-RECAP-1 and G-LATENCY-1 (proposed; merged slices
+PRs #416/#419 and #415 await issue acceptance on #351/#356 and #352),
+G-ACCEPTANCE-1 (unchanged human review ritual; no durable Accept/Reopen
+protocol decided), and RUNTIME-ACCEPTANCE (#357 installed release). This
+records issue and PR state only — installed-runtime proof and founder
+acceptance remain the open #344 parent gates.
 
 
 ### G-THREAD-1 v3 — coordinator-approved thread presentation (2026-09-09)

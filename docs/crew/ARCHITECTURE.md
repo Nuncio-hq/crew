@@ -286,17 +286,17 @@ or change the model picker's live-switch/default-setting decision.
 
 ## CompanyOS prototype integration boundary
 
-The #349 shell candidate mounts the existing Project sidebar projection and
-channel browser beneath the workspace menu. Project expansion preserves its
-repository coordinates; Wiki navigation carries the selected kind 30617
-address, and channel entries use the existing channel IDs. Removing the old
-channel groups from the visible sidebar does not delete their saved ordering
-or membership. Project and Workflow preview definitions are retired per D-078.
-The new Project Overview presentation is not yet mounted; its operation
-controller and native recovery dispatcher remain #361 acceptance work.
+The #349 shell (shipped in PR #378) mounts the existing Project sidebar
+projection and channel browser beneath the workspace menu. Project expansion
+preserves its repository coordinates; Wiki navigation carries the selected
+kind 30617 address, and channel entries use the existing channel IDs.
+Removing the old channel groups from the visible sidebar does not delete
+their saved ordering or membership. Project and Workflow preview definitions
+are retired per D-078. The Project Overview presentation is mounted; its
+operation controller and native recovery dispatcher shipped with #361.
 
-The #361 relay candidate extends kind 9007 with the opt-in atomic creation and
-exact-event recovery contract in D-080. Its durable state remains in Buzz's
+The #361 relay slice (shipped in PR #378) extends kind 9007 with the opt-in
+atomic creation and exact-event recovery contract in D-080. Its durable state remains in Buzz's
 channel, membership and event tables. All canonical discovery writers in this
 binary share the fenced snapshot transaction. Deployment requires every writer
 to be upgraded or quiesced before enabling `BUZZ_CREW_ATOMIC_CHANNEL_CREATE`;
@@ -472,11 +472,11 @@ Client-selected canvas/contact data alone cannot authorize a receipt.
 ## Project/Wiki v0.9 handoff boundaries (#344, #361–#367)
 
 The accepted reference composes existing Project (30621), Repository (30617),
-Wiki (30623 repository / 30023 company) and channel/thread models. #361 owns
+Wiki (30623 repository / 30023 company) and channel/thread models. #361 landed
 exact selected-repository folder operations and legacy/zero/multiple mapping;
-#349 owns scoped navigation. Prototype names and in-memory lists are fixtures.
+#349 landed scoped navigation. Prototype names and in-memory lists are fixtures.
 
-#362 owns coherent publication/retention and shared G-DURABLE. D-079 accepts
+#362 landed coherent publication/retention and shared G-DURABLE. D-079 accepts
 immutable kind 30623 pages and manifests, a conditional TOC commit, and the
 native `owner_operations` SQLite recovery journal. The #362 integration uses
 `crew-wiki` to build and verify the complete signed graph, persists that graph
@@ -551,7 +551,7 @@ older consumers reject the draft rather than publishing it. Generation failure
 or cancellation occurs before relay effects and releases the local claim so an
 explicit Generate can capture fresh source.
 
-#363 owns the installed-runtime generation seam and immutable Git/folder
+#363 landed the installed-runtime generation seam and immutable Git/folder
 snapshot handoff. The Wiki library and page header open a shared Generate/Update
 Wiki dialog with the linked source, installed runtime, and Wiki-only profile/model
 preference. Start saves that scoped preference before invoking native preparation;
@@ -599,8 +599,8 @@ production command builder denies the fixture fork, but these tests do
 not certify a native Hermes launch, provider/auth path, effective model, or full
 installed tool isolation; Claude Wiki generation remains deferred until its
 compatibility is verified. The #363 installed-runtime
-acceptance must run in the #348 staging environment; #348 owns that environment
-and #363 owns the runtime acceptance result. #364 owns scoped full-body
+acceptance ran in the #348 staging environment; both are closed with their
+evidence recorded on the issues. #364 landed scoped full-body
 retrieval and exact-revision source reads. Desktop Wiki navigation persists the
 selected page and bounded scroll position under the captured owner/community,
 parent Project, repository coordinate, and door. A publication refresh may

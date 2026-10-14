@@ -46,8 +46,9 @@ Project Wiki Read, bounded full-body Search, and revision-bound Source view are
 shipped in [#397](https://github.com/Nuncio-hq/crew/pull/397). Coherent publication
 and recovery (#362) now have native staging evidence. Native Read/Search/Source
 acceptance (#364) passed on PR #405, including dirty-checkout immutable reads,
-fresh-process readback, and 1130×1089 / 800×700 windows. Generation, Ask/History,
-and installed release acceptance remain separate gates (#363/#366/#367/#357);
+fresh-process readback, and 1130×1089 / 800×700 windows. Installed-runtime
+generation landed with #363 (PRs #393/#406). Ask/History
+and installed release acceptance remain separate gates (#366/#367/#357);
 staging completion (#348) does not complete those feature checks.
 The reader remembers page and scroll position only within the captured
 owner/community, Project, repository, and door. Source controls require a

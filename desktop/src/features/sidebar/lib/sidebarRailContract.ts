@@ -1,9 +1,10 @@
 /**
- * Sidebar rail contract for NuncioCrew (#223).
+ * Stream-channel rail contract for NuncioCrew (#223).
  *
- * The rail is Inbox + channels + DMs. A Project (NIP-MP 30621 / repo group)
- * is not a sidebar peer. Exclusive repo bindings do not pull a channel out
- * of Channels into a second tree.
+ * Recorded before D-078: the channel stream stays channels + DMs. Exclusive
+ * repo bindings do not pull a channel out of the stream into a second tree.
+ * D-078 / #344 adds a separate Projects sidebar group (Wiki + channels per
+ * Project) alongside this stream; it does not change this filter.
  */
 
 export type SidebarStreamChannel = {

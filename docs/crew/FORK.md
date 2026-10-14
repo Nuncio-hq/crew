@@ -90,16 +90,20 @@ gates. `NuncioCrew Release` is manual, signed, and checks the exact `main`
 SHA. Inherited Buzz workflow files stay in the tree but are disabled at the
 repository level.
 
-## Channel-first IA guardrail (#278; successor tracked in #349)
+## Channel-first IA guardrail (#278; D-078 successor shipped in #349)
 
-D-078 / Stage 0 #344 accepts the demonstrated v0.9 Project/Wiki shell, with
-Browse channels in the workspace menu. #349 owns the narrow Projects
-guard update with production implementation. The present guard still runs
-unchanged; the Workbench prohibition remains authoritative.
+D-078 / Stage 0 #344 accepted the demonstrated v0.9 Project/Wiki shell, and
+#349 shipped it (PR #378): the sidebar carries Inbox/Agents/Workflows, a
+Projects group with Wiki and channels, and agent DMs; Browse channels and
+Company Wiki live in the workspace menu. The Workbench prohibition remains
+authoritative.
 
-`pnpm --filter buzz check:channel-first-ia` currently rejects any sync hunk that
-re-adds a Projects sidebar section, a Workbench picker, `onSelectProjects`,
-`onSelectWorkbench`, or `selectedView: "workbench"`. Workbench routes stay
+`pnpm --filter buzz check:channel-first-ia` bans the pre-v0.9 markers —
+`onSelectProjects`, `open-projects-view`, `ProjectsOverviewPanel`,
+`useProjectFolderChannelIds`, `onSelectWorkbench`, `WorkTreeSection` and
+`selectedView: "workbench"` — so an upstream merge cannot revive the removed
+destinations. The accepted Projects seam is `SidebarProjectsSection` plus the
+workspace-menu entries, not the banned legacy hooks. Workbench routes stay
 as redirects; the live-job desk lives in `LiveJobDesk`.
 
 ## Conflict policy for repeatedly-conflicting upstream files
