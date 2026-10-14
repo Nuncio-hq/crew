@@ -174,6 +174,51 @@ test("repeated stale runtime reads do not discard a pending restart frame", () =
   assert.equal(getChannelMembershipState(agent, runtime("current")), "nonzero");
 });
 
+test("a relay switch stays unknown until the community boundary resets the pin", () => {
+  const relayB = "wss://other-relay.example";
+  observeChannelMembershipRuntime(agent, runtime());
+  ingest(frame(2));
+  assert.equal(getChannelMembershipState(agent, runtime()), "nonzero");
+
+  // The same nonce on a different relay cannot borrow the pinned projection:
+  // this isolates the relay fence from the generation fence.
+  const foreign = runtime("one", { relayUrl: relayB });
+  observeChannelMembershipRuntime(agent, foreign);
+  assert.equal(getChannelMembershipState(agent, foreign), "unknown");
+
+  // A foreign-relay generation cannot promote itself while the pin stands,
+  // and the relay-A runtime keeps its own projected count.
+  ingest(frame(0, 2, "foreign-gen", "2026-09-05T01:00:00Z"));
+  observeChannelMembershipRuntime(
+    agent,
+    runtime("foreign-gen", { relayUrl: relayB }),
+  );
+  assert.equal(
+    getChannelMembershipState(
+      agent,
+      runtime("foreign-gen", { relayUrl: relayB }),
+    ),
+    "unknown",
+  );
+  assert.equal(getChannelMembershipState(agent, runtime()), "nonzero");
+
+  // Only the community boundary releases the pin; relay B then recovers
+  // through the normal runtime + frame path.
+  resetChannelMembershipState();
+  observeChannelMembershipRuntime(
+    agent,
+    runtime("foreign-gen", { relayUrl: relayB }),
+  );
+  ingest(frame(0, 1, "foreign-gen", "2026-09-05T01:00:00Z"));
+  assert.equal(
+    getChannelMembershipState(
+      agent,
+      runtime("foreign-gen", { relayUrl: relayB }),
+    ),
+    "zero",
+  );
+});
+
 test("community reset clears projection and generation authority", () => {
   ingest(frame(0));
   assert.equal(getChannelMembershipState(agent, runtime()), "zero");
